@@ -237,6 +237,26 @@
     </div>
   </div>
 
+  <!-- Edit Asset Modal -->
+  <div class="modal-overlay hidden" id="editAssetModal">
+    <div class="modal" style="max-width: 800px; width: 90%;">
+      <div class="modal-header">
+        <h2>Edit Asset: <span id="editAssetTypeLabel"></span></h2>
+        <button class="btn close-btn" onclick="app.closeEditAssetModal()">X</button>
+      </div>
+      <div class="modal-body form-body">
+        <p class="modal-desc" style="margin-top: 0;">Editing an approved video's asset will reset its status to 'needs_review'.</p>
+        <div class="form-group">
+          <textarea id="editAssetBody" rows="20" style="font-family: monospace; white-space: pre-wrap; width: 100%; box-sizing: border-box; padding: 1rem; border-radius: 8px; border: 1px solid var(--border); background: rgba(0, 0, 0, 0.2); color: var(--text);"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeEditAssetModal()">Cancel</button>
+        <button class="btn success" onclick="app.submitEditAsset()">Save Asset</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

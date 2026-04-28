@@ -6,6 +6,7 @@ from app.db import get_db
 from app.models import AssetType, Channel, ContentAsset, Review, Video, VideoStatus
 from app.schemas import (
     AssetRead,
+    AssetUpdate,
     BulkIdeaRequest,
     GenerateRequest,
     PackageResponse,
@@ -142,6 +143,66 @@ def generate_assets(video_id: int, payload: GenerateRequest, db: Session = Depen
     for asset in assets:
         db.refresh(asset)
     return assets
+
+
+@router.patch("/{video_id}/assets/{asset_type}", response_model=AssetRead)
+def update_asset(video_id: int, asset_type: AssetType, payload: AssetUpdate, db: Session = Depends(get_db)) -> ContentAsset:
+    video = get_video_or_404(db, video_id)
+    stmt = select(ContentAsset).where(ContentAsset.video_id == video.id, ContentAsset.asset_type == asset_type).order_by(ContentAsset.created_at.desc()).limit(1)
+    asset = db.scalar(stmt)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    asset.body = payload.body
+    asset.version += 1
+    
+    video.status = VideoStatus.needs_review
+    video.approved = False
+    
+    db.commit()
+    db.refresh(asset)
+    return asset
+
+
+@router.post("/{video_id}/assets/{asset_type}/regenerate", response_model=AssetRead)
+def regenerate_asset(video_id: int, asset_type: AssetType, db: Session = Depends(get_db)) -> ContentAsset:
+    video = get_video_or_404(db, video_id)
+    stmt = select(ContentAsset).where(ContentAsset.video_id == video.id, ContentAsset.asset_type == asset_type).order_by(ContentAsset.created_at.desc()).limit(1)
+    asset = db.scalar(stmt)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    new_body = ""
+    if asset_type == AssetType.brief:
+        new_body = build_brief(video)
+    elif asset_type == AssetType.script:
+        new_body = build_script(video)
+    elif asset_type == AssetType.shorts:
+        new_body = build_shorts(video)
+    elif asset_type == AssetType.description:
+        new_body = build_description(video)
+    elif asset_type == AssetType.thumbnail_prompt:
+        new_body = build_thumbnail_prompt(video)
+    elif asset_type == AssetType.youtube_metadata:
+        new_body = build_youtube_metadata(video)
+    elif asset_type == AssetType.package_manifest:
+        script_stmt = select(ContentAsset).where(ContentAsset.video_id == video.id, ContentAsset.asset_type == AssetType.script).order_by(ContentAsset.created_at.desc()).limit(1)
+        script_asset = db.scalar(script_stmt)
+        script_body = script_asset.body if script_asset else build_script(video)
+        from app.services.compliance import build_review_checklist
+        new_body = build_review_checklist(script_body)
+    else:
+        raise HTTPException(status_code=400, detail="Cannot regenerate this asset type")
+
+    asset.body = new_body
+    asset.version += 1
+    
+    video.status = VideoStatus.needs_review
+    video.approved = False
+    
+    db.commit()
+    db.refresh(asset)
+    return asset
 
 
 @router.post("/{video_id}/review", response_model=ReviewRead)

@@ -86,6 +86,10 @@ class AssetRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AssetUpdate(BaseModel):
+    body: str
+
+
 class ReviewCreate(BaseModel):
     passed: bool
     reviewer: str = "operator"

@@ -4,6 +4,7 @@ const app = {
     selectedVideoId: null,
     assets: [],
     selectedAssetType: null,
+    editingAssetType: null,
     stats: {
       ideas: 0,
       generated: 0,
@@ -307,6 +308,8 @@ const app = {
           <span style="font-size: 0.75rem; color: var(--textMuted); margin-right: auto; line-height: 2;">
             v${selectedAsset.version} • ${new Date(selectedAsset.created_at).toLocaleString()}
           </span>
+          <button class="btn copy-btn" onclick="app.regenerateAsset('${selectedAsset.asset_type}')">Regenerate</button>
+          <button class="btn copy-btn" onclick="app.openEditAssetModal('${selectedAsset.asset_type}')">Edit</button>
           <button class="btn copy-btn" onclick="app.copyAssetContent('${bodyId}')">Copy Content</button>
         </div>
         <div class="asset-body" id="${bodyId}">${this.escapeHtml(selectedAsset.body)}</div>
@@ -502,6 +505,83 @@ const app = {
       await this.loadVideos();
     } catch (err) {
       this.log(`Error deleting video: ${err.message}`, 'error');
+    }
+  },
+
+  openEditAssetModal(assetType) {
+    if (!this.state.selectedVideoId) return;
+    const asset = this.state.assets.find(a => a.asset_type === assetType);
+    if (!asset) return;
+
+    this.state.editingAssetType = assetType;
+    document.getElementById('editAssetTypeLabel').textContent = assetType;
+    document.getElementById('editAssetBody').value = asset.body;
+    document.getElementById('editAssetModal').classList.remove('hidden');
+  },
+
+  closeEditAssetModal() {
+    document.getElementById('editAssetModal').classList.add('hidden');
+    this.state.editingAssetType = null;
+  },
+
+  async submitEditAsset() {
+    if (!this.state.selectedVideoId || !this.state.editingAssetType) return;
+    
+    const bodyText = document.getElementById('editAssetBody').value;
+    const assetType = this.state.editingAssetType;
+
+    const payload = {
+      body: bodyText
+    };
+
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/assets/${assetType}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to update asset');
+      }
+      
+      this.log(`Asset ${assetType} updated successfully`, 'success');
+      this.closeEditAssetModal();
+      
+      // Reload videos and assets to reflect status change to needs_review
+      await this.loadVideos();
+      await this.loadAssets();
+    } catch (err) {
+      this.log(`Error updating asset: ${err.message}`, 'error');
+    }
+  },
+
+  async regenerateAsset(assetType) {
+    if (!this.state.selectedVideoId) return;
+    
+    if (!confirm(`Are you sure you want to regenerate the ${assetType} asset? This will reset the video review status.`)) {
+      return;
+    }
+
+    try {
+      this.log(`Regenerating asset ${assetType}...`, 'info');
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/assets/${assetType}/regenerate`, {
+        method: 'POST'
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to regenerate asset');
+      }
+      
+      this.log(`Asset ${assetType} regenerated successfully`, 'success');
+      
+      // Reload videos and assets to reflect status change to needs_review
+      await this.loadVideos();
+      await this.loadAssets();
+    } catch (err) {
+      this.log(`Error regenerating asset: ${err.message}`, 'error');
     }
   },
 
