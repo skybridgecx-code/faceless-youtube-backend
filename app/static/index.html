@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local AI Operator | Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-titles">
+        <h1>Local AI Operator</h1>
+        <p>Faceless YouTube content factory</p>
+      </div>
+      <div class="health-pill" id="healthPill">
+        <div class="health-indicator" id="healthIndicator"></div>
+        <span id="healthText">Checking backend...</span>
+      </div>
+    </header>
+
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-title">Total Ideas</span>
+        <span class="kpi-value" id="kpiTotalIdeas">-</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Generated Assets</span>
+        <span class="kpi-value" id="kpiGeneratedAssets">-</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Approved Videos</span>
+        <span class="kpi-value" id="kpiApprovedVideos">-</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Packages Created</span>
+        <span class="kpi-value" id="kpiPackagesCreated">-</span>
+      </div>
+    </section>
+
+    <section class="main-content">
+      <!-- Left Panel: Video Ideas -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Video Ideas</h2>
+          <button class="btn" id="btnRefreshVideos" onclick="app.loadVideos()">Refresh</button>
+        </div>
+        <div class="panel-body">
+          <div id="videoList" class="video-list">
+            <div class="empty-state">Loading videos...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Selected Video & Actions -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 id="selectedVideoTitle">Selected Video: None</h2>
+        </div>
+        <div class="panel-body selected-video-panel">
+          
+          <!-- Workflow Progress -->
+          <div class="workflow-progress" id="workflowProgress">
+            <div class="step" id="step-idea">Idea</div>
+            <div class="step-connector"></div>
+            <div class="step" id="step-generated">Generated</div>
+            <div class="step-connector"></div>
+            <div class="step" id="step-approved">Reviewed</div>
+            <div class="step-connector"></div>
+            <div class="step" id="step-packaged">Packaged</div>
+            <div class="step-connector"></div>
+            <div class="step" id="step-payload_ready">Payload Ready</div>
+          </div>
+
+          <!-- Dynamic CTA Panel -->
+          <div class="cta-panel" id="ctaPanel">
+            <div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>
+          </div>
+
+          <!-- Package Info -->
+          <div class="package-info hidden" id="packageInfo">
+            <h4>Package Output</h4>
+            <div class="package-path-box">
+              <code id="packagePathText"></code>
+              <button class="btn copy-btn" onclick="app.copyPackagePath()" title="Copy Path">Copy</button>
+            </div>
+            <p class="package-hint">Open this folder on your machine:</p>
+            <div class="package-path-box">
+              <code class="command-text" id="openCommandText"></code>
+              <button class="btn copy-btn" onclick="app.copyOpenCommand()" title="Copy Command">Copy</button>
+            </div>
+          </div>
+
+          <div class="activity-log">
+            <h3>Activity Log</h3>
+            <div class="log-container" id="activityLog"></div>
+          </div>
+
+          <div class="assets-viewer">
+            <div class="assets-tabs" id="assetTabs">
+               <!-- Dynamic Tabs -->
+            </div>
+            <div class="asset-content-container" id="assetsViewer">
+              <div class="empty-state">No assets loaded.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Review Modal -->
+  <div class="modal-overlay hidden" id="reviewModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Manual Review Checklist</h2>
+        <button class="btn close-btn" onclick="app.closeReviewModal()">X</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Please verify the following before approving this video:</p>
+        <div class="checklist">
+          <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>No fake income claims</span></label>
+          <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>No fake client claims</span></label>
+          <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>Visuals are original or licensed</span></label>
+          <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>AI/synthetic content disclosure considered</span></label>
+          <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>Description says demo/educational where needed</span></label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeReviewModal()">Cancel</button>
+        <button class="btn success" id="btnConfirmApprove" disabled onclick="app.confirmApprove()">Approve Video</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
