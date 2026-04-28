@@ -65,6 +65,9 @@ class Video(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[VideoStatus] = mapped_column(SAEnum(VideoStatus), default=VideoStatus.idea, index=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    publish_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    publish_status: Mapped[str] = mapped_column(String(60), default="draft")
+    publish_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

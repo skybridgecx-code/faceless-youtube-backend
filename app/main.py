@@ -45,10 +45,23 @@ def health() -> dict[str, object]:
         "review_required": settings.require_human_review,
     }
 
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from app.db import get_db
+from app.models import Video
+from app.schemas import VideoRead
 
 app.include_router(channels.router)
 app.include_router(videos.router)
 app.include_router(publish.router)
+
+@app.get("/calendar", response_model=list[VideoRead])
+def get_calendar(db: Session = Depends(get_db)):
+    # Return videos grouped or sorted by publish_date, unscheduled at the end
+    stmt = select(Video).order_by(Video.publish_date.asc().nulls_last())
+    return list(db.scalars(stmt))
+
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)

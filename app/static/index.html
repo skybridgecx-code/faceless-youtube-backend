@@ -39,8 +39,10 @@
     </section>
 
     <section class="main-content">
-      <!-- Left Panel: Video Ideas -->
-      <div class="panel">
+      <!-- Left Column -->
+      <div class="left-column">
+        <!-- Video Ideas Panel -->
+        <div class="panel">
         <div class="panel-header">
           <h2>Video Ideas</h2>
           <div class="header-actions">
@@ -51,6 +53,20 @@
         <div class="panel-body">
           <div id="videoList" class="video-list">
             <div class="empty-state">Loading videos...</div>
+          </div>
+        </div>
+        <!-- Publishing Plan Panel -->
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <h2>Publishing Plan</h2>
+            <div class="header-actions">
+              <button class="btn" onclick="app.loadCalendar()">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="calendarList" class="video-list">
+              <div class="empty-state">Loading plan...</div>
+            </div>
           </div>
         </div>
       </div>
@@ -103,6 +119,44 @@
             <div class="package-path-box">
               <code class="command-text" id="openCommandText"></code>
               <button class="btn copy-btn" onclick="app.copyOpenCommand()" title="Copy Command">Copy</button>
+            </div>
+          </div>
+
+          <!-- Readiness Checklist -->
+          <div class="readiness-panel hidden" id="readinessPanel" style="margin-bottom: 1.5rem;">
+            <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin-bottom: 0.5rem;">Publishing Readiness</h3>
+            <div class="checklist" id="readinessChecklist">
+              <!-- Populated by JS -->
+            </div>
+            <div id="readinessWarnings" style="margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem;"></div>
+          </div>
+
+          <!-- Publishing Settings -->
+          <div class="publishing-settings hidden" id="publishingSettings" style="margin-bottom: 1.5rem;">
+            <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin-bottom: 0.5rem;">Publishing Settings</h3>
+            <div class="form-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border: 1px solid var(--border); border-radius: 8px;">
+              <div class="form-group">
+                <label>Publish Status</label>
+                <select id="pubStatus" class="form-select" style="background: var(--bg-dark); border: 1px solid var(--border); color: var(--text-light); border-radius: 6px; padding: 0.75rem; font-family: inherit; font-size: 0.95rem;">
+                  <option value="draft">Draft</option>
+                  <option value="scheduled">Scheduled</option>
+                  <option value="ready">Ready</option>
+                  <option value="published_manual">Published (Manual)</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Publish Date</label>
+                <input type="datetime-local" id="pubDate">
+              </div>
+              <div class="form-group">
+                <label>Publish Notes</label>
+                <textarea id="pubNotes" rows="2"></textarea>
+              </div>
+              <div style="margin-top: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                <span id="pubError" style="color: var(--danger); font-size: 0.85rem; display: none;"></span>
+                <button class="btn success" id="btnSavePublishing" onclick="app.savePublishing()">Save Settings</button>
+              </div>
             </div>
           </div>
 

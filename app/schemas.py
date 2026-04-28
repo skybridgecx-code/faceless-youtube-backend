@@ -60,8 +60,29 @@ class VideoRead(BaseModel):
     notes: str | None = None
     status: VideoStatus
     approved: bool
+    publish_date: datetime | None = None
+    publish_status: str
+    publish_notes: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VideoPublishUpdate(BaseModel):
+    publish_date: datetime | None = None
+    publish_status: str | None = None
+    publish_notes: str | None = None
+
+
+class VideoReadiness(BaseModel):
+    assets_generated: bool
+    review_approved: bool
+    package_created: bool
+    youtube_metadata_prepared: bool
+    publish_date_set: bool
+    publish_status_ready_or_scheduled: bool
+    blocking_reasons: list[str]
 
     model_config = {"from_attributes": True}
 

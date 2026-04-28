@@ -1,6 +1,7 @@
 const app = {
   state: {
     videos: [],
+    calendarVideos: [],
     selectedVideoId: null,
     assets: [],
     selectedAssetType: null,
@@ -17,6 +18,7 @@ const app = {
     this.log('Initializing Local AI Operator Dashboard...', 'info');
     await this.checkHealth();
     await this.loadVideos();
+    await this.loadCalendar();
   },
 
   log(msg, type = 'info') {
@@ -46,6 +48,52 @@ const app = {
       document.getElementById('healthText').textContent = 'Backend Offline';
       this.log(`Health check failed: ${err.message}`, 'error');
     }
+  },
+
+  async loadCalendar() {
+    try {
+      const res = await fetch('/calendar');
+      if (!res.ok) throw new Error('Failed to load calendar');
+      const data = await res.json();
+      this.state.calendarVideos = data;
+      this.renderCalendar();
+    } catch (err) {
+      this.log(`Error loading calendar: ${err.message}`, 'error');
+      document.getElementById('calendarList').innerHTML = `<div class="empty-state">Failed to load calendar.</div>`;
+    }
+  },
+
+  renderCalendar() {
+    const list = document.getElementById('calendarList');
+    list.innerHTML = '';
+
+    if (!this.state.calendarVideos || this.state.calendarVideos.length === 0) {
+      list.innerHTML = `<div class="empty-state">No scheduled videos.</div>`;
+      return;
+    }
+
+    this.state.calendarVideos.forEach(video => {
+      const card = document.createElement('div');
+      card.className = `video-card ${this.state.selectedVideoId === video.id ? 'selected' : ''}`;
+      card.onclick = () => this.selectVideo(video.id);
+
+      const pubDateStr = video.publish_date ? new Date(video.publish_date).toLocaleString() : 'Unscheduled';
+      const statusLabel = video.publish_status || 'draft';
+
+      card.innerHTML = `
+        <div class="video-header">
+          <div class="video-title">${video.title}</div>
+          <div class="video-status ${statusLabel}">${statusLabel}</div>
+        </div>
+        <div class="video-details" style="margin-top: 0.5rem;">
+          <div class="detail-item" style="grid-column: span 2;">
+            <span class="detail-label">Publish Date</span>
+            <span class="detail-value" style="color: var(--primary);">${pubDateStr}</span>
+          </div>
+        </div>
+      `;
+      list.appendChild(card);
+    });
   },
 
   async loadVideos() {
@@ -131,6 +179,7 @@ const app = {
   async selectVideo(id, fetchAssets = true) {
     this.state.selectedVideoId = id;
     this.renderVideoList();
+    this.renderCalendar();
 
     const video = this.state.videos.find(v => v.id === id);
     if (!video) return;
@@ -147,9 +196,29 @@ const app = {
     document.getElementById('metaAngle').innerHTML = video.angle || emptyText;
     document.getElementById('metaNotes').innerHTML = video.notes || emptyText;
 
+    // Show Publishing and Readiness panels
+    document.getElementById('readinessPanel').classList.remove('hidden');
+    document.getElementById('publishingSettings').classList.remove('hidden');
+    
+    // Populate Publishing Settings
+    document.getElementById('pubStatus').value = video.publish_status || 'draft';
+    
+    if (video.publish_date) {
+      const d = new Date(video.publish_date);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      document.getElementById('pubDate').value = d.toISOString().slice(0, 16);
+    } else {
+      document.getElementById('pubDate').value = '';
+    }
+    
+    document.getElementById('pubNotes').value = video.publish_notes || '';
+    document.getElementById('pubError').style.display = 'none';
+
     if (fetchAssets) {
       await this.loadAssets();
     }
+    
+    await this.loadReadiness();
     this.updateWorkflowAndCTA(video);
   },
 
@@ -345,6 +414,105 @@ const app = {
     );
   },
 
+  async loadReadiness() {
+    if (!this.state.selectedVideoId) return;
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/readiness`);
+      if (!res.ok) throw new Error('Failed to load readiness');
+      const data = await res.json();
+      this.renderReadiness(data);
+    } catch (err) {
+      this.log(`Error loading readiness: ${err.message}`, 'error');
+    }
+  },
+
+  renderReadiness(readiness) {
+    const list = document.getElementById('readinessChecklist');
+    const warningsBox = document.getElementById('readinessWarnings');
+    
+    list.innerHTML = '';
+    warningsBox.innerHTML = '';
+
+    const checks = [
+      { key: 'has_assets', label: 'Assets Generated' },
+      { key: 'is_approved', label: 'Manually Reviewed & Approved' },
+      { key: 'is_packaged', label: 'Assets Packaged' },
+      { key: 'has_publish_date', label: 'Publish Date Set' }
+    ];
+
+    checks.forEach(check => {
+      const isPass = readiness[check.key];
+      const icon = isPass ? '✅' : '❌';
+      const color = isPass ? 'var(--success)' : 'var(--textMuted)';
+      
+      const item = document.createElement('div');
+      item.style.display = 'flex';
+      item.style.alignItems = 'center';
+      item.style.gap = '0.5rem';
+      item.style.fontSize = '0.9rem';
+      item.style.color = color;
+      
+      item.innerHTML = `<span>${icon}</span> <span>${check.label}</span>`;
+      list.appendChild(item);
+    });
+
+    if (readiness.warnings && readiness.warnings.length > 0) {
+      readiness.warnings.forEach(w => {
+        const wItem = document.createElement('div');
+        wItem.style.color = 'var(--warning)';
+        wItem.style.fontSize = '0.85rem';
+        wItem.textContent = `⚠️ ${w}`;
+        warningsBox.appendChild(wItem);
+      });
+    }
+  },
+
+  async savePublishing() {
+    if (!this.state.selectedVideoId) return;
+    
+    const btn = document.getElementById('btnSavePublishing');
+    const errSpan = document.getElementById('pubError');
+    btn.disabled = true;
+    errSpan.style.display = 'none';
+
+    let pubDate = document.getElementById('pubDate').value;
+    if (pubDate) {
+      pubDate = new Date(pubDate).toISOString();
+    } else {
+      pubDate = null;
+    }
+
+    const payload = {
+      publish_status: document.getElementById('pubStatus').value,
+      publish_date: pubDate,
+      publish_notes: document.getElementById('pubNotes').value.trim() || null
+    };
+
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/publishing`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update publishing settings');
+      }
+      
+      this.log('Publishing settings saved successfully.', 'success');
+      await this.loadVideos();
+      await this.loadCalendar();
+    } catch (err) {
+      this.log(`Failed to save publishing: ${err.message}`, 'error');
+      errSpan.textContent = err.message;
+      errSpan.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
   packageAssets() {
     this.actionWrapper(
       'btnDynamic',
@@ -500,6 +668,8 @@ const app = {
       document.getElementById('selectedVideoTitle').textContent = 'Selected Video: None';
       document.getElementById('selectedVideoActions').style.display = 'none';
       document.getElementById('metadataDisplay').classList.add('hidden');
+      document.getElementById('readinessPanel').classList.add('hidden');
+      document.getElementById('publishingSettings').classList.add('hidden');
       document.getElementById('ctaPanel').innerHTML = '<div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>';
       
       await this.loadVideos();

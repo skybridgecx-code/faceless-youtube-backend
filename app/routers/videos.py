@@ -15,6 +15,8 @@ from app.schemas import (
     VideoCreate,
     VideoRead,
     VideoUpdate,
+    VideoPublishUpdate,
+    VideoReadiness,
 )
 from app.services.content_engine import (
     build_all_assets,
@@ -98,6 +100,67 @@ def delete_video(video_id: int, db: Session = Depends(get_db)):
     db.delete(video)
     db.commit()
     return {"ok": True}
+
+
+@router.patch("/{video_id}/publishing", response_model=VideoRead)
+def update_video_publishing(video_id: int, payload: VideoPublishUpdate, db: Session = Depends(get_db)) -> Video:
+    video = get_video_or_404(db, video_id)
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "publish_status" in update_data:
+        new_status = update_data["publish_status"]
+        if new_status in ("scheduled", "ready") and not video.approved:
+            raise HTTPException(status_code=400, detail="Cannot set publish status to ready or scheduled for an unapproved video")
+
+    for key, value in update_data.items():
+        setattr(video, key, value)
+    
+    db.commit()
+    db.refresh(video)
+    return video
+
+
+@router.get("/{video_id}/readiness", response_model=VideoReadiness)
+def get_video_readiness(video_id: int, db: Session = Depends(get_db)) -> VideoReadiness:
+    video = get_video_or_404(db, video_id)
+    
+    assets_generated = len(video.assets) > 0
+    review_approved = video.approved
+    
+    # Check for package (simple check: if status is packaged, publish_ready, published)
+    # Or checking if a manifest asset exists
+    package_created = any(a.asset_type == AssetType.package_manifest for a in video.assets)
+    
+    # Check if youtube metadata is prepared (in PublishRecord or assets)
+    # The payload prepares and saves a PublishRecord with platform='youtube'
+    from app.models import PublishRecord
+    youtube_record = db.scalar(select(PublishRecord).where(PublishRecord.video_id == video.id, PublishRecord.platform == "youtube").limit(1))
+    youtube_metadata_prepared = youtube_record is not None
+    
+    publish_date_set = video.publish_date is not None
+    publish_status_ready_or_scheduled = video.publish_status in ("ready", "scheduled")
+    
+    blocking_reasons = []
+    if not assets_generated:
+        blocking_reasons.append("Assets must be generated first")
+    if not review_approved:
+        blocking_reasons.append("Video must be approved via manual review")
+    if not package_created:
+        blocking_reasons.append("Video must be packaged")
+    if not youtube_metadata_prepared:
+        blocking_reasons.append("YouTube metadata must be prepared")
+    if publish_status_ready_or_scheduled and not publish_date_set:
+        blocking_reasons.append("Publish date should be set if status is ready or scheduled")
+        
+    return VideoReadiness(
+        assets_generated=assets_generated,
+        review_approved=review_approved,
+        package_created=package_created,
+        youtube_metadata_prepared=youtube_metadata_prepared,
+        publish_date_set=publish_date_set,
+        publish_status_ready_or_scheduled=publish_status_ready_or_scheduled,
+        blocking_reasons=blocking_reasons
+    )
 
 
 
