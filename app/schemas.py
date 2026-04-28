@@ -30,6 +30,18 @@ class VideoCreate(BaseModel):
     pain_point: str = "Missed calls, slow lead follow-up, and scattered customer details"
     demo_idea: str = "AI receptionist and dashboard walkthrough"
     thumbnail_text: str = Field(default="AI BUSINESS SYSTEM", max_length=80)
+    niche: str | None = None
+    target_audience: str | None = None
+    angle: str | None = None
+    notes: str | None = None
+
+class VideoUpdate(BaseModel):
+    title: str | None = None
+    niche: str | None = None
+    target_audience: str | None = None
+    angle: str | None = None
+    notes: str | None = None
+
 
 
 class VideoRead(BaseModel):
@@ -42,6 +54,10 @@ class VideoRead(BaseModel):
     pain_point: str
     demo_idea: str
     thumbnail_text: str
+    niche: str | None = None
+    target_audience: str | None = None
+    angle: str | None = None
+    notes: str | None = None
     status: VideoStatus
     approved: bool
     created_at: datetime

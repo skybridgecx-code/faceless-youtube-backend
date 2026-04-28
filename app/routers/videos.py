@@ -13,6 +13,7 @@ from app.schemas import (
     ReviewRead,
     VideoCreate,
     VideoRead,
+    VideoUpdate,
 )
 from app.services.content_engine import (
     build_all_assets,
@@ -77,6 +78,26 @@ def list_videos(channel_id: int | None = None, status: VideoStatus | None = None
 @router.get("/{video_id}", response_model=VideoRead)
 def read_video(video_id: int, db: Session = Depends(get_db)) -> Video:
     return get_video_or_404(db, video_id)
+
+
+@router.patch("/{video_id}", response_model=VideoRead)
+def update_video(video_id: int, payload: VideoUpdate, db: Session = Depends(get_db)) -> Video:
+    video = get_video_or_404(db, video_id)
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(video, key, value)
+    db.commit()
+    db.refresh(video)
+    return video
+
+
+@router.delete("/{video_id}")
+def delete_video(video_id: int, db: Session = Depends(get_db)):
+    video = get_video_or_404(db, video_id)
+    db.delete(video)
+    db.commit()
+    return {"ok": True}
+
 
 
 @router.get("/{video_id}/assets", response_model=list[AssetRead])

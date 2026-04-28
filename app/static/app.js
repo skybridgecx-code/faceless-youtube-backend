@@ -136,6 +136,16 @@ const app = {
 
     document.getElementById('selectedVideoTitle').textContent = `Selected: ${video.title}`;
     
+    // Show actions and metadata display
+    document.getElementById('selectedVideoActions').style.display = 'flex';
+    document.getElementById('metadataDisplay').classList.remove('hidden');
+
+    const emptyText = '<span class="empty-state-text">Not set</span>';
+    document.getElementById('metaNiche').innerHTML = video.niche || emptyText;
+    document.getElementById('metaAudience').innerHTML = video.target_audience || emptyText;
+    document.getElementById('metaAngle').innerHTML = video.angle || emptyText;
+    document.getElementById('metaNotes').innerHTML = video.notes || emptyText;
+
     if (fetchAssets) {
       await this.loadAssets();
     }
@@ -376,6 +386,122 @@ const app = {
       this.log(successMsg, 'success');
     } catch (err) {
       this.log(`Failed to copy: ${err.message}`, 'error');
+    }
+  },
+
+  // Modal Handlers
+  openNewIdeaModal() {
+    document.getElementById('newIdeaTitle').value = '';
+    document.getElementById('newIdeaNiche').value = '';
+    document.getElementById('newIdeaAudience').value = '';
+    document.getElementById('newIdeaAngle').value = '';
+    document.getElementById('newIdeaNotes').value = '';
+    document.getElementById('newIdeaModal').classList.remove('hidden');
+  },
+
+  closeNewIdeaModal() {
+    document.getElementById('newIdeaModal').classList.add('hidden');
+  },
+
+  async submitNewIdea() {
+    const title = document.getElementById('newIdeaTitle').value.trim();
+    if (!title) return alert('Title is required');
+
+    const payload = {
+      channel_id: 1, // Defaulting to 1 for this phase
+      title: title,
+      niche: document.getElementById('newIdeaNiche').value.trim() || null,
+      target_audience: document.getElementById('newIdeaAudience').value.trim() || null,
+      angle: document.getElementById('newIdeaAngle').value.trim() || null,
+      notes: document.getElementById('newIdeaNotes').value.trim() || null
+    };
+
+    try {
+      const res = await fetch('/videos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Failed to create video idea');
+      this.log('Created new video idea', 'success');
+      this.closeNewIdeaModal();
+      await this.loadVideos();
+    } catch (err) {
+      this.log(`Error creating idea: ${err.message}`, 'error');
+    }
+  },
+
+  openEditModal() {
+    if (!this.state.selectedVideoId) return;
+    const video = this.state.videos.find(v => v.id === this.state.selectedVideoId);
+    if (!video) return;
+
+    document.getElementById('editTitle').value = video.title || '';
+    document.getElementById('editNiche').value = video.niche || '';
+    document.getElementById('editAudience').value = video.target_audience || '';
+    document.getElementById('editAngle').value = video.angle || '';
+    document.getElementById('editNotes').value = video.notes || '';
+
+    document.getElementById('editModal').classList.remove('hidden');
+  },
+
+  closeEditModal() {
+    document.getElementById('editModal').classList.add('hidden');
+  },
+
+  async submitEdit() {
+    if (!this.state.selectedVideoId) return;
+
+    const payload = {
+      title: document.getElementById('editTitle').value.trim() || null,
+      niche: document.getElementById('editNiche').value.trim() || null,
+      target_audience: document.getElementById('editAudience').value.trim() || null,
+      angle: document.getElementById('editAngle').value.trim() || null,
+      notes: document.getElementById('editNotes').value.trim() || null
+    };
+
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Failed to update video');
+      this.log('Updated video metadata', 'success');
+      this.closeEditModal();
+      await this.loadVideos();
+    } catch (err) {
+      this.log(`Error updating video: ${err.message}`, 'error');
+    }
+  },
+
+  openDeleteModal() {
+    if (!this.state.selectedVideoId) return;
+    document.getElementById('deleteModal').classList.remove('hidden');
+  },
+
+  closeDeleteModal() {
+    document.getElementById('deleteModal').classList.add('hidden');
+  },
+
+  async confirmDelete() {
+    if (!this.state.selectedVideoId) return;
+    
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete video');
+      
+      this.log('Deleted video idea', 'success');
+      this.closeDeleteModal();
+      this.state.selectedVideoId = null;
+      document.getElementById('selectedVideoTitle').textContent = 'Selected Video: None';
+      document.getElementById('selectedVideoActions').style.display = 'none';
+      document.getElementById('metadataDisplay').classList.add('hidden');
+      document.getElementById('ctaPanel').innerHTML = '<div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>';
+      
+      await this.loadVideos();
+    } catch (err) {
+      this.log(`Error deleting video: ${err.message}`, 'error');
     }
   },
 

@@ -43,7 +43,10 @@
       <div class="panel">
         <div class="panel-header">
           <h2>Video Ideas</h2>
-          <button class="btn" id="btnRefreshVideos" onclick="app.loadVideos()">Refresh</button>
+          <div class="header-actions">
+            <button class="btn success" onclick="app.openNewIdeaModal()">+ New Idea</button>
+            <button class="btn" id="btnRefreshVideos" onclick="app.loadVideos()">Refresh</button>
+          </div>
         </div>
         <div class="panel-body">
           <div id="videoList" class="video-list">
@@ -56,9 +59,21 @@
       <div class="panel">
         <div class="panel-header">
           <h2 id="selectedVideoTitle">Selected Video: None</h2>
+          <div class="header-actions" id="selectedVideoActions" style="display: none;">
+            <button class="btn" onclick="app.openEditModal()">Edit</button>
+            <button class="btn danger" onclick="app.openDeleteModal()">Delete</button>
+          </div>
         </div>
         <div class="panel-body selected-video-panel">
           
+          <!-- Metadata Display -->
+          <div class="metadata-display hidden" id="metadataDisplay">
+            <div class="meta-row"><span class="meta-label">Niche:</span> <span id="metaNiche" class="meta-value"></span></div>
+            <div class="meta-row"><span class="meta-label">Target Audience:</span> <span id="metaAudience" class="meta-value"></span></div>
+            <div class="meta-row"><span class="meta-label">Angle:</span> <span id="metaAngle" class="meta-value"></span></div>
+            <div class="meta-row"><span class="meta-label">Notes:</span> <span id="metaNotes" class="meta-value"></span></div>
+          </div>
+
           <!-- Workflow Progress -->
           <div class="workflow-progress" id="workflowProgress">
             <div class="step" id="step-idea">Idea</div>
@@ -129,6 +144,95 @@
       <div class="modal-footer">
         <button class="btn" onclick="app.closeReviewModal()">Cancel</button>
         <button class="btn success" id="btnConfirmApprove" disabled onclick="app.confirmApprove()">Approve Video</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Idea Modal -->
+  <div class="modal-overlay hidden" id="newIdeaModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>New Video Idea</h2>
+        <button class="btn close-btn" onclick="app.closeNewIdeaModal()">X</button>
+      </div>
+      <div class="modal-body form-body">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="newIdeaTitle" placeholder="e.g. AI Dashboard Demo" />
+        </div>
+        <div class="form-group">
+          <label>Niche (Optional)</label>
+          <input type="text" id="newIdeaNiche" placeholder="e.g. Roofers" />
+        </div>
+        <div class="form-group">
+          <label>Target Audience (Optional)</label>
+          <input type="text" id="newIdeaAudience" placeholder="e.g. Local business owners" />
+        </div>
+        <div class="form-group">
+          <label>Angle (Optional)</label>
+          <input type="text" id="newIdeaAngle" placeholder="e.g. How to save 10 hours a week" />
+        </div>
+        <div class="form-group">
+          <label>Notes (Optional)</label>
+          <textarea id="newIdeaNotes" rows="3" placeholder="Any extra context..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeNewIdeaModal()">Cancel</button>
+        <button class="btn success" onclick="app.submitNewIdea()">Create Idea</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Metadata Modal -->
+  <div class="modal-overlay hidden" id="editModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Edit Idea Metadata</h2>
+        <button class="btn close-btn" onclick="app.closeEditModal()">X</button>
+      </div>
+      <div class="modal-body form-body">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="editTitle" />
+        </div>
+        <div class="form-group">
+          <label>Niche</label>
+          <input type="text" id="editNiche" />
+        </div>
+        <div class="form-group">
+          <label>Target Audience</label>
+          <input type="text" id="editAudience" />
+        </div>
+        <div class="form-group">
+          <label>Angle</label>
+          <input type="text" id="editAngle" />
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="editNotes" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeEditModal()">Cancel</button>
+        <button class="btn success" onclick="app.submitEdit()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="modal-overlay hidden" id="deleteModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Delete Idea</h2>
+        <button class="btn close-btn" onclick="app.closeDeleteModal()">X</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Are you sure you want to delete this video idea? All generated assets will also be deleted. This cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeDeleteModal()">Cancel</button>
+        <button class="btn danger" onclick="app.confirmDelete()">Yes, Delete</button>
       </div>
     </div>
   </div>

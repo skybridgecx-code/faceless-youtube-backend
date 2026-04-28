@@ -238,6 +238,42 @@ header {
   gap: 1.5rem;
 }
 
+.empty-state-text {
+  color: var(--text-muted);
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* Metadata Display */
+.metadata-display {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+  padding: 1.25rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.meta-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  min-width: 120px;
+}
+
+.meta-value {
+  color: var(--text-light);
+  flex: 1;
+}
+
 /* Workflow Progress */
 .workflow-progress {
   display: flex;
@@ -297,10 +333,10 @@ header {
   color: var(--textPrimary);
   padding: 0.75rem 1.5rem;
   border-radius: 8px;
-  font-size: 0.875rem;
+  font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -328,13 +364,23 @@ header {
 }
 
 .btn.success {
-  background: rgba(52, 211, 153, 0.1);
+  background: var(--teal);
   color: var(--success);
   border-color: rgba(52, 211, 153, 0.3);
 }
 
 .btn.success:hover:not(:disabled) {
-  background: rgba(52, 211, 153, 0.2);
+  background: #259e84;
+  color: #fff;
+}
+
+.btn.danger {
+  background: #E53935;
+  color: #fff;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: #C62828;
 }
 
 .btn.warning {
@@ -566,6 +612,11 @@ header {
   align-items: center;
 }
 
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .modal-header h2 {
   font-size: 1.125rem;
 }
@@ -575,6 +626,44 @@ header {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.form-group input, .form-group textarea {
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  color: var(--text-light);
+  border-radius: 6px;
+  padding: 0.75rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus, .form-group textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+}
+
+.form-group textarea {
+  resize: vertical;
 }
 
 .modal-desc {
