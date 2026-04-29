@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import os
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,6 +55,28 @@ def health() -> dict[str, object]:
 app.include_router(channels.router)
 app.include_router(videos.router)
 app.include_router(publish.router)
+
+
+def has_preview_file(video: Video) -> bool:
+    root = (settings.output_path / "previews").resolve()
+    expected = (root / str(video.id) / "draft.mp4").resolve()
+    candidates = [expected]
+    if video.rendered_preview_path:
+        configured = Path(video.rendered_preview_path).expanduser()
+        if not configured.is_absolute():
+            configured = (root / configured).resolve()
+        candidates.insert(0, configured)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_relative_to(root):
+            continue
+        if resolved.is_file():
+            return True
+    return False
 
 
 @app.get("/calendar", response_model=list[VideoRead])
@@ -130,6 +153,34 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
             )
             continue
 
+        preview_exists = has_preview_file(video)
+
+        if video.approved and not preview_exists:
+            action_queue.append(
+                PipelineActionItem(
+                    video_id=video.id,
+                    title=video.title,
+                    workflow_status=video.status.value,
+                    publish_status=video.publish_status,
+                    reason="Preview not available yet",
+                    suggested_next_action="Render draft preview",
+                )
+            )
+            continue
+
+        if video.approved and preview_exists and not video.preview_reviewed:
+            action_queue.append(
+                PipelineActionItem(
+                    video_id=video.id,
+                    title=video.title,
+                    workflow_status=video.status.value,
+                    publish_status=video.publish_status,
+                    reason="Preview ready but not reviewed",
+                    suggested_next_action="Watch draft preview",
+                )
+            )
+            continue
+
         if video.approved and video.status not in (VideoStatus.packaged, VideoStatus.publish_ready, VideoStatus.published):
             action_queue.append(
                 PipelineActionItem(
@@ -182,9 +233,11 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
         "Video is blocked": 0,
         "Assets generated but need review": 1,
         "Generated but not approved": 1,
-        "Approved but not packaged": 2,
-        "Packaged but payload not ready": 3,
-        "Scheduled/Ready but missing prerequisites": 4,
+        "Preview not available yet": 2,
+        "Preview ready but not reviewed": 2,
+        "Approved but not packaged": 3,
+        "Packaged but payload not ready": 4,
+        "Scheduled/Ready but missing prerequisites": 5,
     }
     action_queue.sort(key=lambda item: urgency_map.get(item.reason, 99))
 

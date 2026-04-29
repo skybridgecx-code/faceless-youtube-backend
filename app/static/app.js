@@ -12,6 +12,7 @@ const app = {
     selectedAssetType: null,
     editingAssetType: null,
     readinessByVideoId: {},
+    previewStatusByVideoId: {},
     packageDirsByVideoId: {},
     lastComplianceReportByVideoId: {},
     stats: {
@@ -295,7 +296,9 @@ const app = {
     const selectedReadiness = selectedVideo ? this.state.readinessByVideoId[selectedVideo.id] : null;
     const draftCandidate = this.state.videos.find(video => ['idea', 'drafted'].includes(video.status) && !video.approved);
     const reviewCandidate = this.state.videos.find(video => ['needs_review', 'rejected'].includes(video.status) && !video.approved);
-    const approvedCandidate = this.state.videos.find(video => video.status === 'approved' && video.approved);
+    const previewMissingCandidate = this.state.videos.find(video => video.approved && !video.rendered_preview_path);
+    const previewUnreviewedCandidate = this.state.videos.find(video => video.approved && !!video.rendered_preview_path && !video.preview_reviewed);
+    const approvedCandidate = this.state.videos.find(video => video.status === 'approved' && video.approved && !!video.rendered_preview_path && !!video.preview_reviewed);
     const packagedCandidate = this.state.videos.find(video => video.status === 'packaged');
 
     let nextAction = null;
@@ -326,6 +329,26 @@ const app = {
         handler: async () => {
           await this.selectVideo(reviewCandidate.id, { fetchAssets: true, clearCompliance: false });
           this.setActivePage('compliance');
+        }
+      };
+    } else if (previewMissingCandidate) {
+      nextAction = {
+        text: `${previewMissingCandidate.title}: preview not available yet.`,
+        button: 'Render Draft Preview',
+        handler: async () => {
+          await this.selectVideo(previewMissingCandidate.id, { fetchAssets: true, clearCompliance: false });
+          this.setActivePage('assets');
+          this.focusPreviewPanel();
+        }
+      };
+    } else if (previewUnreviewedCandidate) {
+      nextAction = {
+        text: `${previewUnreviewedCandidate.title}: watch draft preview and mark it reviewed.`,
+        button: 'Watch Draft Preview',
+        handler: async () => {
+          await this.selectVideo(previewUnreviewedCandidate.id, { fetchAssets: true, clearCompliance: false });
+          this.setActivePage('assets');
+          this.focusPreviewPanel();
         }
       };
     } else if (approvedCandidate) {
@@ -372,6 +395,8 @@ const app = {
       const checks = [
         { label: 'Generate assets for ideas', done: !draftCandidate },
         { label: 'Review and approve pending videos', done: (summary.status_counts['needs_review'] || 0) === 0 },
+        { label: 'Render draft preview for approved videos', done: !previewMissingCandidate },
+        { label: 'Watch and review draft previews', done: !previewUnreviewedCandidate },
         { label: 'Resolve compliance/publish blockers', done: (summary.publish_status_counts['blocked'] || 0) === 0 },
         { label: 'Package approved videos', done: !approvedCandidate },
         { label: 'Prepare payload for packaged videos', done: !packagedCandidate },
@@ -403,7 +428,16 @@ const app = {
       this.setActivePage('publishing');
     } else {
       this.setActivePage('assets');
+      if (nextAction.includes('preview') || nextAction.includes('watch')) {
+        this.focusPreviewPanel();
+      }
     }
+  },
+
+  focusPreviewPanel() {
+    const panel = document.getElementById('previewPanel');
+    if (!panel) return;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
 
   updateKPIs() {
@@ -506,6 +540,8 @@ const app = {
 
     const selectedVideoTitle = document.getElementById('selectedVideoTitle');
     if (selectedVideoTitle) selectedVideoTitle.textContent = `Selected Video: ${video.title}`;
+    const previewSelectedVideoTitle = document.getElementById('previewSelectedVideoTitle');
+    if (previewSelectedVideoTitle) previewSelectedVideoTitle.textContent = video.title;
     const complianceSelected = document.getElementById('complianceSelectedVideo');
     if (complianceSelected) complianceSelected.textContent = video.title;
 
@@ -526,8 +562,10 @@ const app = {
 
     const readinessPanel = document.getElementById('readinessPanel');
     const publishingSettings = document.getElementById('publishingSettings');
+    const previewPanel = document.getElementById('previewPanel');
     if (readinessPanel) readinessPanel.classList.remove('hidden');
     if (publishingSettings) publishingSettings.classList.remove('hidden');
+    if (previewPanel) previewPanel.classList.remove('hidden');
 
     const pubStatus = document.getElementById('pubStatus');
     if (pubStatus) pubStatus.value = video.publish_status || 'draft';
@@ -566,6 +604,7 @@ const app = {
     }
 
     await this.loadReadiness();
+    await this.loadPreviewStatus();
     if (reloadAudit) {
       await this.loadVideoAudit();
     }
@@ -584,15 +623,18 @@ const app = {
     const selectedVideoActions = document.getElementById('selectedVideoActions');
     const metadataDisplay = document.getElementById('metadataDisplay');
     const readinessPanel = document.getElementById('readinessPanel');
+    const previewPanel = document.getElementById('previewPanel');
     const publishingSettings = document.getElementById('publishingSettings');
     const auditPanel = document.getElementById('auditPanel');
     if (selectedVideoActions) selectedVideoActions.style.display = 'none';
     if (metadataDisplay) metadataDisplay.classList.add('hidden');
     if (readinessPanel) readinessPanel.classList.add('hidden');
+    if (previewPanel) previewPanel.classList.add('hidden');
     if (publishingSettings) publishingSettings.classList.add('hidden');
     if (auditPanel) auditPanel.classList.add('hidden');
     const ctaPanel = document.getElementById('ctaPanel');
     if (ctaPanel) ctaPanel.innerHTML = '<div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>';
+    this.renderPreviewStatus(null);
     this.clearComplianceResults();
     this.renderAssets();
     this.renderVideoAudit();
@@ -634,6 +676,10 @@ const app = {
       ctaPanel.innerHTML = `<button class="btn warning" id="btnDynamic" onclick="app.openReviewModal()">Review and Approve</button>`;
     } else if (readiness?.compliance_status === 'blocked') {
       ctaPanel.innerHTML = `<button class="btn danger" id="btnDynamic" onclick="app.setActivePage('compliance')">Fix Compliance Blockers</button>`;
+    } else if (currentStepIndex === 2 && readiness && !readiness.preview_rendered) {
+      ctaPanel.innerHTML = `<button class="btn primary" id="btnDynamic" onclick="app.renderDraftPreview()">Render Draft Preview</button>`;
+    } else if (currentStepIndex === 2 && readiness && readiness.preview_rendered && !readiness.preview_reviewed) {
+      ctaPanel.innerHTML = `<button class="btn warning" id="btnDynamic" onclick="app.focusPreviewPanel()">Watch Draft Preview</button>`;
     } else if (currentStepIndex === 2) {
       ctaPanel.innerHTML = `<button class="btn primary" id="btnDynamic" onclick="app.packageAssets()">Package</button>`;
     } else if (currentStepIndex === 3) {
@@ -918,6 +964,8 @@ const app = {
 
     const checks = [
       { key: 'assets_generated', label: 'Assets Generated' },
+      { key: 'preview_rendered', label: 'Preview Rendered' },
+      { key: 'preview_reviewed', label: 'Preview Manually Reviewed' },
       { key: 'review_approved', label: 'Manually Reviewed & Approved' },
       { key: 'package_created', label: 'Assets Packaged' },
       { key: 'youtube_metadata_prepared', label: 'YouTube Payload Prepared' },
@@ -953,7 +1001,9 @@ const app = {
 
     const previewPlaceholderText = document.getElementById('previewPlaceholderText');
     if (previewPlaceholderText) {
-      previewPlaceholderText.textContent = 'No rendered video preview yet.';
+      previewPlaceholderText.textContent = readiness.preview_rendered
+        ? (readiness.preview_reviewed ? 'Draft preview reviewed.' : 'Draft preview exists but still needs manual review.')
+        : 'No rendered video preview yet.';
     }
 
     // Update Review Modal compliance notice
@@ -973,6 +1023,174 @@ const app = {
         notice.innerHTML = `<strong>⚠️ Compliance Warning:</strong> Warnings detected. Review carefully.`;
       } else {
         notice.style.display = 'none';
+      }
+    }
+  },
+
+  async loadPreviewStatus() {
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      this.renderPreviewStatus(null);
+      return null;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/preview/status`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load preview status');
+      }
+      this.state.previewStatusByVideoId[selected.id] = data;
+      this.renderPreviewStatus(data);
+      return data;
+    } catch (err) {
+      this.log(`Preview status error: ${err.message}`, 'error');
+      this.renderPreviewStatus(null);
+      return null;
+    }
+  },
+
+  renderPreviewStatus(status) {
+    const statusText = document.getElementById('previewStatusText');
+    const expectedPath = document.getElementById('previewExpectedPath');
+    const reviewedText = document.getElementById('previewReviewedText');
+    const audioStatusText = document.getElementById('previewAudioStatusText');
+    const ttsProviderText = document.getElementById('previewTtsProviderText');
+    const ttsVoiceModelText = document.getElementById('previewTtsVoiceModelText');
+    const ttsSetupHintText = document.getElementById('previewTtsSetupHintText');
+    const previewPlayer = document.getElementById('previewPlayer');
+    const missingMessage = document.getElementById('previewMissingMessage');
+    const markReviewedBtn = document.getElementById('btnMarkPreviewReviewed');
+    if (!statusText || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
+
+    if (!status) {
+      statusText.textContent = 'No rendered video preview yet.';
+      expectedPath.textContent = 'out/previews/{video_id}/draft.mp4';
+      reviewedText.textContent = 'Not reviewed';
+      previewPlayer.pause();
+      previewPlayer.removeAttribute('src');
+      previewPlayer.load();
+      previewPlayer.classList.add('hidden');
+      missingMessage.textContent = 'No rendered video preview yet.';
+      missingMessage.classList.remove('hidden');
+      markReviewedBtn.disabled = true;
+      markReviewedBtn.style.display = 'none';
+      audioStatusText.textContent = 'No audio';
+      ttsProviderText.textContent = 'Not rendered';
+      ttsVoiceModelText.textContent = 'Not rendered';
+      ttsSetupHintText.textContent = 'Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for premium voiceover.';
+      return;
+    }
+
+    expectedPath.textContent = status.expected_path || 'out/previews/{video_id}/draft.mp4';
+    if (status.preview_exists && status.preview_url) {
+      const durationLabel = status.duration_seconds ? ` (${Math.round(status.duration_seconds)}s)` : '';
+      statusText.textContent = `Preview available${durationLabel}: ${status.preview_path || 'local file'}.`;
+      previewPlayer.src = status.preview_url;
+      previewPlayer.classList.remove('hidden');
+      missingMessage.classList.add('hidden');
+      markReviewedBtn.disabled = !!status.preview_reviewed;
+      markReviewedBtn.style.display = 'inline-flex';
+      reviewedText.textContent = status.preview_reviewed
+        ? `Reviewed${status.preview_reviewed_at ? ` at ${new Date(status.preview_reviewed_at).toLocaleString()}` : ''}`
+        : 'Not reviewed yet';
+      if (status.audio_generated) {
+        audioStatusText.textContent = `Voiceover generated${status.voiceover_path ? ` (${status.voiceover_path})` : ''}.`;
+      } else {
+        audioStatusText.textContent = status.silent_reason || 'Silent draft preview generated.';
+      }
+      ttsProviderText.textContent = status.tts_provider || 'Unknown';
+      ttsVoiceModelText.textContent = `${status.tts_voice || 'n/a'} / ${status.tts_model || 'n/a'}`;
+      if (status.tts_provider === 'elevenlabs') {
+        ttsSetupHintText.textContent = 'Premium ElevenLabs voiceover active.';
+      } else if (status.tts_provider === 'openai') {
+        ttsSetupHintText.textContent = 'Using OpenAI TTS fallback. Configure ElevenLabs vars for premium voice.';
+      } else {
+        ttsSetupHintText.textContent = 'Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for premium voiceover.';
+      }
+    } else {
+      statusText.textContent = 'No rendered video preview yet.';
+      previewPlayer.pause();
+      previewPlayer.removeAttribute('src');
+      previewPlayer.load();
+      previewPlayer.classList.add('hidden');
+      missingMessage.textContent = 'No rendered video preview yet.';
+      missingMessage.classList.remove('hidden');
+      reviewedText.textContent = 'Not reviewed';
+      markReviewedBtn.disabled = true;
+      markReviewedBtn.style.display = 'none';
+      audioStatusText.textContent = 'No audio';
+      ttsProviderText.textContent = 'Not rendered';
+      ttsVoiceModelText.textContent = 'Not rendered';
+      ttsSetupHintText.textContent = 'Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for premium voiceover.';
+    }
+  },
+
+  async refreshPreviewStatus() {
+    await this.loadPreviewStatus();
+  },
+
+  async renderDraftPreview() {
+    const selected = this.requireSelectedVideo('render draft preview');
+    if (!selected) return;
+
+    const btn = document.getElementById('btnRenderDraftPreview');
+    if (btn) {
+      btn.classList.add('loading');
+      btn.disabled = true;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/preview/render-draft`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to render draft preview');
+      }
+      this.log(
+        data.audio_generated
+          ? 'Draft preview rendered with voiceover.'
+          : `Draft preview rendered without voiceover. ${data.silent_reason || ''}`.trim(),
+        'success'
+      );
+      this.state.previewStatusByVideoId[selected.id] = data;
+      await this.refreshAfterMutation({ reloadAssets: false, reloadCalendar: false, reloadAudit: true, keepComplianceReport: true });
+      this.focusPreviewPanel();
+    } catch (err) {
+      this.log(`Render draft preview failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+    }
+  },
+
+  async markPreviewReviewed() {
+    const selected = this.requireSelectedVideo('mark draft preview reviewed');
+    if (!selected) return;
+    const btn = document.getElementById('btnMarkPreviewReviewed');
+    if (btn) {
+      btn.classList.add('loading');
+      btn.disabled = true;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/preview/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewed: true })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to mark preview reviewed');
+      }
+      this.log('Draft preview marked as reviewed.', 'success');
+      this.state.previewStatusByVideoId[selected.id] = data;
+      await this.refreshAfterMutation({ reloadAssets: false, reloadCalendar: false, reloadAudit: true, keepComplianceReport: true });
+      this.focusPreviewPanel();
+    } catch (err) {
+      this.log(`Mark preview reviewed failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.classList.remove('loading');
+        btn.disabled = false;
       }
     }
   },

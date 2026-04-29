@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import html
+import json
+import math
+import os
+import re
+import shutil
+import subprocess
+import textwrap
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -26,6 +41,8 @@ from app.schemas import (
     GenerateRequest,
     OperatorExport,
     PackageResponse,
+    PreviewReviewUpdate,
+    PreviewStatus,
     ReviewCreate,
     ReviewRead,
     VideoBatchCreate,
@@ -50,6 +67,27 @@ from app.services.content_engine import (
 from app.services.package_builder import build_video_package, slugify
 
 router = APIRouter(prefix="/videos", tags=["videos"])
+PREVIEW_FILENAME = "draft.mp4"
+PREVIEW_VOICEOVER_FILENAME = "voiceover.aiff"
+PREVIEW_RENDER_META_FILENAME = "render_meta.json"
+PREVIEW_MIN_DURATION_SECONDS = 20
+PREVIEW_MAX_DURATION_SECONDS = 60
+PREVIEW_RESOLUTION = "1280x720"
+PREVIEW_FPS = "30"
+PREVIEW_DEFAULT_OPENAI_MODEL = "gpt-4o-mini-tts"
+PREVIEW_DEFAULT_OPENAI_VOICE = "marin"
+PREVIEW_DEFAULT_ELEVEN_MODEL = "eleven_multilingual_v2"
+
+
+@dataclass
+class VoiceoverResult:
+    provider: str
+    voice: str | None
+    model: str | None
+    path: Path | None
+    audio_generated: bool
+    silent_reason: str | None
+    error_message: str | None = None
 
 
 def get_video_or_404(db: Session, video_id: int) -> Video:
@@ -71,8 +109,470 @@ def latest_asset(video: Video, asset_type: AssetType) -> ContentAsset | None:
     return sorted(assets, key=lambda asset: asset.created_at, reverse=True)[0] if assets else None
 
 
+def preview_root_dir() -> Path:
+    root = (get_settings().output_path / "previews").resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def expected_preview_path(video_id: int) -> Path:
+    return preview_root_dir() / str(video_id) / PREVIEW_FILENAME
+
+
+def preview_voiceover_path(video_id: int) -> Path:
+    return preview_root_dir() / str(video_id) / PREVIEW_VOICEOVER_FILENAME
+
+
+def preview_meta_path(video_id: int) -> Path:
+    return preview_root_dir() / str(video_id) / PREVIEW_RENDER_META_FILENAME
+
+
+def resolve_preview_path(video: Video) -> Path | None:
+    root = preview_root_dir()
+    candidates: list[Path] = []
+
+    if video.rendered_preview_path:
+        configured_path = Path(video.rendered_preview_path).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = (root / configured_path).resolve()
+        candidates.append(configured_path)
+
+    candidates.append(expected_preview_path(video.id).resolve())
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_relative_to(root):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def read_preview_meta(video_id: int) -> dict[str, object]:
+    meta_path = preview_meta_path(video_id)
+    if not meta_path.is_file():
+        return {}
+    try:
+        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def write_preview_meta(video_id: int, data: dict[str, object]) -> None:
+    meta_path = preview_meta_path(video_id)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+
+
+def clean_script_text(script_text: str) -> str:
+    text = script_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\[[^\]]*\]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def extract_preview_source_text(video: Video) -> str:
+    script_asset = latest_asset(video, AssetType.script)
+    if script_asset and script_asset.body.strip():
+        return clean_script_text(script_asset.body)
+
+    description_asset = latest_asset(video, AssetType.description)
+    if description_asset and description_asset.body.strip():
+        return clean_script_text(description_asset.body)
+
+    brief_asset = latest_asset(video, AssetType.brief)
+    if brief_asset and brief_asset.body.strip():
+        return clean_script_text(brief_asset.body)
+
+    raise HTTPException(status_code=409, detail="No script-like assets found. Generate assets first.")
+
+
+def split_preview_sections(script_text: str, max_sections: int = 8) -> list[str]:
+    paragraphs = [segment.strip() for segment in script_text.split("\n\n") if segment.strip()]
+    sections: list[str] = paragraphs[:max_sections]
+
+    if not sections:
+        sentence_parts = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", script_text) if segment.strip()]
+        if sentence_parts:
+            chunk_size = 2
+            sections = [
+                " ".join(sentence_parts[index:index + chunk_size])
+                for index in range(0, len(sentence_parts), chunk_size)
+            ][:max_sections]
+
+    if not sections:
+        sections = [script_text]
+
+    return sections
+
+
+def build_slide_text_blocks(video: Video, script_text: str) -> list[str]:
+    sections = split_preview_sections(script_text, max_sections=7)
+    title_parts = ["DRAFT PREVIEW", video.title]
+    if video.niche:
+        title_parts.append(f"Niche: {video.niche}")
+    if video.target_audience:
+        title_parts.append(f"Audience: {video.target_audience}")
+    slides = ["\n".join(title_parts)]
+    slides.extend(sections)
+    return slides
+
+
+def parse_preview_tts_rate() -> int | None:
+    raw_value = os.getenv("PREVIEW_TTS_RATE", "").strip()
+    if not raw_value:
+        return None
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return None
+    return max(80, min(420, parsed))
+
+
+def sanitize_tts_text(script_text: str, max_chars: int = 5000) -> str:
+    text = script_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"(?im)^\s*[-*#>`]+", "", text)
+    text = re.sub(r"(?im)\b(?:hook|title|cta|call to action|scene|shot|stage direction)\s*:\s*", "", text)
+    text = re.sub(r"(?im)^\s*\[[^\]]+\]\s*$", "", text)
+    text = re.sub(r"[`*_~]", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = text.strip()
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + " ..."
+    return text
+
+
+def select_tts_chain() -> list[str]:
+    configured = os.getenv("PREVIEW_TTS_PROVIDER", "auto").strip().lower() or "auto"
+    if configured == "auto":
+        return ["elevenlabs", "openai", "macos", "silent"]
+    if configured == "elevenlabs":
+        return ["elevenlabs", "openai", "macos", "silent"]
+    if configured == "openai":
+        return ["openai", "macos", "silent"]
+    if configured == "macos":
+        return ["macos", "silent"]
+    if configured == "silent":
+        return ["silent"]
+    return ["elevenlabs", "openai", "macos", "silent"]
+
+
+def elevenlabs_tts(text: str, preview_dir: Path) -> VoiceoverResult:
+    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    voice_id = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+    model_id = os.getenv("ELEVENLABS_MODEL_ID", PREVIEW_DEFAULT_ELEVEN_MODEL).strip() or PREVIEW_DEFAULT_ELEVEN_MODEL
+
+    if not api_key:
+        return VoiceoverResult("elevenlabs", voice_id or None, model_id, None, False, None, "ELEVENLABS_API_KEY is not set.")
+    if not voice_id:
+        return VoiceoverResult("elevenlabs", None, model_id, None, False, None, "ELEVENLABS_VOICE_ID is required for ElevenLabs.")
+
+    output_path = (preview_dir / "voiceover.mp3").resolve()
+    payload = {
+        "text": text,
+        "model_id": model_id,
+        "voice_settings": {"stability": 0.4, "similarity_boost": 0.75, "style": 0.2, "use_speaker_boost": True},
+    }
+    request = urllib.request.Request(
+        url=f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": api_key,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=35) as response:
+            audio_bytes = response.read()
+        output_path.write_bytes(audio_bytes)
+    except urllib.error.HTTPError as exc:
+        return VoiceoverResult("elevenlabs", voice_id, model_id, None, False, None, f"ElevenLabs HTTP error: {exc.code}")
+    except Exception as exc:  # noqa: BLE001
+        return VoiceoverResult("elevenlabs", voice_id, model_id, None, False, None, f"ElevenLabs request failed: {exc}")
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        return VoiceoverResult("elevenlabs", voice_id, model_id, None, False, None, "ElevenLabs returned empty audio.")
+    return VoiceoverResult("elevenlabs", voice_id, model_id, output_path, True, None, None)
+
+
+def openai_tts(text: str, preview_dir: Path) -> VoiceoverResult:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    model = os.getenv("OPENAI_TTS_MODEL", PREVIEW_DEFAULT_OPENAI_MODEL).strip() or PREVIEW_DEFAULT_OPENAI_MODEL
+    voice = os.getenv("OPENAI_TTS_VOICE", PREVIEW_DEFAULT_OPENAI_VOICE).strip() or PREVIEW_DEFAULT_OPENAI_VOICE
+    if not api_key:
+        return VoiceoverResult("openai", voice, model, None, False, None, "OPENAI_API_KEY is not set.")
+
+    output_path = (preview_dir / "voiceover.mp3").resolve()
+    instructions = (
+        "Speak like a confident, clear YouTube narrator for business owners. "
+        "Natural pacing, warm tone, not robotic, not overly excited."
+    )
+    payload = {
+        "model": model,
+        "voice": voice,
+        "input": text,
+        "format": "mp3",
+        "instructions": instructions,
+    }
+    request = urllib.request.Request(
+        url="https://api.openai.com/v1/audio/speech",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=35) as response:
+            audio_bytes = response.read()
+        output_path.write_bytes(audio_bytes)
+    except urllib.error.HTTPError as exc:
+        return VoiceoverResult("openai", voice, model, None, False, None, f"OpenAI HTTP error: {exc.code}")
+    except Exception as exc:  # noqa: BLE001
+        return VoiceoverResult("openai", voice, model, None, False, None, f"OpenAI request failed: {exc}")
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        return VoiceoverResult("openai", voice, model, None, False, None, "OpenAI returned empty audio.")
+    return VoiceoverResult("openai", voice, model, output_path, True, None, None)
+
+
+def macos_tts(text: str, preview_dir: Path, video_id: int) -> VoiceoverResult:
+    say_bin = shutil.which("say")
+    if not say_bin:
+        return VoiceoverResult(
+            "macos",
+            "Samantha",
+            None,
+            None,
+            False,
+            "Silent draft preview generated because local text-to-speech was unavailable.",
+            "say command not found.",
+        )
+    output_path = preview_voiceover_path(video_id).resolve()
+    rate = parse_preview_tts_rate()
+    command = [say_bin, "-o", str(output_path), "-v", "Samantha"]
+    if rate is not None:
+        command.extend(["-r", str(rate)])
+    command.append(text)
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        return VoiceoverResult(
+            "macos",
+            "Samantha",
+            None,
+            None,
+            False,
+            "Silent draft preview generated because local text-to-speech failed.",
+            "macOS say failed.",
+        )
+    return VoiceoverResult("macos", "Samantha", None, output_path, True, None, None)
+
+
+def generate_voiceover(text: str, preview_dir: Path, video_id: int) -> VoiceoverResult:
+    clean_text = sanitize_tts_text(text)
+    chain = select_tts_chain()
+    errors: list[str] = []
+
+    for provider in chain:
+        if provider == "silent":
+            reason = "Silent draft preview generated because all configured TTS providers failed."
+            if errors:
+                reason = f"{reason} Last error: {errors[-1]}"
+            return VoiceoverResult("silent", None, None, None, False, reason, errors[-1] if errors else None)
+        if provider == "elevenlabs":
+            result = elevenlabs_tts(clean_text, preview_dir)
+        elif provider == "openai":
+            result = openai_tts(clean_text, preview_dir)
+        elif provider == "macos":
+            result = macos_tts(clean_text, preview_dir, video_id)
+        else:
+            continue
+
+        if result.audio_generated:
+            return result
+        if result.error_message:
+            errors.append(result.error_message)
+        if result.silent_reason and provider == "macos":
+            errors.append(result.silent_reason)
+
+    reason = "Silent draft preview generated because no TTS provider succeeded."
+    if errors:
+        reason = f"{reason} Last error: {errors[-1]}"
+    return VoiceoverResult("silent", None, None, None, False, reason, errors[-1] if errors else None)
+
+
+def estimate_preview_duration_seconds(script_text: str) -> int:
+    words = max(1, len(script_text.split()))
+    estimated = math.ceil(words / 2.6)
+    return max(PREVIEW_MIN_DURATION_SECONDS, min(PREVIEW_MAX_DURATION_SECONDS, estimated))
+
+
+def wrap_slide_text(raw_text: str, width: int = 44, max_lines: int = 10) -> str:
+    wrapped = textwrap.wrap(raw_text, width=width)
+    if not wrapped:
+        return ""
+    truncated = wrapped[:max_lines]
+    if len(wrapped) > max_lines:
+        truncated[-1] = truncated[-1].rstrip(". ") + "..."
+    return "\n".join(truncated)
+
+
+def build_slide_html_document(video: Video, slide_text: str, slide_index: int, total_slides: int) -> str:
+    safe_title = html.escape(video.title)
+    safe_slide = "<br/>".join(html.escape(line) for line in slide_text.splitlines() if line.strip())
+    safe_niche = html.escape(video.niche) if video.niche else "General"
+    safe_audience = html.escape(video.target_audience) if video.target_audience else "General audience"
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {{
+      margin: 0;
+      width: 1280px;
+      height: 720px;
+      background: linear-gradient(180deg, #121722 0%, #0e1118 100%);
+      color: #f4f6fb;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      padding: 56px 72px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }}
+    .top {{
+      font-size: 24px;
+      letter-spacing: 0.08em;
+      color: #8fb5ff;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    .title {{
+      margin-top: 14px;
+      font-size: 44px;
+      line-height: 1.18;
+      font-weight: 700;
+      max-width: 1120px;
+    }}
+    .caption {{
+      margin-top: 28px;
+      font-size: 34px;
+      line-height: 1.34;
+      color: #ffffff;
+      max-width: 1110px;
+      min-height: 330px;
+    }}
+    .footer {{
+      margin-top: 16px;
+      border-top: 1px solid #2a3346;
+      padding-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 22px;
+      color: #9aa8c5;
+    }}
+    .badge {{
+      display: inline-block;
+      padding: 8px 14px;
+      border: 1px solid #3d4e70;
+      border-radius: 24px;
+      color: #b6cbff;
+      font-size: 20px;
+      margin-top: 18px;
+    }}
+  </style>
+</head>
+<body>
+  <div>
+    <div class="top">Local AI Operator • DRAFT PREVIEW</div>
+    <div class="title">{safe_title}</div>
+    <div class="badge">Niche: {safe_niche} • Audience: {safe_audience}</div>
+    <div class="caption">{safe_slide}</div>
+  </div>
+  <div class="footer">
+    <span>Concept Review Only • Not Final Production</span>
+    <span>Slide {slide_index}/{total_slides}</span>
+  </div>
+</body>
+</html>
+"""
+
+
+def sync_preview_state(video: Video) -> Path | None:
+    preview_path = resolve_preview_path(video)
+    if preview_path is None:
+        video.rendered_preview_path = None
+        video.preview_rendered_at = None
+        video.preview_reviewed = False
+        video.preview_reviewed_at = None
+        return None
+
+    video.rendered_preview_path = str(preview_path)
+    if video.preview_rendered_at is None:
+        video.preview_rendered_at = datetime.utcfromtimestamp(preview_path.stat().st_mtime)
+    return preview_path
+
+
+def clear_preview_state(video: Video) -> None:
+    video.rendered_preview_path = None
+    video.preview_rendered_at = None
+    video.preview_reviewed = False
+    video.preview_reviewed_at = None
+    for artifact in (expected_preview_path(video.id), preview_voiceover_path(video.id), preview_meta_path(video.id)):
+        try:
+            artifact.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def build_preview_status(video: Video, preview_path: Path | None) -> PreviewStatus:
+    expected_path = expected_preview_path(video.id).resolve()
+    voiceover_path = preview_voiceover_path(video.id).resolve()
+    voiceover_exists = voiceover_path.is_file() and voiceover_path.stat().st_size > 0
+    meta = read_preview_meta(video.id)
+    audio_generated = bool(meta.get("audio_generated", voiceover_exists))
+    silent_reason = str(meta.get("silent_reason")) if meta.get("silent_reason") else None
+    duration_seconds_value = meta.get("duration_seconds")
+    duration_seconds = float(duration_seconds_value) if isinstance(duration_seconds_value, (int, float)) else None
+    provider = str(meta.get("provider")) if meta.get("provider") else None
+    voice = str(meta.get("voice")) if meta.get("voice") else None
+    model = str(meta.get("model")) if meta.get("model") else None
+    return PreviewStatus(
+        video_id=video.id,
+        title=video.title,
+        preview_exists=preview_path is not None,
+        preview_url=f"/videos/{video.id}/preview" if preview_path is not None else None,
+        preview_path=str(preview_path) if preview_path is not None else None,
+        expected_path=str(expected_path),
+        preview_rendered_at=video.preview_rendered_at,
+        preview_reviewed=bool(video.preview_reviewed),
+        preview_reviewed_at=video.preview_reviewed_at,
+        audio_generated=audio_generated,
+        voiceover_path=str(voiceover_path) if voiceover_exists else None,
+        silent_reason=silent_reason,
+        duration_seconds=duration_seconds,
+        tts_provider=provider,
+        tts_voice=voice,
+        tts_model=model,
+    )
+
+
 def build_readiness(video: Video, db: Session) -> VideoReadiness:
+    preview_path = sync_preview_state(video)
     assets_generated = len(video.assets) > 0
+    preview_rendered = preview_path is not None
+    preview_reviewed = bool(video.preview_reviewed) and preview_rendered
     review_approved = video.approved
     package_created = latest_asset(video, AssetType.package_manifest) is not None
 
@@ -88,6 +588,10 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
     blocking_reasons: list[str] = []
     if not assets_generated:
         blocking_reasons.append("Assets must be generated first")
+    if not preview_rendered:
+        blocking_reasons.append("Draft preview must be rendered before packaging")
+    if preview_rendered and not preview_reviewed:
+        blocking_reasons.append("Draft preview must be manually reviewed")
     if not review_approved:
         blocking_reasons.append("Video must be approved via manual review")
     if not package_created:
@@ -98,9 +602,13 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
         blocking_reasons.append("Publish date should be set if status is ready or scheduled")
 
     report = run_compliance_checks(video)
+    if report.overall_status == "blocked":
+        blocking_reasons.append("Compliance checks are blocked")
 
     return VideoReadiness(
         assets_generated=assets_generated,
+        preview_rendered=preview_rendered,
+        preview_reviewed=preview_reviewed,
         review_approved=review_approved,
         package_created=package_created,
         youtube_metadata_prepared=youtube_metadata_prepared,
@@ -206,7 +714,11 @@ def list_videos(
                 Video.notes.ilike(search_term),
             )
         )
-    return list(db.scalars(stmt))
+    videos = list(db.scalars(stmt))
+    for video in videos:
+        sync_preview_state(video)
+    db.commit()
+    return videos
 
 
 @router.post("/batch", response_model=list[VideoRead])
@@ -266,6 +778,7 @@ def get_video_audit(
 @router.get("/{video_id}/operator-export", response_model=OperatorExport)
 def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> OperatorExport:
     video = get_video_or_404(db, video_id)
+    preview_path = sync_preview_state(video)
     readiness = build_readiness(video, db)
     report = run_compliance_checks(video)
     audit_events = list(
@@ -305,17 +818,30 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
         package_dir=package_dir,
         youtube_payload_readiness={
             "approved": video.approved,
+            "preview_exists": preview_path is not None,
+            "preview_reviewed": bool(video.preview_reviewed),
             "package_exists": package_dir is not None,
             "youtube_metadata_asset_exists": has_youtube_metadata_asset,
             "publish_record_exists": youtube_payload_ready,
-            "ready": video.approved and package_dir is not None and has_youtube_metadata_asset and youtube_payload_ready,
+            "ready": (
+                video.approved
+                and preview_path is not None
+                and bool(video.preview_reviewed)
+                and package_dir is not None
+                and has_youtube_metadata_asset
+                and youtube_payload_ready
+            ),
         },
     )
 
 
 @router.get("/{video_id}", response_model=VideoRead)
 def read_video(video_id: int, db: Session = Depends(get_db)) -> Video:
-    return get_video_or_404(db, video_id)
+    video = get_video_or_404(db, video_id)
+    sync_preview_state(video)
+    db.commit()
+    db.refresh(video)
+    return video
 
 
 @router.patch("/{video_id}", response_model=VideoRead)
@@ -383,7 +909,242 @@ def update_video_publishing(video_id: int, payload: VideoPublishUpdate, db: Sess
 @router.get("/{video_id}/readiness", response_model=VideoReadiness)
 def get_video_readiness(video_id: int, db: Session = Depends(get_db)) -> VideoReadiness:
     video = get_video_or_404(db, video_id)
-    return build_readiness(video, db)
+    readiness = build_readiness(video, db)
+    db.commit()
+    db.refresh(video)
+    return readiness
+
+
+@router.get("/{video_id}/preview/status", response_model=PreviewStatus)
+def get_preview_status(video_id: int, db: Session = Depends(get_db)) -> PreviewStatus:
+    video = get_video_or_404(db, video_id)
+    preview_path = sync_preview_state(video)
+    db.commit()
+    db.refresh(video)
+    return build_preview_status(video, preview_path)
+
+
+@router.get("/{video_id}/preview")
+def get_preview_file(video_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    video = get_video_or_404(db, video_id)
+    preview_path = sync_preview_state(video)
+    db.commit()
+    db.refresh(video)
+    if preview_path is None:
+        raise HTTPException(status_code=404, detail="No rendered draft preview exists for this video.")
+    return FileResponse(path=str(preview_path), media_type="video/mp4", filename=PREVIEW_FILENAME)
+
+
+@router.post("/{video_id}/preview/review", response_model=PreviewStatus)
+def mark_preview_reviewed(video_id: int, payload: PreviewReviewUpdate, db: Session = Depends(get_db)) -> PreviewStatus:
+    video = get_video_or_404(db, video_id)
+    preview_path = sync_preview_state(video)
+    if preview_path is None:
+        raise HTTPException(status_code=404, detail="Cannot review preview before a real draft preview file exists.")
+
+    if payload.reviewed:
+        video.preview_reviewed = True
+        video.preview_reviewed_at = datetime.utcnow()
+    else:
+        video.preview_reviewed = False
+        video.preview_reviewed_at = None
+
+    db.commit()
+    db.refresh(video)
+    log_audit_event(
+        db,
+        "preview_reviewed" if payload.reviewed else "preview_unreviewed",
+        f"{'Marked' if payload.reviewed else 'Cleared'} preview review state for: {video.title}",
+        video_id=video.id,
+        metadata={"preview_path": str(preview_path), "reviewed": payload.reviewed},
+    )
+    return build_preview_status(video, preview_path)
+
+
+@router.post("/{video_id}/preview/render-draft", response_model=PreviewStatus)
+def render_draft_preview(video_id: int, db: Session = Depends(get_db)) -> PreviewStatus:
+    video = get_video_or_404(db, video_id)
+    if not video.approved:
+        raise HTTPException(status_code=409, detail="Video must be manually approved before rendering a draft preview.")
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    qlmanage_bin = shutil.which("qlmanage")
+    expected_path = expected_preview_path(video.id).resolve()
+    if not ffmpeg_bin:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No local preview renderer is configured. "
+                f"Place a real draft MP4 at: {expected_path}"
+            ),
+        )
+    if not qlmanage_bin:
+        raise HTTPException(status_code=409, detail="Local preview renderer requires macOS qlmanage for slide rendering.")
+    script_text = extract_preview_source_text(video)
+    slides = build_slide_text_blocks(video, script_text)
+    total_duration = estimate_preview_duration_seconds(script_text)
+    per_slide_duration = max(3.0, total_duration / max(1, len(slides)))
+
+    preview_dir = expected_path.parent
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    voiceover_path = preview_voiceover_path(video.id).resolve()
+    meta_path = preview_meta_path(video.id).resolve()
+    staged_video_path = preview_dir / "draft_video_no_audio.mp4"
+    final_render_path = preview_dir / "draft_rendered.mp4"
+    concat_file_path = preview_dir / "slides_concat.txt"
+
+    for artifact in [voiceover_path, meta_path, staged_video_path, final_render_path, concat_file_path]:
+        try:
+            artifact.unlink(missing_ok=True)
+        except OSError:
+            continue
+    for stale_segment in preview_dir.glob("segment_*.mp4"):
+        try:
+            stale_segment.unlink(missing_ok=True)
+        except OSError:
+            continue
+    for stale_text in preview_dir.glob("slide_*.*"):
+        try:
+            stale_text.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+    voiceover_result = generate_voiceover(script_text, preview_dir, video.id)
+    audio_generated = voiceover_result.audio_generated
+    silent_reason: str | None = voiceover_result.silent_reason
+    if voiceover_result.path:
+        voiceover_path = voiceover_result.path.resolve()
+
+    segment_paths: list[Path] = []
+    for index, slide_text in enumerate(slides, start=1):
+        wrapped_text = wrap_slide_text(slide_text)
+        slide_html_file = preview_dir / f"slide_{index}.html"
+        slide_png_file = preview_dir / f"slide_{index}.html.png"
+        slide_html_file.write_text(build_slide_html_document(video, wrapped_text, index, len(slides)), encoding="utf-8")
+        quicklook_command = [
+            qlmanage_bin,
+            "-t",
+            "-s",
+            "1280",
+            "-o",
+            str(preview_dir),
+            str(slide_html_file),
+        ]
+        quicklook_result = subprocess.run(quicklook_command, capture_output=True, text=True)
+        if quicklook_result.returncode != 0 or not slide_png_file.exists() or slide_png_file.stat().st_size == 0:
+            raise HTTPException(status_code=409, detail="Draft preview render failed while creating slide images.")
+
+        segment_path = preview_dir / f"segment_{index}.mp4"
+        segment_paths.append(segment_path)
+
+        segment_command = [
+            ffmpeg_bin,
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            str(slide_png_file),
+            "-t",
+            f"{per_slide_duration:.2f}",
+            "-vf",
+            "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
+            "-r",
+            PREVIEW_FPS,
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            str(segment_path),
+        ]
+        segment_result = subprocess.run(segment_command, capture_output=True, text=True)
+        if segment_result.returncode != 0 or not segment_path.exists() or segment_path.stat().st_size == 0:
+            raise HTTPException(status_code=409, detail="Draft preview render failed while generating slide segments.")
+
+    concat_lines = [f"file '{segment.resolve()}'" for segment in segment_paths]
+    concat_file_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+    concat_command = [
+        ffmpeg_bin,
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_file_path),
+        "-c",
+        "copy",
+        str(staged_video_path),
+    ]
+    concat_result = subprocess.run(concat_command, capture_output=True, text=True)
+    if concat_result.returncode != 0 or not staged_video_path.exists() or staged_video_path.stat().st_size == 0:
+        raise HTTPException(status_code=409, detail="Draft preview render failed while composing slideshow.")
+
+    if audio_generated and voiceover_path.exists() and voiceover_path.stat().st_size > 0:
+        mux_command = [
+            ffmpeg_bin,
+            "-y",
+            "-i",
+            str(staged_video_path),
+            "-i",
+            str(voiceover_path),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(final_render_path),
+        ]
+        mux_result = subprocess.run(mux_command, capture_output=True, text=True)
+        if mux_result.returncode != 0 or not final_render_path.exists() or final_render_path.stat().st_size == 0:
+            raise HTTPException(status_code=409, detail="Draft preview render failed while adding voiceover.")
+    else:
+        staged_video_path.replace(final_render_path)
+
+    if not final_render_path.exists() or final_render_path.stat().st_size == 0:
+        raise HTTPException(status_code=409, detail="Draft preview render failed to produce a video file.")
+
+    final_render_path.replace(expected_path)
+
+    duration_seconds = round(per_slide_duration * len(slides), 2)
+    meta_payload = {
+        "audio_generated": audio_generated,
+        "silent_reason": silent_reason,
+        "duration_seconds": duration_seconds,
+        "slides_count": len(slides),
+        "provider": voiceover_result.provider,
+        "voice": voiceover_result.voice,
+        "model": voiceover_result.model,
+        "error_message": voiceover_result.error_message,
+        "voiceover_path": str(voiceover_path) if audio_generated else None,
+        "rendered_at": datetime.utcnow().isoformat(),
+    }
+    write_preview_meta(video.id, meta_payload)
+
+    video.rendered_preview_path = str(expected_path)
+    video.preview_rendered_at = datetime.utcnow()
+    video.preview_reviewed = False
+    video.preview_reviewed_at = None
+    db.commit()
+    db.refresh(video)
+    log_audit_event(
+        db,
+        "preview_rendered",
+        f"Rendered draft preview for: {video.title}",
+        video_id=video.id,
+        metadata={
+            "preview_path": str(expected_path),
+            "audio_generated": audio_generated,
+            "silent_reason": silent_reason,
+            "duration_seconds": duration_seconds,
+            "slides_count": len(slides),
+            "provider": voiceover_result.provider,
+            "voice": voiceover_result.voice,
+            "model": voiceover_result.model,
+            "error_message": voiceover_result.error_message,
+        },
+    )
+    return build_preview_status(video, expected_path)
 
 
 @router.get("/{video_id}/assets", response_model=list[AssetRead])
@@ -425,6 +1186,7 @@ def generate_assets(video_id: int, payload: GenerateRequest = GenerateRequest(),
 
     video.status = VideoStatus.needs_review
     video.approved = False
+    clear_preview_state(video)
     db.commit()
     for asset in assets:
         db.refresh(asset)
@@ -457,6 +1219,7 @@ def update_asset(video_id: int, asset_type: str, payload: AssetUpdate, db: Sessi
     asset.version += 1
     video.status = VideoStatus.needs_review
     video.approved = False
+    clear_preview_state(video)
 
     db.commit()
     db.refresh(asset)
@@ -509,6 +1272,7 @@ def regenerate_asset(video_id: int, asset_type: str, db: Session = Depends(get_d
     asset.version += 1
     video.status = VideoStatus.needs_review
     video.approved = False
+    clear_preview_state(video)
 
     db.commit()
     db.refresh(asset)
@@ -551,6 +1315,14 @@ def review_video(video_id: int, payload: ReviewCreate, db: Session = Depends(get
 @router.post("/{video_id}/package", response_model=PackageResponse)
 def package_video(video_id: int, db: Session = Depends(get_db)) -> PackageResponse:
     video = get_video_or_404(db, video_id)
+    preview_path = sync_preview_state(video)
+    if preview_path is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft preview is missing. Expected file: {expected_preview_path(video.id).resolve()}",
+        )
+    if not video.preview_reviewed:
+        raise HTTPException(status_code=409, detail="Draft preview must be manually reviewed before packaging.")
     try:
         package_dir, manifest_asset = build_video_package(db, video)
     except ValueError as exc:

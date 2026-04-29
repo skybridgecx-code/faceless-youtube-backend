@@ -63,6 +63,10 @@ class VideoRead(BaseModel):
     publish_date: datetime | None = None
     publish_status: str
     publish_notes: str | None = None
+    rendered_preview_path: str | None = None
+    preview_rendered_at: datetime | None = None
+    preview_reviewed: bool = False
+    preview_reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -77,6 +81,8 @@ class VideoPublishUpdate(BaseModel):
 
 class VideoReadiness(BaseModel):
     assets_generated: bool
+    preview_rendered: bool
+    preview_reviewed: bool
     review_approved: bool
     package_created: bool
     youtube_metadata_prepared: bool
@@ -180,6 +186,29 @@ class PackageResponse(BaseModel):
     video_id: int
     package_dir: str
     manifest_asset_id: int
+
+
+class PreviewStatus(BaseModel):
+    video_id: int
+    title: str
+    preview_exists: bool
+    preview_url: str | None = None
+    preview_path: str | None = None
+    expected_path: str
+    preview_rendered_at: datetime | None = None
+    preview_reviewed: bool
+    preview_reviewed_at: datetime | None = None
+    audio_generated: bool = False
+    voiceover_path: str | None = None
+    silent_reason: str | None = None
+    duration_seconds: float | None = None
+    tts_provider: str | None = None
+    tts_voice: str | None = None
+    tts_model: str | None = None
+
+
+class PreviewReviewUpdate(BaseModel):
+    reviewed: bool = True
 
 
 class YouTubePayloadResponse(BaseModel):

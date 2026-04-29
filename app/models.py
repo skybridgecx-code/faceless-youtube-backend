@@ -68,6 +68,10 @@ class Video(Base):
     publish_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     publish_status: Mapped[str] = mapped_column(String(60), default="draft")
     publish_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rendered_preview_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_rendered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    preview_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    preview_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

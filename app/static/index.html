@@ -235,6 +235,55 @@
                 </div>
               </div>
 
+              <div class="preview-panel hidden" id="previewPanel">
+                <div class="panel-header">
+                  <h2>Draft Preview</h2>
+                  <div class="header-actions">
+                    <button class="btn" onclick="app.refreshPreviewStatus()">Refresh Preview</button>
+                    <button class="btn" id="btnRenderDraftPreview" onclick="app.renderDraftPreview()">Render Draft Preview</button>
+                    <button class="btn success" id="btnMarkPreviewReviewed" onclick="app.markPreviewReviewed()" disabled>Mark Preview Reviewed</button>
+                  </div>
+                </div>
+                <div class="panel-body compact-body">
+                  <div class="meta-row">
+                    <span class="meta-label">Video</span>
+                    <span class="meta-value" id="previewSelectedVideoTitle">None selected</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Status</span>
+                    <span class="meta-value" id="previewStatusText">No rendered video preview yet.</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Expected Path</span>
+                    <span class="meta-value"><code id="previewExpectedPath">out/previews/{video_id}/draft.mp4</code></span>
+                  </div>
+                  <div class="meta-row" id="previewReviewedRow">
+                    <span class="meta-label">Review</span>
+                    <span class="meta-value" id="previewReviewedText">Not reviewed</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Audio</span>
+                    <span class="meta-value" id="previewAudioStatusText">Unknown</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">TTS Provider</span>
+                    <span class="meta-value" id="previewTtsProviderText">Unknown</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Voice / Model</span>
+                    <span class="meta-value" id="previewTtsVoiceModelText">Unknown</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Setup Hint</span>
+                    <span class="meta-value" id="previewTtsSetupHintText">Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for premium voiceover.</span>
+                  </div>
+                  <div id="previewMissingMessage" class="empty-state" style="height:auto; padding:0.75rem 0;">
+                    No rendered video preview yet.
+                  </div>
+                  <video id="previewPlayer" class="preview-player hidden" controls preload="metadata"></video>
+                </div>
+              </div>
+
               <div class="assets-viewer">
                 <div class="assets-tabs" id="assetTabs"></div>
                 <div class="asset-content-container" id="assetsViewer">

@@ -683,6 +683,30 @@ body {
   padding: 10px;
 }
 
+.preview-panel {
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: #171717;
+  overflow: hidden;
+}
+
+.preview-panel .panel-header {
+  padding: 10px 12px;
+}
+
+.preview-panel .panel-body {
+  padding: 12px;
+}
+
+.preview-player {
+  width: 100%;
+  max-height: 420px;
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: #000;
+  margin-top: 8px;
+}
+
 .package-info h4 {
   font-size: 12px;
   color: #fff;

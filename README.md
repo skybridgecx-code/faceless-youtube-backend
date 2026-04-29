@@ -50,9 +50,10 @@ pytest -q
 3. Generate assets for each video.
 4. Review the assets.
 5. Approve the video.
-6. Build a production package.
-7. Prepare YouTube metadata.
-8. Upload manually or connect the YouTube adapter later.
+6. Render and review a local draft preview.
+7. Build a production package.
+8. Prepare YouTube metadata.
+9. Upload manually or connect the YouTube adapter later.
 
 ## Important endpoints
 
@@ -65,6 +66,10 @@ GET    /videos
 GET    /videos/{video_id}
 POST   /videos/{video_id}/generate
 POST   /videos/{video_id}/review
+GET    /videos/{video_id}/preview/status
+GET    /videos/{video_id}/preview
+POST   /videos/{video_id}/preview/render-draft
+POST   /videos/{video_id}/preview/review
 POST   /videos/{video_id}/package
 GET    /videos/{video_id}/assets
 POST   /publish/{video_id}/prepare-youtube-payload
@@ -95,7 +100,32 @@ The backend works without an OpenAI key using deterministic local templates. Add
 
 ## Review gate
 
-A video cannot be packaged or marked publish-ready until it has a passing review. This prevents accidental upload of fake income claims, fake client results, unsupported claims, unreviewed synthetic media, or minimally transformed reused content.
+A video cannot be packaged or marked publish-ready until it has a passing review and a manually reviewed local draft preview. Draft previews are expected at:
+
+`out/previews/{video_id}/draft.mp4`
+
+If no local renderer is configured, place a real draft MP4 at that path before packaging/payload preparation.
+
+`POST /videos/{video_id}/preview/render-draft` now builds a watchable local draft preview from generated script/title data using ffmpeg slide rendering. On macOS it uses `say` for local voiceover when available; otherwise it generates a clearly labeled silent draft preview.
+
+Premium cloud voiceover provider order:
+1. ElevenLabs
+2. OpenAI TTS
+3. macOS `say`
+4. Silent fallback
+
+Configure with:
+
+```text
+PREVIEW_TTS_PROVIDER=auto
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+OPENAI_API_KEY=
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TTS_VOICE=marin
+PREVIEW_TTS_RATE=
+```
 
 ## Next integrations to add
 
