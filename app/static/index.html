@@ -3,276 +3,391 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Local AI Operator | Dashboard</title>
+  <title>Local AI Operator | Studio</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="header-titles">
-        <h1>Local AI Operator</h1>
-        <p>Faceless YouTube content factory</p>
-      </div>
-      <div class="health-pill" id="healthPill">
-        <div class="health-indicator" id="healthIndicator"></div>
-        <span id="healthText">Checking backend...</span>
-      </div>
-    </header>
-
-    <section class="kpi-grid">
-      <div class="kpi-card">
-        <span class="kpi-title">Total Ideas</span>
-        <span class="kpi-value" id="kpiTotalIdeas">-</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-title">Generated Assets</span>
-        <span class="kpi-value" id="kpiGeneratedAssets">-</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-title">Approved Videos</span>
-        <span class="kpi-value" id="kpiApprovedVideos">-</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-title">Packages Created</span>
-        <span class="kpi-value" id="kpiPackagesCreated">-</span>
-      </div>
-    </section>
-
-    <section class="main-content">
-      <!-- Left Column -->
-      <div class="left-column">
-        <!-- Pipeline Summary Panel -->
-        <div class="panel" style="margin-bottom: 1.5rem;">
-          <div class="panel-header">
-            <h2>Pipeline Summary</h2>
-            <div class="header-actions">
-              <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div class="pipeline-counts" id="pipelineCounts" style="display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.85rem; flex-wrap: wrap;">
-            </div>
-            <h3 style="font-size: 0.9rem; color: var(--textSecondary); margin-bottom: 0.5rem;">Action Queue</h3>
-            <div id="actionQueueList" class="video-list">
-               <div class="empty-state">Loading action queue...</div>
-            </div>
-          </div>
+  <div class="studio-shell">
+    <aside class="studio-sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-badge">Y</div>
+        <div>
+          <div class="brand-title">Local AI Operator</div>
+          <div class="brand-sub">CONTENT OPS</div>
         </div>
-
-        <!-- Video Ideas Panel -->
-        <div class="panel">
-        <div class="panel-header">
-          <h2>Video Ideas</h2>
-          <div class="header-actions">
-            <button class="btn" onclick="app.openBatchModal()">Batch Ideas</button>
-            <button class="btn success" onclick="app.openNewIdeaModal()">+ New Idea</button>
-            <button class="btn" id="btnRefreshVideos" onclick="app.loadVideos()">Refresh</button>
-          </div>
-        </div>
-        <div class="panel-filters" style="padding: 0 1.5rem 1rem 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;">
-          <input type="text" id="filterSearch" placeholder="Search title or metadata..." style="flex: 1; min-width: 150px; background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 6px;" oninput="app.handleFilterChange()" />
-          <select id="filterStatus" class="form-select" style="background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 6px;" onchange="app.handleFilterChange()">
-            <option value="">All Statuses</option>
-            <option value="idea">Idea</option>
-            <option value="drafted">Drafted</option>
-            <option value="needs_review">Needs Review</option>
-            <option value="approved">Approved</option>
-            <option value="packaged">Packaged</option>
-            <option value="publish_ready">Publish Ready</option>
-            <option value="published">Published</option>
-          </select>
-          <select id="filterPublishStatus" class="form-select" style="background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 6px;" onchange="app.handleFilterChange()">
-            <option value="">All Publish Statuses</option>
-            <option value="draft">Draft</option>
-            <option value="scheduled">Scheduled</option>
-            <option value="ready">Ready</option>
-            <option value="published_manual">Published (Manual)</option>
-            <option value="blocked">Blocked</option>
-          </select>
-        </div>
-        <div class="panel-body">
-          <div id="videoList" class="video-list">
-            <div class="empty-state">Loading videos...</div>
-          </div>
-        </div>
-        <!-- Publishing Plan Panel -->
-        <div class="panel" style="margin-top: 1.5rem;">
-          <div class="panel-header">
-            <h2>Publishing Plan</h2>
-            <div class="header-actions">
-              <button class="btn" onclick="app.loadCalendar()">Refresh</button>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div id="calendarList" class="video-list">
-              <div class="empty-state">Loading plan...</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Recent Operator History Panel -->
-        <div class="panel" style="margin-top: 1.5rem;">
-          <div class="panel-header">
-            <h2>Recent Operator History</h2>
-            <div class="header-actions">
-              <button class="btn" onclick="app.loadGlobalAudit()">Refresh</button>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div id="globalAuditList" class="audit-list">
-              <div class="empty-state">Loading history...</div>
-            </div>
-          </div>
-        </div>
-
       </div>
 
-      <!-- Right Panel: Selected Video & Actions -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2 id="selectedVideoTitle">Selected Video: None</h2>
-          <div class="header-actions" id="selectedVideoActions" style="display: none;">
-            <button class="btn" onclick="app.openExportModal()">Export Operator Summary</button>
-            <button class="btn" onclick="app.openEditModal()">Edit</button>
-            <button class="btn danger" onclick="app.openDeleteModal()">Delete</button>
+      <nav class="sidebar-nav" id="sidebarNav">
+        <button class="nav-item active" data-page="dashboard">Dashboard</button>
+        <button class="nav-item" data-page="content">Content</button>
+        <button class="nav-item" data-page="assets">Assets</button>
+        <button class="nav-item" data-page="publishing">Publishing</button>
+        <button class="nav-item" data-page="compliance">Compliance</button>
+        <button class="nav-item" data-page="audit">Audit</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="sidebar-note">Faceless YouTube operator workflow</div>
+      </div>
+    </aside>
+
+    <div class="studio-main">
+      <header class="studio-topnav">
+        <h1 id="topNavTitle">Dashboard</h1>
+        <div class="topnav-tools">
+          <input type="search" id="workspaceSearch" placeholder="Search workspace" aria-label="Search workspace" />
+          <div class="health-pill" id="healthPill">
+            <div class="health-indicator" id="healthIndicator"></div>
+            <span id="healthText">Checking backend...</span>
           </div>
         </div>
-        <div class="panel-body selected-video-panel">
-          
-          <!-- Metadata Display -->
-          <div class="metadata-display hidden" id="metadataDisplay">
-            <div class="meta-row"><span class="meta-label">Niche:</span> <span id="metaNiche" class="meta-value"></span></div>
-            <div class="meta-row"><span class="meta-label">Target Audience:</span> <span id="metaAudience" class="meta-value"></span></div>
-            <div class="meta-row"><span class="meta-label">Angle:</span> <span id="metaAngle" class="meta-value"></span></div>
-            <div class="meta-row"><span class="meta-label">Notes:</span> <span id="metaNotes" class="meta-value"></span></div>
-          </div>
+      </header>
 
-          <!-- Workflow Progress -->
-          <div class="workflow-progress" id="workflowProgress">
-            <div class="step" id="step-idea">Idea</div>
-            <div class="step-connector"></div>
-            <div class="step" id="step-generated">Generated</div>
-            <div class="step-connector"></div>
-            <div class="step" id="step-approved">Reviewed</div>
-            <div class="step-connector"></div>
-            <div class="step" id="step-packaged">Packaged</div>
-            <div class="step-connector"></div>
-            <div class="step" id="step-payload_ready">Payload Ready</div>
-          </div>
-
-          <!-- Dynamic CTA Panel -->
-          <div class="cta-panel" id="ctaPanel">
-            <div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>
-          </div>
-
-          <!-- Package Info -->
-          <div class="package-info hidden" id="packageInfo">
-            <h4>Package Output</h4>
-            <div class="package-path-box">
-              <code id="packagePathText"></code>
-              <button class="btn copy-btn" onclick="app.copyPackagePath()" title="Copy Path">Copy</button>
+      <main class="studio-content">
+        <section class="page active" id="page-dashboard">
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <span class="kpi-title">Total Ideas</span>
+              <span class="kpi-value" id="kpiTotalIdeas">-</span>
             </div>
-            <p class="package-hint">Open this folder on your machine:</p>
-            <div class="package-path-box">
-              <code class="command-text" id="openCommandText"></code>
-              <button class="btn copy-btn" onclick="app.copyOpenCommand()" title="Copy Command">Copy</button>
+            <div class="kpi-card">
+              <span class="kpi-title">Generated Assets</span>
+              <span class="kpi-value" id="kpiGeneratedAssets">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Approved Videos</span>
+              <span class="kpi-value" id="kpiApprovedVideos">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Packages Created</span>
+              <span class="kpi-value" id="kpiPackagesCreated">-</span>
             </div>
           </div>
 
-          <!-- Readiness Checklist -->
-          <div class="readiness-panel hidden" id="readinessPanel" style="margin-bottom: 1.5rem;">
-            <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin-bottom: 0.5rem;">Publishing Readiness</h3>
-            <div class="checklist" id="readinessChecklist">
-              <!-- Populated by JS -->
-            </div>
-            <div id="readinessWarnings" style="margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem;"></div>
-          </div>
-
-          <!-- Publishing Settings -->
-          <div class="publishing-settings hidden" id="publishingSettings" style="margin-bottom: 1.5rem;">
-            <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin-bottom: 0.5rem;">Publishing Settings</h3>
-            <div class="form-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border: 1px solid var(--border); border-radius: 8px;">
-              <div class="form-group">
-                <label>Publish Status</label>
-                <select id="pubStatus" class="form-select" style="background: var(--bg-dark); border: 1px solid var(--border); color: var(--text-light); border-radius: 6px; padding: 0.75rem; font-family: inherit; font-size: 0.95rem;">
-                  <option value="draft">Draft</option>
-                  <option value="scheduled">Scheduled</option>
-                  <option value="ready">Ready</option>
-                  <option value="published_manual">Published (Manual)</option>
-                  <option value="blocked">Blocked</option>
-                </select>
+          <div class="panel-grid flow-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Today&apos;s Operator Flow</h2>
               </div>
-              <div class="form-group">
-                <label>Publish Date</label>
-                <input type="datetime-local" id="pubDate">
+              <div class="panel-body compact-body">
+                <div class="flow-card" id="nextBestActionCard">
+                  <div class="flow-card-title">Start Here / Next Best Action</div>
+                  <div class="flow-card-body" id="nextBestActionText">Loading next action...</div>
+                  <button class="btn primary" id="nextBestActionButton" disabled>No Action</button>
+                </div>
+                <div class="flow-card">
+                  <div class="flow-card-title">Daily Checklist</div>
+                  <div class="flow-list" id="dailyChecklistList"></div>
+                </div>
+                <div class="flow-card">
+                  <div class="flow-card-title">Current Blockers / Next Step</div>
+                  <div class="flow-card-body" id="blockersNextStep">Loading workflow guidance...</div>
+                </div>
               </div>
-              <div class="form-group">
-                <label>Publish Notes</label>
-                <textarea id="pubNotes" rows="2"></textarea>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Needs Attention Queue</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
+                </div>
               </div>
-              <div style="margin-top: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
-                <span id="pubError" style="color: var(--danger); font-size: 0.85rem; display: none;"></span>
-                <button class="btn success" id="btnSavePublishing" onclick="app.savePublishing()">Save Settings</button>
+              <div class="panel-body compact-body">
+                <div id="needsAttentionQueueList" class="video-list">
+                  <div class="empty-state">Loading queue...</div>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Compliance Review Panel -->
-          <div class="compliance-panel hidden" id="compliancePanel" style="margin-bottom: 1.5rem;">
-            <div class="panel-header" style="padding: 0; background: transparent; border: none; margin-bottom: 0.5rem; justify-content: space-between;">
-              <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin: 0;">Compliance Review</h3>
+          <div class="panel-grid dashboard-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Pipeline Summary</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="pipeline-counts" id="pipelineCounts"></div>
+                <h3 class="subheading">Action Queue</h3>
+                <div id="actionQueueList" class="video-list">
+                  <div class="empty-state">Loading action queue...</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Recent Operator History</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadGlobalAudit()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="globalAuditList" class="audit-list">
+                  <div class="empty-state">Loading history...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-content">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Content Management</h2>
               <div class="header-actions">
-                <button class="btn" id="btnRunCompliance" onclick="app.runComplianceCheck()">Run Check</button>
+                <button class="btn" onclick="app.openBatchModal()">Batch Ideas</button>
+                <button class="btn success" onclick="app.openNewIdeaModal()">New Idea</button>
+                <button class="btn" id="btnRefreshVideos" onclick="app.loadVideos()">Refresh</button>
               </div>
             </div>
-            <div class="form-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border: 1px solid var(--border); border-radius: 8px;">
-              <div id="complianceStatusBanner" style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
-                <span class="meta-label">Overall Status:</span>
-                <span id="complianceOverallBadge" class="status-badge" style="background: var(--bg-dark); color: var(--textSecondary);">Untested</span>
-                <span id="complianceStaleNotice" style="color: var(--warning); font-size: 0.8rem; display: none;">(Stale - Content changed)</span>
+
+            <div class="content-toolbar">
+              <input type="text" id="filterSearch" placeholder="Search title or metadata..." oninput="app.handleFilterChange()" />
+              <select id="filterStatus" class="form-select" onchange="app.handleFilterChange()">
+                <option value="">All Statuses</option>
+                <option value="idea">Idea</option>
+                <option value="drafted">Drafted</option>
+                <option value="needs_review">Needs Review</option>
+                <option value="approved">Approved</option>
+                <option value="packaged">Packaged</option>
+                <option value="publish_ready">Publish Ready</option>
+                <option value="published">Published</option>
+              </select>
+              <select id="filterPublishStatus" class="form-select" onchange="app.handleFilterChange()">
+                <option value="">All Publish Statuses</option>
+                <option value="draft">Draft</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="ready">Ready</option>
+                <option value="published_manual">Published (Manual)</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </div>
+
+            <div class="table-wrap">
+              <table class="content-table">
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Workflow</th>
+                    <th>Publish</th>
+                    <th>Niche</th>
+                    <th>Audience</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="videoList">
+                  <tr><td colspan="6" class="table-empty">Loading videos...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-assets">
+          <div class="panel">
+            <div class="panel-header">
+              <h2 id="selectedVideoTitle">Selected Video: None</h2>
+              <div class="header-actions" id="selectedVideoActions" style="display: none;">
+                <button class="btn" onclick="app.openExportModal()">Export Summary</button>
+                <button class="btn" onclick="app.openEditModal()">Edit</button>
+                <button class="btn danger" onclick="app.openDeleteModal()">Delete</button>
               </div>
-              <div id="complianceResults" class="compliance-results" style="display: flex; flex-direction: column; gap: 0.5rem;">
-                <div class="empty-state" style="padding: 1rem 0;">Run a check to view compliance details.</div>
+            </div>
+
+            <div class="panel-body selected-video-panel">
+              <div class="metadata-display hidden" id="metadataDisplay">
+                <div class="meta-row"><span class="meta-label">Niche</span><span id="metaNiche" class="meta-value"></span></div>
+                <div class="meta-row"><span class="meta-label">Target Audience</span><span id="metaAudience" class="meta-value"></span></div>
+                <div class="meta-row"><span class="meta-label">Angle</span><span id="metaAngle" class="meta-value"></span></div>
+                <div class="meta-row"><span class="meta-label">Notes</span><span id="metaNotes" class="meta-value"></span></div>
+              </div>
+
+              <div class="workflow-progress" id="workflowProgress">
+                <div class="step" id="step-idea">Idea</div>
+                <div class="step-connector"></div>
+                <div class="step" id="step-generated">Generated</div>
+                <div class="step-connector"></div>
+                <div class="step" id="step-approved">Reviewed</div>
+                <div class="step-connector"></div>
+                <div class="step" id="step-packaged">Packaged</div>
+                <div class="step-connector"></div>
+                <div class="step" id="step-payload_ready">Payload Ready</div>
+              </div>
+
+              <div class="cta-panel" id="ctaPanel">
+                <div class="empty-state" style="height: auto; padding: 0.75rem;">Select a video to see actions</div>
+              </div>
+
+              <div class="package-info hidden" id="packageInfo">
+                <h4>Package Output</h4>
+                <div class="package-path-box">
+                  <code id="packagePathText"></code>
+                  <button class="btn copy-btn" onclick="app.copyPackagePath()" title="Copy Path">Copy</button>
+                </div>
+                <p class="package-hint">Open this folder on your machine:</p>
+                <div class="package-path-box">
+                  <code class="command-text" id="openCommandText"></code>
+                  <button class="btn copy-btn" onclick="app.copyOpenCommand()" title="Copy Command">Copy</button>
+                </div>
+              </div>
+
+              <div class="assets-viewer">
+                <div class="assets-tabs" id="assetTabs"></div>
+                <div class="asset-content-container" id="assetsViewer">
+                  <div class="empty-state">No assets loaded.</div>
+                </div>
+              </div>
+
+              <div class="activity-log">
+                <h3>Activity Log</h3>
+                <div class="log-container" id="activityLog"></div>
               </div>
             </div>
           </div>
+        </section>
 
-
-          <!-- Audit Trail Panel -->
-          <div class="audit-panel hidden" id="auditPanel" style="margin-bottom: 1.5rem;">
-            <div class="panel-header" style="padding: 0; background: transparent; border: none; margin-bottom: 0.5rem; justify-content: space-between;">
-              <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin: 0;">Audit Trail</h3>
-              <div class="header-actions">
-                <button class="btn" onclick="app.loadVideoAudit()">Refresh</button>
+        <section class="page hidden" id="page-publishing">
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Publishing Plan</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadCalendar()">Refresh</button>
+                  <button class="btn" onclick="app.prepareYtPayload()">Prepare Payload</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="calendarList" class="video-list">
+                  <div class="empty-state">Loading plan...</div>
+                </div>
               </div>
             </div>
-            <div class="form-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border: 1px solid var(--border); border-radius: 8px;">
-              <p class="modal-desc" style="margin-top: 0;">Server-side history for this selected video. Local/operator only.</p>
-              <div id="videoAuditList" class="audit-list">
-                <div class="empty-state" style="padding: 1rem 0;">No audit events yet.</div>
+
+            <div>
+              <div class="panel readiness-panel hidden" id="readinessPanel">
+                <div class="panel-header">
+                  <h2>Readiness Checklist</h2>
+                </div>
+                <div class="panel-body compact-body">
+                  <div class="preview-placeholder" id="previewPlaceholder">
+                    <strong>Preview / Watch</strong>
+                    <div id="previewPlaceholderText">No rendered video preview yet.</div>
+                  </div>
+                  <div class="checklist" id="readinessChecklist"></div>
+                  <div id="readinessWarnings" class="warning-stack"></div>
+                </div>
+              </div>
+
+              <div class="panel publishing-settings hidden" id="publishingSettings">
+                <div class="panel-header">
+                  <h2>Publishing Settings</h2>
+                </div>
+                <div class="panel-body form-body">
+                  <div class="form-group">
+                    <label>Publish Status</label>
+                    <select id="pubStatus" class="form-select">
+                      <option value="draft">Draft</option>
+                      <option value="scheduled">Scheduled</option>
+                      <option value="ready">Ready</option>
+                      <option value="published_manual">Published (Manual)</option>
+                      <option value="blocked">Blocked</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Publish Date</label>
+                    <input type="datetime-local" id="pubDate" />
+                  </div>
+                  <div class="form-group">
+                    <label>Publish Notes</label>
+                    <textarea id="pubNotes" rows="3"></textarea>
+                  </div>
+                  <div class="settings-actions">
+                    <span id="pubError"></span>
+                    <button class="btn success" id="btnSavePublishing" onclick="app.savePublishing()">Save Settings</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
+        </section>
 
-          <div class="activity-log">
-            <h3>Activity Log</h3>
-            <div class="log-container" id="activityLog"></div>
-          </div>
+        <section class="page hidden" id="page-compliance">
+          <div class="panel-grid split-grid">
+            <div class="panel compliance-panel" id="compliancePanel">
+              <div class="panel-header">
+                <h2>Compliance Review</h2>
+                <div class="header-actions">
+                  <button class="btn" id="btnRunCompliance" onclick="app.runComplianceCheck()">Run Check</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="meta-row" style="margin-bottom: 0.75rem;">
+                  <span class="meta-label">Selected Video</span>
+                  <span id="complianceSelectedVideo" class="meta-value">None selected</span>
+                </div>
+                <div id="complianceStatusBanner" class="status-line">
+                  <span class="meta-label">Overall Status</span>
+                  <span id="complianceOverallBadge" class="status-badge">Untested</span>
+                  <span id="complianceStaleNotice" class="stale-notice">(Stale - Content changed)</span>
+                </div>
+                <div id="complianceResults" class="compliance-results">
+                  <div class="empty-state" style="padding: 1rem 0; height: auto;">Run a check to view compliance details.</div>
+                </div>
+              </div>
+            </div>
 
-          <div class="assets-viewer">
-            <div class="assets-tabs" id="assetTabs">
-               <!-- Dynamic Tabs -->
-            </div>
-            <div class="asset-content-container" id="assetsViewer">
-              <div class="empty-state">No assets loaded.</div>
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Approval Checklist Flow</h2>
+              </div>
+              <div class="panel-body compact-body">
+                <p class="modal-desc">Run compliance first, then complete manual checklist review before approval.</p>
+                <button class="btn warning" onclick="app.openReviewModal()">Open Manual Review Checklist</button>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    </section>
+        </section>
+
+        <section class="page hidden" id="page-audit">
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Recent History</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadGlobalAudit()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="globalAuditListAudit" class="audit-list alt-audit-list">
+                  <div class="empty-state">Loading history...</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel audit-panel hidden" id="auditPanel">
+              <div class="panel-header">
+                <h2>Selected Video Audit</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadVideoAudit()">Refresh</button>
+                  <button class="btn" onclick="app.openExportModal()">Export Operator Summary</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="videoAuditList" class="audit-list">
+                  <div class="empty-state" style="padding: 1rem 0; height: auto;">No audit events yet.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
 
-  <!-- Review Modal -->
   <div class="modal-overlay hidden" id="reviewModal">
     <div class="modal">
       <div class="modal-header">
@@ -292,12 +407,12 @@
       </div>
       <div class="modal-footer">
         <button class="btn" onclick="app.closeReviewModal()">Cancel</button>
+        <button class="btn danger" id="btnConfirmReject" onclick="app.confirmReject()">Reject Video</button>
         <button class="btn success" id="btnConfirmApprove" disabled onclick="app.confirmApprove()">Approve Video</button>
       </div>
     </div>
   </div>
 
-  <!-- New Idea Modal -->
   <div class="modal-overlay hidden" id="newIdeaModal">
     <div class="modal">
       <div class="modal-header">
@@ -333,7 +448,6 @@
     </div>
   </div>
 
-  <!-- Batch Idea Modal -->
   <div class="modal-overlay hidden" id="batchIdeaModal">
     <div class="modal" style="max-width: 700px; width: 90%;">
       <div class="modal-header">
@@ -345,8 +459,7 @@
         <div class="form-group">
           <textarea id="batchIdeaText" rows="10" placeholder="Video 1 | Thumb 1 | Pillar 1 | Target Viewer 1&#10;Video 2 | Thumb 2 | Pillar 2 | Target Viewer 2" oninput="app.previewBatch()"></textarea>
         </div>
-        <div id="batchPreview" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px; display: none; font-size: 0.85rem; border: 1px solid var(--border);">
-        </div>
+        <div id="batchPreview" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px; display: none; font-size: 0.85rem; border: 1px solid var(--border);"></div>
       </div>
       <div class="modal-footer">
         <button class="btn" onclick="app.closeBatchModal()">Cancel</button>
@@ -355,7 +468,6 @@
     </div>
   </div>
 
-  <!-- Edit Metadata Modal -->
   <div class="modal-overlay hidden" id="editModal">
     <div class="modal">
       <div class="modal-header">
@@ -391,7 +503,6 @@
     </div>
   </div>
 
-  <!-- Delete Confirmation Modal -->
   <div class="modal-overlay hidden" id="deleteModal">
     <div class="modal">
       <div class="modal-header">
@@ -408,7 +519,6 @@
     </div>
   </div>
 
-  <!-- Edit Asset Modal -->
   <div class="modal-overlay hidden" id="editAssetModal">
     <div class="modal" style="max-width: 800px; width: 90%;">
       <div class="modal-header">
@@ -428,8 +538,6 @@
     </div>
   </div>
 
-
-  <!-- Operator Export Modal -->
   <div class="modal-overlay hidden" id="operatorExportModal">
     <div class="modal" style="max-width: 900px; width: 92%;">
       <div class="modal-header">
