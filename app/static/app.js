@@ -287,6 +287,10 @@ const app = {
     document.getElementById('pubNotes').value = video.publish_notes || '';
     document.getElementById('pubError').style.display = 'none';
 
+    // Show Compliance Panel
+    document.getElementById('compliancePanel').classList.remove('hidden');
+    this.clearComplianceResults();
+
     if (fetchAssets) {
       await this.loadAssets();
     }
@@ -538,6 +542,136 @@ const app = {
         warningsBox.appendChild(wItem);
       });
     }
+
+    // Update Review Modal compliance notice
+    const notice = document.getElementById('reviewComplianceNotice');
+    if (notice) {
+      if (readiness.compliance_status === 'blocked') {
+        notice.style.display = 'block';
+        notice.style.backgroundColor = 'rgba(248, 113, 113, 0.1)';
+        notice.style.color = 'var(--danger)';
+        notice.style.borderColor = 'rgba(248, 113, 113, 0.3)';
+        notice.innerHTML = `<strong>⚠️ Compliance Blocked:</strong> Cannot approve. Fix compliance errors first.`;
+      } else if (readiness.compliance_status === 'warning') {
+        notice.style.display = 'block';
+        notice.style.backgroundColor = 'rgba(245, 158, 11, 0.1)';
+        notice.style.color = 'var(--warning)';
+        notice.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+        notice.innerHTML = `<strong>⚠️ Compliance Warning:</strong> Warnings detected. Review carefully.`;
+      } else {
+        notice.style.display = 'none';
+      }
+    }
+  },
+
+  async runComplianceCheck() {
+    if (!this.state.selectedVideoId) return;
+    
+    const btn = document.getElementById('btnRunCompliance');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+    }
+
+    try {
+      this.log('Running compliance checks...', 'info');
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/compliance/run`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.detail || 'Compliance check failed');
+      }
+
+      this.log(`Compliance check completed: ${data.overall_status}`, 'success');
+      
+      this.renderComplianceReport(data);
+      document.getElementById('complianceStaleNotice').style.display = 'none';
+      await this.loadReadiness();
+    } catch (err) {
+      this.log(`Compliance error: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Run Check';
+      }
+    }
+  },
+
+  renderComplianceReport(report) {
+    const resultsDiv = document.getElementById('complianceResults');
+    const badge = document.getElementById('complianceOverallBadge');
+    
+    badge.textContent = report.overall_status.toUpperCase();
+    badge.className = 'status-badge'; 
+    
+    if (report.overall_status === 'pass') {
+      badge.style.background = 'rgba(52, 211, 153, 0.1)';
+      badge.style.color = 'var(--success)';
+      badge.style.border = '1px solid rgba(52, 211, 153, 0.3)';
+    } else if (report.overall_status === 'warning') {
+      badge.style.background = 'rgba(245, 158, 11, 0.1)';
+      badge.style.color = 'var(--warning)';
+      badge.style.border = '1px solid rgba(245, 158, 11, 0.3)';
+    } else if (report.overall_status === 'blocked') {
+      badge.style.background = 'rgba(248, 113, 113, 0.1)';
+      badge.style.color = 'var(--danger)';
+      badge.style.border = '1px solid rgba(248, 113, 113, 0.3)';
+    } else {
+      badge.style.background = 'var(--bg-dark)';
+      badge.style.color = 'var(--textSecondary)';
+      badge.style.border = '1px solid var(--border)';
+    }
+
+    resultsDiv.innerHTML = '';
+    
+    if (!report.checks || report.checks.length === 0) {
+      resultsDiv.innerHTML = '<div class="empty-state" style="padding: 1rem 0;">No checks returned.</div>';
+      return;
+    }
+
+    report.checks.forEach(check => {
+      let icon = '✅';
+      let colorClass = 'pass-check';
+      
+      if (check.status === 'blocked') {
+        icon = '🚫';
+        colorClass = 'blocked-check';
+      } else if (check.status === 'warning') {
+        icon = '⚠️';
+        colorClass = 'warning-check';
+      }
+
+      const div = document.createElement('div');
+      div.className = `compliance-item ${colorClass}`;
+      div.innerHTML = \`
+        <div class="compliance-header">
+          <span class="compliance-icon">\${icon}</span>
+          <span class="compliance-label">\${this.escapeHtml(check.label)}</span>
+          \${check.asset_type ? \`<span class="compliance-asset-type">\${this.escapeHtml(check.asset_type)}</span>\` : ''}
+        </div>
+        <div class="compliance-detail">\${this.escapeHtml(check.detail)}</div>
+        \${check.suggested_fix ? \`<div class="compliance-fix"><strong>Fix:</strong> \${this.escapeHtml(check.suggested_fix)}</div>\` : ''}
+      \`;
+      resultsDiv.appendChild(div);
+    });
+  },
+
+  clearComplianceResults() {
+    const badge = document.getElementById('complianceOverallBadge');
+    if (badge) {
+      badge.textContent = 'Untested';
+      badge.style.background = 'var(--bg-dark)';
+      badge.style.color = 'var(--textSecondary)';
+      badge.style.border = '1px solid var(--border)';
+    }
+    const resultsDiv = document.getElementById('complianceResults');
+    if (resultsDiv) {
+      resultsDiv.innerHTML = '<div class="empty-state" style="padding: 1rem 0;">Run a check to view compliance details.</div>';
+    }
+    const stale = document.getElementById('complianceStaleNotice');
+    if (stale) stale.style.display = 'none';
   },
 
   async savePublishing() {
@@ -886,6 +1020,7 @@ const app = {
       this.closeEditAssetModal();
       
       // Reload videos and assets to reflect status change to needs_review
+      document.getElementById('complianceStaleNotice').style.display = 'inline';
       await this.loadVideos();
       await this.loadAssets();
     } catch (err) {
@@ -914,6 +1049,7 @@ const app = {
       this.log(`Asset ${assetType} regenerated successfully`, 'success');
       
       // Reload videos and assets to reflect status change to needs_review
+      document.getElementById('complianceStaleNotice').style.display = 'inline';
       await this.loadVideos();
       await this.loadAssets();
     } catch (err) {

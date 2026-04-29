@@ -18,6 +18,7 @@ from app.schemas import (
     VideoPublishUpdate,
     VideoReadiness,
     VideoBatchCreate,
+    ComplianceReport,
 )
 from app.services.content_engine import (
     build_all_assets,
@@ -30,6 +31,7 @@ from app.services.content_engine import (
     generate_video_ideas,
 )
 from app.services.package_builder import build_video_package
+from app.services.compliance import run_compliance_checks
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
@@ -206,6 +208,8 @@ def get_video_readiness(video_id: int, db: Session = Depends(get_db)) -> VideoRe
     if publish_status_ready_or_scheduled and not publish_date_set:
         blocking_reasons.append("Publish date should be set if status is ready or scheduled")
         
+    report = run_compliance_checks(video)
+        
     return VideoReadiness(
         assets_generated=assets_generated,
         review_approved=review_approved,
@@ -213,7 +217,10 @@ def get_video_readiness(video_id: int, db: Session = Depends(get_db)) -> VideoRe
         youtube_metadata_prepared=youtube_metadata_prepared,
         publish_date_set=publish_date_set,
         publish_status_ready_or_scheduled=publish_status_ready_or_scheduled,
-        blocking_reasons=blocking_reasons
+        blocking_reasons=blocking_reasons,
+        compliance_status=report.overall_status,
+        compliance_blockers_count=sum(1 for c in report.checks if c.status == "blocked"),
+        compliance_warnings_count=sum(1 for c in report.checks if c.status == "warning")
     )
 
 
@@ -325,6 +332,12 @@ def regenerate_asset(video_id: int, asset_type: AssetType, db: Session = Depends
 @router.post("/{video_id}/review", response_model=ReviewRead)
 def review_video(video_id: int, payload: ReviewCreate, db: Session = Depends(get_db)) -> Review:
     video = get_video_or_404(db, video_id)
+    
+    if payload.passed:
+        report = run_compliance_checks(video)
+        if report.overall_status == "blocked":
+            raise HTTPException(status_code=400, detail="Cannot approve video with blocked compliance checks.")
+            
     review = Review(video_id=video.id, **payload.model_dump())
     db.add(review)
     video.approved = payload.passed
@@ -342,3 +355,10 @@ def package_video(video_id: int, db: Session = Depends(get_db)) -> PackageRespon
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return PackageResponse(video_id=video.id, package_dir=str(package_dir), manifest_asset_id=manifest_asset.id)
+
+
+@router.post("/{video_id}/compliance/run", response_model=ComplianceReport)
+def run_compliance(video_id: int, db: Session = Depends(get_db)) -> ComplianceReport:
+    video = get_video_or_404(db, video_id)
+    report = run_compliance_checks(video)
+    return report

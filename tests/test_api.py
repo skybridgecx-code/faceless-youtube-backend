@@ -44,8 +44,28 @@ def test_content_workflow() -> None:
     assert generated_response.status_code == 200
     assert len(generated_response.json()) >= 5
 
+    # Run compliance check (it should fail due to "I Built" perhaps, or we can patch the script)
+    # Let's use the asset patch endpoint to inject a bad script
+    bad_script_response = client.patch(f"/videos/{video_id}/assets/script", json={"body": "Here is an income guarantee that you will make 10k a month."})
+    assert bad_script_response.status_code == 200
+    
+    compliance_response = client.post(f"/videos/{video_id}/compliance/run")
+    assert compliance_response.status_code == 200
+    assert compliance_response.json()["overall_status"] == "blocked"
+
     blocked_package = client.post(f"/videos/{video_id}/package")
     assert blocked_package.status_code == 409
+
+    # Try to review and approve, it should fail
+    review_response_fail = client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "Looks safe"})
+    assert review_response_fail.status_code == 400
+    assert "compliance" in review_response_fail.json()["detail"].lower()
+
+    # Fix the script
+    client.patch(f"/videos/{video_id}/assets/script", json={"body": "A normal safe script about AI."})
+    compliance_response = client.post(f"/videos/{video_id}/compliance/run")
+    assert compliance_response.status_code == 200
+    assert compliance_response.json()["overall_status"] != "blocked"
 
     review_response = client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "Looks safe"})
     assert review_response.status_code == 200

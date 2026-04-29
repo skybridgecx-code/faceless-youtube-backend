@@ -200,6 +200,26 @@
             </div>
           </div>
 
+          <!-- Compliance Review Panel -->
+          <div class="compliance-panel hidden" id="compliancePanel" style="margin-bottom: 1.5rem;">
+            <div class="panel-header" style="padding: 0; background: transparent; border: none; margin-bottom: 0.5rem; justify-content: space-between;">
+              <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin: 0;">Compliance Review</h3>
+              <div class="header-actions">
+                <button class="btn" id="btnRunCompliance" onclick="app.runComplianceCheck()">Run Check</button>
+              </div>
+            </div>
+            <div class="form-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border: 1px solid var(--border); border-radius: 8px;">
+              <div id="complianceStatusBanner" style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                <span class="meta-label">Overall Status:</span>
+                <span id="complianceOverallBadge" class="status-badge" style="background: var(--bg-dark); color: var(--textSecondary);">Untested</span>
+                <span id="complianceStaleNotice" style="color: var(--warning); font-size: 0.8rem; display: none;">(Stale - Content changed)</span>
+              </div>
+              <div id="complianceResults" class="compliance-results" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <div class="empty-state" style="padding: 1rem 0;">Run a check to view compliance details.</div>
+              </div>
+            </div>
+          </div>
+
           <div class="activity-log">
             <h3>Activity Log</h3>
             <div class="log-container" id="activityLog"></div>
@@ -226,8 +246,9 @@
         <button class="btn close-btn" onclick="app.closeReviewModal()">X</button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">Please verify the following before approving this video:</p>
-        <div class="checklist">
+        <div id="reviewComplianceNotice" style="display: none; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; border: 1px solid var(--border);"></div>
+        <p class="modal-desc" id="reviewModalDesc">Please verify the following before approving this video:</p>
+        <div class="checklist" id="reviewChecklistWrapper">
           <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>No fake income claims</span></label>
           <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>No fake client claims</span></label>
           <label class="check-item"><input type="checkbox" onchange="app.checkApprovalReady()"> <span>Visuals are original or licensed</span></label>

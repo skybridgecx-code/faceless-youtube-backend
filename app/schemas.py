@@ -83,6 +83,9 @@ class VideoReadiness(BaseModel):
     publish_date_set: bool
     publish_status_ready_or_scheduled: bool
     blocking_reasons: list[str]
+    compliance_status: Literal["pass", "warning", "blocked", "untested"] = "untested"
+    compliance_blockers_count: int = 0
+    compliance_warnings_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -119,6 +122,22 @@ class PipelineSummary(BaseModel):
     status_counts: dict[str, int]
     publish_status_counts: dict[str, int]
     action_queue: list[PipelineActionItem]
+
+
+class ComplianceCheck(BaseModel):
+    id: str
+    label: str
+    status: Literal["pass", "warning", "blocked"]
+    detail: str
+    asset_type: str | None = None
+    suggested_fix: str | None = None
+
+
+class ComplianceReport(BaseModel):
+    video_id: int
+    title: str
+    overall_status: Literal["pass", "warning", "blocked"]
+    checks: list[ComplianceCheck]
 
 
 class GenerateRequest(BaseModel):
