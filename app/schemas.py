@@ -92,6 +92,35 @@ class BulkIdeaRequest(BaseModel):
     count: int = Field(default=15, ge=1, le=50)
 
 
+class VideoBatchItem(BaseModel):
+    title: str
+    niche: str | None = None
+    target_audience: str | None = None
+    angle: str | None = None
+    notes: str | None = None
+
+
+class VideoBatchCreate(BaseModel):
+    channel_id: int = 1
+    videos: list[VideoBatchItem]
+
+
+class PipelineActionItem(BaseModel):
+    video_id: int
+    title: str
+    workflow_status: str
+    publish_status: str
+    reason: str
+    suggested_next_action: str
+
+
+class PipelineSummary(BaseModel):
+    total_videos: int
+    status_counts: dict[str, int]
+    publish_status_counts: dict[str, int]
+    action_queue: list[PipelineActionItem]
+
+
 class GenerateRequest(BaseModel):
     stage: Literal["brief", "script", "shorts", "description", "thumbnail_prompt", "metadata", "all"] = "all"
 

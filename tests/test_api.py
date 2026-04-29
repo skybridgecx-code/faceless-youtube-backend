@@ -58,3 +58,43 @@ def test_content_workflow() -> None:
     payload_response = client.post(f"/publish/{video_id}/prepare-youtube-payload")
     assert payload_response.status_code == 200
     assert payload_response.json()["privacy_status"] == "private"
+
+
+def test_pipeline_and_batch() -> None:
+    client = TestClient(app)
+
+    channel_response = client.post("/channels", json={"name": "Test Channel 2"})
+    assert channel_response.status_code == 200
+    channel_id = channel_response.json()["id"]
+
+    # Test batch creation
+    batch_response = client.post(
+        "/videos/batch",
+        json={
+            "channel_id": channel_id,
+            "videos": [
+                {"title": "Video 1", "thumbnail_text": "Thumb 1", "pillar": "pillar1", "target_view": "tv1"},
+                {"title": "Video 2", "thumbnail_text": "Thumb 2", "pillar": "pillar2", "target_view": "tv2"}
+            ]
+        }
+    )
+    assert batch_response.status_code == 200
+    videos = batch_response.json()
+    assert len(videos) == 2
+    
+    # Test pipeline summary
+    summary_response = client.get("/pipeline/summary")
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["status_counts"]["idea"] >= 2
+    
+    # Test filtering
+    filter_response = client.get("/videos?search=Video 1")
+    assert filter_response.status_code == 200
+    filtered_videos = filter_response.json()
+    assert len(filtered_videos) == 1
+    assert filtered_videos[0]["title"] == "Video 1"
+    
+    filter_status_response = client.get("/videos?status=idea")
+    assert filter_status_response.status_code == 200
+    assert len(filter_status_response.json()) >= 2

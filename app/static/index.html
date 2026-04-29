@@ -41,14 +41,54 @@
     <section class="main-content">
       <!-- Left Column -->
       <div class="left-column">
+        <!-- Pipeline Summary Panel -->
+        <div class="panel" style="margin-bottom: 1.5rem;">
+          <div class="panel-header">
+            <h2>Pipeline Summary</h2>
+            <div class="header-actions">
+              <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="pipeline-counts" id="pipelineCounts" style="display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.85rem; flex-wrap: wrap;">
+            </div>
+            <h3 style="font-size: 0.9rem; color: var(--textSecondary); margin-bottom: 0.5rem;">Action Queue</h3>
+            <div id="actionQueueList" class="video-list">
+               <div class="empty-state">Loading action queue...</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Video Ideas Panel -->
         <div class="panel">
         <div class="panel-header">
           <h2>Video Ideas</h2>
           <div class="header-actions">
+            <button class="btn" onclick="app.openBatchModal()">Batch Ideas</button>
             <button class="btn success" onclick="app.openNewIdeaModal()">+ New Idea</button>
             <button class="btn" id="btnRefreshVideos" onclick="app.loadVideos()">Refresh</button>
           </div>
+        </div>
+        <div class="panel-filters" style="padding: 0 1.5rem 1rem 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;">
+          <input type="text" id="filterSearch" placeholder="Search title or metadata..." style="flex: 1; min-width: 150px; background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 6px;" oninput="app.handleFilterChange()" />
+          <select id="filterStatus" class="form-select" style="background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 6px;" onchange="app.handleFilterChange()">
+            <option value="">All Statuses</option>
+            <option value="idea">Idea</option>
+            <option value="drafted">Drafted</option>
+            <option value="needs_review">Needs Review</option>
+            <option value="approved">Approved</option>
+            <option value="packaged">Packaged</option>
+            <option value="publish_ready">Publish Ready</option>
+            <option value="published">Published</option>
+          </select>
+          <select id="filterPublishStatus" class="form-select" style="background: var(--bg-dark); border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 6px;" onchange="app.handleFilterChange()">
+            <option value="">All Publish Statuses</option>
+            <option value="draft">Draft</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="ready">Ready</option>
+            <option value="published_manual">Published (Manual)</option>
+            <option value="blocked">Blocked</option>
+          </select>
         </div>
         <div class="panel-body">
           <div id="videoList" class="video-list">
@@ -234,6 +274,28 @@
       <div class="modal-footer">
         <button class="btn" onclick="app.closeNewIdeaModal()">Cancel</button>
         <button class="btn success" onclick="app.submitNewIdea()">Create Idea</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Idea Modal -->
+  <div class="modal-overlay hidden" id="batchIdeaModal">
+    <div class="modal" style="max-width: 700px; width: 90%;">
+      <div class="modal-header">
+        <h2>Batch Import Ideas</h2>
+        <button class="btn close-btn" onclick="app.closeBatchModal()">X</button>
+      </div>
+      <div class="modal-body form-body">
+        <p class="modal-desc" style="margin-top: 0;">Paste multiple ideas separated by newlines. Format: <code>Title | Thumbnail Text | Pillar | Target View</code></p>
+        <div class="form-group">
+          <textarea id="batchIdeaText" rows="10" placeholder="Video 1 | Thumb 1 | Pillar 1 | Target Viewer 1&#10;Video 2 | Thumb 2 | Pillar 2 | Target Viewer 2" oninput="app.previewBatch()"></textarea>
+        </div>
+        <div id="batchPreview" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 4px; display: none; font-size: 0.85rem; border: 1px solid var(--border);">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeBatchModal()">Cancel</button>
+        <button class="btn success" id="btnSubmitBatch" disabled onclick="app.submitBatch()">Import Batch</button>
       </div>
     </div>
   </div>

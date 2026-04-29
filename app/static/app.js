@@ -17,6 +17,7 @@ const app = {
   async init() {
     this.log('Initializing Local AI Operator Dashboard...', 'info');
     await this.checkHealth();
+    await this.loadPipelineSummary();
     await this.loadVideos();
     await this.loadCalendar();
   },
@@ -99,10 +100,22 @@ const app = {
   async loadVideos() {
     try {
       const btn = document.getElementById('btnRefreshVideos');
-      btn.textContent = 'Loading...';
-      btn.disabled = true;
+      if(btn) {
+        btn.textContent = 'Loading...';
+        btn.disabled = true;
+      }
 
-      const res = await fetch('/videos');
+      const search = document.getElementById('filterSearch')?.value || '';
+      const status = document.getElementById('filterStatus')?.value || '';
+      const pubStatus = document.getElementById('filterPublishStatus')?.value || '';
+      
+      let queryParams = [];
+      if (search) queryParams.push(`search=${encodeURIComponent(search)}`);
+      if (status) queryParams.push(`status=${encodeURIComponent(status)}`);
+      if (pubStatus) queryParams.push(`publish_status=${encodeURIComponent(pubStatus)}`);
+      
+      const queryString = queryParams.length ? '?' + queryParams.join('&') : '';
+      const res = await fetch('/videos' + queryString);
       if (!res.ok) throw new Error('Failed to fetch videos');
       const data = await res.json();
       
@@ -119,8 +132,68 @@ const app = {
       document.getElementById('videoList').innerHTML = `<div class="empty-state">Failed to load videos.</div>`;
     } finally {
       const btn = document.getElementById('btnRefreshVideos');
-      btn.textContent = 'Refresh';
-      btn.disabled = false;
+      if(btn) {
+        btn.textContent = 'Refresh';
+        btn.disabled = false;
+      }
+    }
+  },
+
+  handleFilterChange() {
+    this.loadVideos();
+  },
+
+  async loadPipelineSummary() {
+    try {
+      const res = await fetch('/pipeline/summary');
+      if (!res.ok) throw new Error('Failed to load pipeline summary');
+      const data = await res.json();
+      this.renderPipelineSummary(data);
+    } catch (err) {
+      this.log(`Error loading pipeline summary: ${err.message}`, 'error');
+    }
+  },
+
+  renderPipelineSummary(data) {
+    const countsDiv = document.getElementById('pipelineCounts');
+    if (countsDiv) {
+      const draft = data.status_counts['idea'] || 0;
+      const review = data.status_counts['needs_review'] || 0;
+      const approved = data.status_counts['approved'] || 0;
+      const blocked = data.publish_status_counts['blocked'] || 0;
+      
+      countsDiv.innerHTML = `
+        <div style="background: rgba(255,255,255,0.05); padding: 0.5rem 1rem; border-radius: 4px;"><strong>${data.total_videos}</strong> Total</div>
+        <div style="background: rgba(255,255,255,0.05); padding: 0.5rem 1rem; border-radius: 4px; color: var(--warning);"><strong>${review}</strong> Need Review</div>
+        <div style="background: rgba(255,255,255,0.05); padding: 0.5rem 1rem; border-radius: 4px; color: var(--success);"><strong>${approved}</strong> Approved</div>
+        <div style="background: rgba(255,255,255,0.05); padding: 0.5rem 1rem; border-radius: 4px; color: var(--danger);"><strong>${blocked}</strong> Blocked</div>
+      `;
+    }
+
+    const queueList = document.getElementById('actionQueueList');
+    if (queueList) {
+      queueList.innerHTML = '';
+      if (!data.action_queue || data.action_queue.length === 0) {
+        queueList.innerHTML = `<div class="empty-state">Pipeline is clear!</div>`;
+        return;
+      }
+      data.action_queue.forEach(action => {
+        const item = document.createElement('div');
+        item.className = 'video-card';
+        item.style.padding = '0.75rem';
+        item.onclick = () => this.selectVideo(action.video_id);
+        
+        let color = 'var(--primary)';
+        if (action.publish_status === 'blocked') color = 'var(--danger)';
+        else if (action.workflow_status === 'needs_review') color = 'var(--warning)';
+        
+        item.innerHTML = `
+          <div style="font-weight: 500; font-size: 0.95rem; margin-bottom: 0.25rem;">${action.title}</div>
+          <div style="font-size: 0.8rem; color: var(--textSecondary); margin-bottom: 0.5rem;">${action.reason}</div>
+          <div style="font-size: 0.8rem; color: ${color}; font-weight: 500;">→ ${action.suggested_next_action}</div>
+        `;
+        queueList.appendChild(item);
+      });
     }
   },
 
@@ -597,8 +670,99 @@ const app = {
       this.log('Created new video idea', 'success');
       this.closeNewIdeaModal();
       await this.loadVideos();
+      await this.loadPipelineSummary();
     } catch (err) {
       this.log(`Error creating idea: ${err.message}`, 'error');
+    }
+  },
+
+  openBatchModal() {
+    document.getElementById('batchIdeaText').value = '';
+    document.getElementById('batchPreview').style.display = 'none';
+    document.getElementById('btnSubmitBatch').disabled = true;
+    document.getElementById('batchIdeaModal').classList.remove('hidden');
+  },
+
+  closeBatchModal() {
+    document.getElementById('batchIdeaModal').classList.add('hidden');
+  },
+
+  parseBatchText() {
+    const text = document.getElementById('batchIdeaText').value.trim();
+    if (!text) return [];
+    
+    const lines = text.split('\\n');
+    const parsed = [];
+    
+    for (let line of lines) {
+      if (!line.trim()) continue;
+      const parts = line.split('|').map(s => s.trim());
+      if (parts.length > 0 && parts[0]) {
+        parsed.push({
+          title: parts[0],
+          thumbnail_text: parts.length > 1 ? parts[1] : null,
+          pillar: parts.length > 2 ? parts[2] : null,
+          target_view: parts.length > 3 ? parts[3] : null
+        });
+      }
+    }
+    return parsed;
+  },
+
+  previewBatch() {
+    const parsed = this.parseBatchText();
+    const previewBox = document.getElementById('batchPreview');
+    const submitBtn = document.getElementById('btnSubmitBatch');
+    
+    if (parsed.length === 0) {
+      previewBox.style.display = 'none';
+      submitBtn.disabled = true;
+      return;
+    }
+    
+    let html = `<strong>${parsed.length} ideas to import:</strong><ul style="margin-top: 0.5rem; padding-left: 1.5rem; color: var(--textSecondary);">`;
+    parsed.forEach(p => {
+      html += `<li><strong>${this.escapeHtml(p.title)}</strong> (Thumb: ${this.escapeHtml(p.thumbnail_text || 'none')})</li>`;
+    });
+    html += '</ul>';
+    
+    previewBox.innerHTML = html;
+    previewBox.style.display = 'block';
+    submitBtn.disabled = false;
+  },
+
+  async submitBatch() {
+    const parsed = this.parseBatchText();
+    if (parsed.length === 0) return;
+    
+    const submitBtn = document.getElementById('btnSubmitBatch');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Importing...';
+    
+    const payload = {
+      channel_id: 1, // Defaulting to 1 for this phase
+      videos: parsed
+    };
+
+    try {
+      const res = await fetch('/videos/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to import batch');
+      }
+      this.log(`Successfully imported ${parsed.length} video ideas`, 'success');
+      this.closeBatchModal();
+      await this.loadVideos();
+      await this.loadPipelineSummary();
+    } catch (err) {
+      this.log(`Error importing batch: ${err.message}`, 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Import Batch';
     }
   },
 
@@ -641,6 +805,7 @@ const app = {
       this.log('Updated video metadata', 'success');
       this.closeEditModal();
       await this.loadVideos();
+      await this.loadPipelineSummary();
     } catch (err) {
       this.log(`Error updating video: ${err.message}`, 'error');
     }
@@ -673,6 +838,7 @@ const app = {
       document.getElementById('ctaPanel').innerHTML = '<div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>';
       
       await this.loadVideos();
+      await this.loadPipelineSummary();
     } catch (err) {
       this.log(`Error deleting video: ${err.message}`, 'error');
     }

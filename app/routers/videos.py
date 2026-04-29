@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -17,6 +17,7 @@ from app.schemas import (
     VideoUpdate,
     VideoPublishUpdate,
     VideoReadiness,
+    VideoBatchCreate,
 )
 from app.services.content_engine import (
     build_all_assets,
@@ -69,13 +70,66 @@ def create_bulk_ideas(payload: BulkIdeaRequest, db: Session = Depends(get_db)) -
 
 
 @router.get("", response_model=list[VideoRead])
-def list_videos(channel_id: int | None = None, status: VideoStatus | None = None, db: Session = Depends(get_db)) -> list[Video]:
+def list_videos(
+    channel_id: int | None = None,
+    status: VideoStatus | None = None,
+    publish_status: str | None = None,
+    approved: bool | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db)
+) -> list[Video]:
     stmt = select(Video).order_by(Video.created_at.desc())
     if channel_id is not None:
         stmt = stmt.where(Video.channel_id == channel_id)
     if status is not None:
         stmt = stmt.where(Video.status == status)
+    if publish_status is not None:
+        stmt = stmt.where(Video.publish_status == publish_status)
+    if approved is not None:
+        stmt = stmt.where(Video.approved == approved)
+    if search:
+        search_term = f"%{search}%"
+        stmt = stmt.where(
+            or_(
+                Video.title.ilike(search_term),
+                Video.niche.ilike(search_term),
+                Video.target_audience.ilike(search_term),
+                Video.angle.ilike(search_term),
+                Video.notes.ilike(search_term)
+            )
+        )
     return list(db.scalars(stmt))
+
+
+@router.post("/batch", response_model=list[VideoRead])
+def create_video_batch(payload: VideoBatchCreate, db: Session = Depends(get_db)) -> list[Video]:
+    channel = db.get(Channel, payload.channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+        
+    for item in payload.videos:
+        if not item.title or not item.title.strip():
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+            
+    videos = []
+    for item in payload.videos:
+        video = Video(
+            channel_id=payload.channel_id,
+            title=item.title.strip(),
+            niche=item.niche,
+            target_audience=item.target_audience,
+            angle=item.angle,
+            notes=item.notes,
+            status=VideoStatus.idea,
+            approved=False
+        )
+        db.add(video)
+        videos.append(video)
+        
+    db.commit()
+    for v in videos:
+        db.refresh(v)
+    return videos
 
 
 @router.get("/{video_id}", response_model=VideoRead)
