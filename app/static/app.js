@@ -6,6 +6,7 @@ const app = {
     videoAuditEvents: [],
     operatorExport: null,
     selectedVideoId: null,
+    activeTab: 'dashboard',
     assets: [],
     selectedAssetType: null,
     editingAssetType: null,
@@ -19,11 +20,46 @@ const app = {
 
   async init() {
     this.log('Initializing Local AI Operator Dashboard...', 'info');
+    this.initNavigationTabs();
     await this.checkHealth();
     await this.loadPipelineSummary();
     await this.loadVideos();
     await this.loadCalendar();
     await this.loadGlobalAudit();
+  },
+
+  initNavigationTabs() {
+    const bind = selector => {
+      document.querySelectorAll(selector).forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tab = btn.getAttribute('data-tab');
+          if (tab) this.setActiveTab(tab);
+        });
+      });
+    };
+
+    bind('.nav-tab');
+    bind('.sidebar-nav-item');
+    this.setActiveTab(this.state.activeTab);
+  },
+
+  setActiveTab(tab) {
+    this.state.activeTab = tab;
+
+    document.querySelectorAll('.nav-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+    });
+
+    document.querySelectorAll('.sidebar-nav-item').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+    });
+
+    document.querySelectorAll('[data-sections]').forEach(el => {
+      const attr = (el.getAttribute('data-sections') || '').trim();
+      if (!attr) return;
+      const sections = attr.split(/\s+/);
+      el.classList.toggle('tab-hidden', !sections.includes(tab));
+    });
   },
 
   log(msg, type = 'info') {
@@ -303,6 +339,13 @@ const app = {
     await this.loadReadiness();
     await this.loadVideoAudit();
     this.updateWorkflowAndCTA(video);
+
+    if (window.innerWidth <= 860) {
+      const inspector = document.getElementById('inspectorColumn');
+      if (inspector) {
+        inspector.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
   },
 
   updateWorkflowAndCTA(video) {
