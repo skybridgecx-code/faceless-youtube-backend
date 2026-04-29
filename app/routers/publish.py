@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import PublishRecord, Video, VideoStatus
 from app.schemas import MarkPublishedRequest, YouTubePayloadResponse
+from app.services.audit import log_audit_event
 from app.services.youtube import prepare_payload
 
 router = APIRouter(prefix="/publish", tags=["publish"])
@@ -27,6 +28,20 @@ def prepare_youtube_payload(video_id: int, db: Session = Depends(get_db)) -> You
     db.add(record)
     video.status = VideoStatus.publish_ready
     db.commit()
+    db.refresh(record)
+
+    log_audit_event(
+        db,
+        "youtube_payload_prepared",
+        f"Prepared safe YouTube payload for: {video.title}",
+        video_id=video.id,
+        metadata={
+            "publish_record_id": record.id,
+            "privacy_status": payload.privacy_status,
+            "review_required": payload.review_required,
+            "made_for_kids": payload.made_for_kids,
+        },
+    )
 
     return YouTubePayloadResponse(video_id=video.id, **payload.__dict__)
 
@@ -47,4 +62,14 @@ def mark_published(video_id: int, payload: MarkPublishedRequest, db: Session = D
     db.add(record)
     video.status = VideoStatus.published
     db.commit()
+    db.refresh(record)
+
+    log_audit_event(
+        db,
+        "publishing_updated",
+        f"Marked video as manually published: {video.title}",
+        video_id=video.id,
+        metadata={"publish_record_id": record.id, "external_id": payload.external_id},
+    )
+
     return {"ok": True, "video_id": video.id, "status": video.status.value, "external_id": payload.external_id}

@@ -2,6 +2,9 @@ const app = {
   state: {
     videos: [],
     calendarVideos: [],
+    auditEvents: [],
+    videoAuditEvents: [],
+    operatorExport: null,
     selectedVideoId: null,
     assets: [],
     selectedAssetType: null,
@@ -20,6 +23,7 @@ const app = {
     await this.loadPipelineSummary();
     await this.loadVideos();
     await this.loadCalendar();
+    await this.loadGlobalAudit();
   },
 
   log(msg, type = 'info') {
@@ -289,6 +293,7 @@ const app = {
 
     // Show Compliance Panel
     document.getElementById('compliancePanel').classList.remove('hidden');
+    document.getElementById('auditPanel').classList.remove('hidden');
     this.clearComplianceResults();
 
     if (fetchAssets) {
@@ -296,6 +301,7 @@ const app = {
     }
     
     await this.loadReadiness();
+    await this.loadVideoAudit();
     this.updateWorkflowAndCTA(video);
   },
 
@@ -645,15 +651,15 @@ const app = {
 
       const div = document.createElement('div');
       div.className = `compliance-item ${colorClass}`;
-      div.innerHTML = \`
+      div.innerHTML = `
         <div class="compliance-header">
-          <span class="compliance-icon">\${icon}</span>
-          <span class="compliance-label">\${this.escapeHtml(check.label)}</span>
-          \${check.asset_type ? \`<span class="compliance-asset-type">\${this.escapeHtml(check.asset_type)}</span>\` : ''}
+          <span class="compliance-icon">${icon}</span>
+          <span class="compliance-label">${this.escapeHtml(check.label)}</span>
+          ${check.asset_type ? `<span class="compliance-asset-type">${this.escapeHtml(check.asset_type)}</span>` : ''}
         </div>
-        <div class="compliance-detail">\${this.escapeHtml(check.detail)}</div>
-        \${check.suggested_fix ? \`<div class="compliance-fix"><strong>Fix:</strong> \${this.escapeHtml(check.suggested_fix)}</div>\` : ''}
-      \`;
+        <div class="compliance-detail">${this.escapeHtml(check.detail)}</div>
+        ${check.suggested_fix ? `<div class="compliance-fix"><strong>Fix:</strong> ${this.escapeHtml(check.suggested_fix)}</div>` : ''}
+      `;
       resultsDiv.appendChild(div);
     });
   },
@@ -709,6 +715,7 @@ const app = {
       }
       
       this.log('Publishing settings saved successfully.', 'success');
+      await this.refreshAuditPanels();
       await this.loadVideos();
       await this.loadCalendar();
     } catch (err) {
@@ -802,6 +809,7 @@ const app = {
       });
       if (!res.ok) throw new Error('Failed to create video idea');
       this.log('Created new video idea', 'success');
+      await this.refreshAuditPanels();
       this.closeNewIdeaModal();
       await this.loadVideos();
       await this.loadPipelineSummary();
@@ -889,6 +897,7 @@ const app = {
         throw new Error(data.detail || 'Failed to import batch');
       }
       this.log(`Successfully imported ${parsed.length} video ideas`, 'success');
+      await this.refreshAuditPanels();
       this.closeBatchModal();
       await this.loadVideos();
       await this.loadPipelineSummary();
@@ -937,6 +946,7 @@ const app = {
       });
       if (!res.ok) throw new Error('Failed to update video');
       this.log('Updated video metadata', 'success');
+      await this.refreshAuditPanels();
       this.closeEditModal();
       await this.loadVideos();
       await this.loadPipelineSummary();
@@ -962,6 +972,7 @@ const app = {
       if (!res.ok) throw new Error('Failed to delete video');
       
       this.log('Deleted video idea', 'success');
+      await this.refreshAuditPanels();
       this.closeDeleteModal();
       this.state.selectedVideoId = null;
       document.getElementById('selectedVideoTitle').textContent = 'Selected Video: None';
@@ -1017,6 +1028,7 @@ const app = {
       }
       
       this.log(`Asset ${assetType} updated successfully`, 'success');
+      await this.refreshAuditPanels();
       this.closeEditAssetModal();
       
       // Reload videos and assets to reflect status change to needs_review
@@ -1047,6 +1059,7 @@ const app = {
       }
       
       this.log(`Asset ${assetType} regenerated successfully`, 'success');
+      await this.refreshAuditPanels();
       
       // Reload videos and assets to reflect status change to needs_review
       document.getElementById('complianceStaleNotice').style.display = 'inline';
@@ -1054,6 +1067,153 @@ const app = {
       await this.loadAssets();
     } catch (err) {
       this.log(`Error regenerating asset: ${err.message}`, 'error');
+    }
+  },
+
+
+  async loadGlobalAudit() {
+    const container = document.getElementById('globalAuditList');
+    if (!container) return;
+
+    try {
+      const res = await fetch('/audit?limit=25');
+      if (!res.ok) throw new Error('Failed to load audit history');
+      const events = await res.json();
+      this.state.auditEvents = events;
+      this.renderGlobalAudit();
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state">Failed to load history.</div>`;
+      this.log(`Audit history failed: ${err.message}`, 'error');
+    }
+  },
+
+  renderGlobalAudit() {
+    const container = document.getElementById('globalAuditList');
+    if (!container) return;
+
+    if (!this.state.auditEvents || this.state.auditEvents.length === 0) {
+      container.innerHTML = `<div class="empty-state">No operator history yet.</div>`;
+      return;
+    }
+
+    container.innerHTML = this.state.auditEvents.map(event => {
+      const clickable = event.video_id ? `onclick="app.selectVideo(${event.video_id})"` : '';
+      return `
+        <div class="audit-event ${event.video_id ? 'clickable' : ''}" ${clickable}>
+          <div class="audit-event-top">
+            <span class="audit-badge">${this.escapeHtml(event.event_type)}</span>
+            <span class="audit-time">${this.formatTime(event.created_at)}</span>
+          </div>
+          <div class="audit-message">${this.escapeHtml(event.message)}</div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  async loadVideoAudit() {
+    const container = document.getElementById('videoAuditList');
+    if (!container || !this.state.selectedVideoId) return;
+
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/audit`);
+      if (!res.ok) throw new Error('Failed to load video audit trail');
+      const events = await res.json();
+      this.state.videoAuditEvents = events;
+      this.renderVideoAudit();
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state">Failed to load audit trail.</div>`;
+      this.log(`Video audit failed: ${err.message}`, 'error');
+    }
+  },
+
+  renderVideoAudit() {
+    const container = document.getElementById('videoAuditList');
+    if (!container) return;
+
+    if (!this.state.videoAuditEvents || this.state.videoAuditEvents.length === 0) {
+      container.innerHTML = `<div class="empty-state">No audit events for this video yet.</div>`;
+      return;
+    }
+
+    container.innerHTML = this.state.videoAuditEvents.map(event => `
+      <div class="audit-event">
+        <div class="audit-event-top">
+          <span class="audit-badge">${this.escapeHtml(event.event_type)}</span>
+          <span class="audit-time">${this.formatTime(event.created_at)}</span>
+        </div>
+        <div class="audit-message">${this.escapeHtml(event.message)}</div>
+      </div>
+    `).join('');
+  },
+
+  async refreshAuditPanels() {
+    await this.loadGlobalAudit();
+    await this.loadVideoAudit();
+  },
+
+  async openExportModal() {
+    if (!this.state.selectedVideoId) return;
+
+    const preview = document.getElementById('operatorExportPreview');
+    preview.textContent = 'Loading operator summary...';
+    document.getElementById('operatorExportModal').classList.remove('hidden');
+
+    try {
+      const res = await fetch(`/videos/${this.state.selectedVideoId}/operator-export`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to export operator summary');
+      }
+
+      this.state.operatorExport = data;
+      preview.textContent = JSON.stringify(data, null, 2);
+      this.log('Loaded local operator export summary', 'success');
+      await this.refreshAuditPanels();
+    } catch (err) {
+      preview.textContent = `Export failed: ${err.message}`;
+      this.log(`Operator export failed: ${err.message}`, 'error');
+    }
+  },
+
+  closeExportModal() {
+    document.getElementById('operatorExportModal').classList.add('hidden');
+  },
+
+  async copyOperatorExport() {
+    const text = document.getElementById('operatorExportPreview').textContent;
+    await this.copyText(text, 'Operator export JSON copied');
+  },
+
+  downloadOperatorExport() {
+    const text = document.getElementById('operatorExportPreview').textContent || '{}';
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const videoId = this.state.selectedVideoId || 'video';
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `operator-summary-${videoId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    this.log('Downloaded local operator export JSON', 'success');
+  },
+
+  async copyText(text, successMessage = 'Copied') {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.log(successMessage, 'success');
+    } catch (err) {
+      this.log(`Copy failed: ${err.message}`, 'error');
+    }
+  },
+
+  formatTime(value) {
+    if (!value) return '';
+    try {
+      return new Date(value).toLocaleString();
+    } catch (_) {
+      return value;
     }
   },
 

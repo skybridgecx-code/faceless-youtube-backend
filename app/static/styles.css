@@ -777,3 +777,75 @@ header {
   border-bottom-left-radius: 12px;
   border-bottom-right-radius: 12px;
 }
+
+
+/* Phase 8 audit/export polish */
+.audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.audit-event {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.025);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.audit-event.clickable {
+  cursor: pointer;
+}
+
+.audit-event.clickable:hover {
+  border-color: var(--primary);
+  background: rgba(255,255,255,0.045);
+}
+
+.audit-event-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.audit-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  color: var(--primary);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.audit-time {
+  color: var(--textMuted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.audit-message {
+  color: var(--textSecondary);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.json-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.28);
+  color: var(--textSecondary);
+  padding: 1rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}

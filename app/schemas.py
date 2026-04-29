@@ -196,3 +196,35 @@ class YouTubePayloadResponse(BaseModel):
 class MarkPublishedRequest(BaseModel):
     external_id: str
     metadata_body: str = ""
+
+
+class AuditEventRead(BaseModel):
+    id: int
+    video_id: int | None = None
+    event_type: str
+    message: str
+    metadata_json: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AssetPreview(BaseModel):
+    id: int
+    asset_type: AssetType
+    version: int
+    created_at: datetime
+    body_length: int
+    body_preview: str
+
+
+class OperatorExport(BaseModel):
+    video: VideoRead
+    workflow_status: str
+    publishing_plan: dict[str, object | None]
+    readiness: VideoReadiness
+    compliance_summary: dict[str, int | str]
+    assets: list[AssetPreview]
+    audit_events: list[AuditEventRead]
+    package_dir: str | None = None
+    youtube_payload_readiness: dict[str, object]

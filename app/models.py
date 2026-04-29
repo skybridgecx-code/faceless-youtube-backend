@@ -75,6 +75,7 @@ class Video(Base):
     assets: Mapped[list["ContentAsset"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     reviews: Mapped[list["Review"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     publish_records: Mapped[list["PublishRecord"]] = relationship(back_populates="video", cascade="all, delete-orphan")
+    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="video", cascade="all, delete-orphan")
 
 
 class ContentAsset(Base):
@@ -115,3 +116,16 @@ class PublishRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     video: Mapped[Video] = relationship(back_populates="publish_records")
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(120), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    video: Mapped[Video | None] = relationship(back_populates="audit_events")

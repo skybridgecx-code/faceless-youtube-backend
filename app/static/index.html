@@ -109,6 +109,22 @@
             </div>
           </div>
         </div>
+
+        <!-- Recent Operator History Panel -->
+        <div class="panel" style="margin-top: 1.5rem;">
+          <div class="panel-header">
+            <h2>Recent Operator History</h2>
+            <div class="header-actions">
+              <button class="btn" onclick="app.loadGlobalAudit()">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="globalAuditList" class="audit-list">
+              <div class="empty-state">Loading history...</div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- Right Panel: Selected Video & Actions -->
@@ -116,6 +132,7 @@
         <div class="panel-header">
           <h2 id="selectedVideoTitle">Selected Video: None</h2>
           <div class="header-actions" id="selectedVideoActions" style="display: none;">
+            <button class="btn" onclick="app.openExportModal()">Export Operator Summary</button>
             <button class="btn" onclick="app.openEditModal()">Edit</button>
             <button class="btn danger" onclick="app.openDeleteModal()">Delete</button>
           </div>
@@ -216,6 +233,23 @@
               </div>
               <div id="complianceResults" class="compliance-results" style="display: flex; flex-direction: column; gap: 0.5rem;">
                 <div class="empty-state" style="padding: 1rem 0;">Run a check to view compliance details.</div>
+              </div>
+            </div>
+          </div>
+
+
+          <!-- Audit Trail Panel -->
+          <div class="audit-panel hidden" id="auditPanel" style="margin-bottom: 1.5rem;">
+            <div class="panel-header" style="padding: 0; background: transparent; border: none; margin-bottom: 0.5rem; justify-content: space-between;">
+              <h3 style="font-size: 0.875rem; color: var(--textSecondary); margin: 0;">Audit Trail</h3>
+              <div class="header-actions">
+                <button class="btn" onclick="app.loadVideoAudit()">Refresh</button>
+              </div>
+            </div>
+            <div class="form-body" style="background: rgba(255,255,255,0.02); padding: 1rem; border: 1px solid var(--border); border-radius: 8px;">
+              <p class="modal-desc" style="margin-top: 0;">Server-side history for this selected video. Local/operator only.</p>
+              <div id="videoAuditList" class="audit-list">
+                <div class="empty-state" style="padding: 1rem 0;">No audit events yet.</div>
               </div>
             </div>
           </div>
@@ -390,6 +424,26 @@
       <div class="modal-footer">
         <button class="btn" onclick="app.closeEditAssetModal()">Cancel</button>
         <button class="btn success" onclick="app.submitEditAsset()">Save Asset</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Operator Export Modal -->
+  <div class="modal-overlay hidden" id="operatorExportModal">
+    <div class="modal" style="max-width: 900px; width: 92%;">
+      <div class="modal-header">
+        <h2>Operator Summary Export</h2>
+        <button class="btn close-btn" onclick="app.closeExportModal()">X</button>
+      </div>
+      <div class="modal-body form-body">
+        <p class="modal-desc" style="margin-top: 0;">Local/operator-only JSON summary. Full generated asset bodies are intentionally excluded.</p>
+        <pre id="operatorExportPreview" class="json-preview">{}</pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeExportModal()">Close</button>
+        <button class="btn" onclick="app.copyOperatorExport()">Copy JSON</button>
+        <button class="btn success" onclick="app.downloadOperatorExport()">Download JSON</button>
       </div>
     </div>
   </div>
