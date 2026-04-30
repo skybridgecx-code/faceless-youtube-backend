@@ -167,29 +167,36 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         assets_generated = len(video.assets) > 0
         has_compliance_run = video.id in compliance_run_video_ids
 
-        if not assets_generated and video.status in {VideoStatus.idea, VideoStatus.drafted}:
+        # Assign each video to exactly one active stage using strict priority order.
+        if not assets_generated and video.status != VideoStatus.published:
             videos_needing_assets.append(
                 _video_item(video, preview_rendered, "Assets are missing. Generate assets first.")
             )
+            continue
 
         if video.approved and not preview_rendered:
             videos_needing_preview.append(
                 _video_item(video, preview_rendered, "Approved video is missing draft preview render.")
             )
-        elif video.approved and preview_rendered and not video.preview_reviewed:
+            continue
+
+        if video.approved and preview_rendered and not video.preview_reviewed:
             videos_needing_preview_review.append(
                 _video_item(video, preview_rendered, "Draft preview exists but manual preview review is pending.")
             )
+            continue
 
         if assets_generated and not video.approved:
-            if has_compliance_run:
-                videos_needing_manual_approval.append(
-                    _video_item(video, preview_rendered, "Compliance has been run; manual approval/rejection is pending.")
-                )
-            else:
+            if not has_compliance_run:
                 videos_needing_compliance.append(
                     _video_item(video, preview_rendered, "Run compliance checks before manual approval.")
                 )
+                continue
+
+            videos_needing_manual_approval.append(
+                _video_item(video, preview_rendered, "Compliance has been run; manual approval/rejection is pending.")
+            )
+            continue
 
         if (
             video.approved
@@ -200,11 +207,13 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
             videos_ready_to_package.append(
                 _video_item(video, preview_rendered, "Approved and preview-reviewed. Ready for packaging.")
             )
+            continue
 
         if video.status == VideoStatus.packaged:
             videos_ready_for_payload.append(
                 _video_item(video, preview_rendered, "Packaged and ready for payload preparation.")
             )
+            continue
 
         if video.status in {VideoStatus.publish_ready, VideoStatus.published} or video.publish_status in {
             "ready",
@@ -266,24 +275,6 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
             target_page="assets",
             video_id=top.video_id,
         )
-    elif videos_needing_compliance:
-        top = videos_needing_compliance[0]
-        next_step = PipelineNextStep(
-            key="run_compliance",
-            label=f"Run compliance: {top.title}",
-            reason=top.reason or "Compliance check pending.",
-            target_page="compliance",
-            video_id=top.video_id,
-        )
-    elif videos_needing_manual_approval:
-        top = videos_needing_manual_approval[0]
-        next_step = PipelineNextStep(
-            key="manual_approval",
-            label=f"Manual review: {top.title}",
-            reason=top.reason or "Manual approval pending.",
-            target_page="compliance",
-            video_id=top.video_id,
-        )
     elif videos_needing_preview:
         top = videos_needing_preview[0]
         next_step = PipelineNextStep(
@@ -300,6 +291,24 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
             label=f"Watch draft preview: {top.title}",
             reason=top.reason or "Preview review pending.",
             target_page="assets",
+            video_id=top.video_id,
+        )
+    elif videos_needing_compliance:
+        top = videos_needing_compliance[0]
+        next_step = PipelineNextStep(
+            key="run_compliance",
+            label=f"Run compliance: {top.title}",
+            reason=top.reason or "Compliance check pending.",
+            target_page="compliance",
+            video_id=top.video_id,
+        )
+    elif videos_needing_manual_approval:
+        top = videos_needing_manual_approval[0]
+        next_step = PipelineNextStep(
+            key="manual_approval",
+            label=f"Manual review: {top.title}",
+            reason=top.reason or "Manual approval pending.",
+            target_page="compliance",
             video_id=top.video_id,
         )
     elif videos_ready_to_package:

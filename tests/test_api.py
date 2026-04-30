@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import app.routers.videos as videos_router  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AuditEvent, ContentAgent, VideoOpportunity  # noqa: E402
+from app.models import AuditEvent, ContentAgent, Video, VideoOpportunity  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 
 
@@ -1487,6 +1487,75 @@ def test_pipeline_daily_video_stage_buckets() -> None:
     assert ready_to_package["id"] in {item["video_id"] for item in body["videos_ready_to_package"]}
     assert ready_for_payload["id"] in {item["video_id"] for item in body["videos_ready_for_payload"]}
     assert completed_payload["id"] in {item["video_id"] for item in body["completed_payloads"]}
+
+
+def test_pipeline_daily_needing_preview_is_not_completed_payload() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Preview Conflict Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Preview Conflict Video"}).json()
+    video_id = video["id"]
+
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+
+    db = SessionLocal()
+    try:
+        row = db.get(Video, video_id)
+        assert row is not None
+        row.publish_status = "ready"
+        row.status = "publish_ready"
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/pipeline/daily")
+    assert response.status_code == 200
+    body = response.json()
+    needing_preview_ids = {item["video_id"] for item in body["videos_needing_preview"]}
+    completed_ids = {item["video_id"] for item in body["completed_payloads"]}
+    assert video_id in needing_preview_ids
+    assert video_id not in completed_ids
+
+
+def test_pipeline_daily_completed_payload_only_after_prior_blockers_cleared() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Completed Gate Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Completed Gate Video"}).json()
+    video_id = video["id"]
+
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+
+    first = client.get("/pipeline/daily")
+    assert first.status_code == 200
+    first_body = first.json()
+    assert video_id in {item["video_id"] for item in first_body["videos_needing_preview"]}
+    assert video_id not in {item["video_id"] for item in first_body["completed_payloads"]}
+
+    _write_real_preview_file(video_id)
+    assert client.post(f"/videos/{video_id}/preview/review", json={"reviewed": True}).status_code == 200
+
+    second = client.get("/pipeline/daily")
+    assert second.status_code == 200
+    second_body = second.json()
+    assert video_id in {item["video_id"] for item in second_body["videos_ready_to_package"]}
+    assert video_id not in {item["video_id"] for item in second_body["completed_payloads"]}
+
+    assert client.post(f"/videos/{video_id}/package").status_code == 200
+
+    third = client.get("/pipeline/daily")
+    assert third.status_code == 200
+    third_body = third.json()
+    assert video_id in {item["video_id"] for item in third_body["videos_ready_for_payload"]}
+    assert video_id not in {item["video_id"] for item in third_body["completed_payloads"]}
+
+    assert client.post(f"/publish/{video_id}/prepare-youtube-payload").status_code == 200
+
+    fourth = client.get("/pipeline/daily")
+    assert fourth.status_code == 200
+    fourth_body = fourth.json()
+    assert video_id in {item["video_id"] for item in fourth_body["completed_payloads"]}
+    assert video_id not in {item["video_id"] for item in fourth_body["videos_needing_preview"]}
 
 
 def test_pipeline_daily_get_does_not_create_audit_spam() -> None:
