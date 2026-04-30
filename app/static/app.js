@@ -927,6 +927,39 @@ const app = {
     }
   },
 
+  setDailySeedStatus(message, type = 'info') {
+    const el = document.getElementById('dailySeedStatusMessage');
+    if (!el) return;
+    el.textContent = message;
+    el.style.color = type === 'error' ? 'var(--danger)' : (type === 'success' ? 'var(--success)' : 'var(--textSecondary)');
+  },
+
+  async generateDailyOpportunities(limit = 7) {
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Number(limit))) : 7;
+    this.setDailySeedStatus('Generating deterministic daily opportunity batch...', 'info');
+    try {
+      const res = await fetch('/opportunities/intake/daily-seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: safeLimit })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to generate daily opportunities');
+      }
+      const summary = `Created ${data.created_count} opportunity(ies), skipped ${data.skipped_duplicates} duplicate(s).`;
+      this.setDailySeedStatus(`${summary} Next step: review, shortlist, and approve the strongest opportunities.`, 'success');
+      this.log(`Daily seed complete. ${summary}`, 'success');
+      await this.loadOpportunities();
+      await this.loadCommandCenter();
+      await this.loadExecutiveProducerRecommendation();
+      await this.loadProducerHistory();
+    } catch (err) {
+      this.setDailySeedStatus(`Daily seed failed: ${err.message}`, 'error');
+      this.log(`Daily seed failed: ${err.message}`, 'error');
+    }
+  },
+
   async scoreOpportunity(opportunityId) {
     try {
       const res = await fetch(`/opportunities/${opportunityId}/score`, { method: 'POST' });

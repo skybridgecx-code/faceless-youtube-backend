@@ -72,10 +72,12 @@
               <div class="panel-header">
                 <h2>Daily Command Center</h2>
                 <div class="header-actions">
+                  <button class="btn success" onclick="app.generateDailyOpportunities()">Generate Today&apos;s Opportunities</button>
                   <button class="btn" onclick="app.loadCommandCenter()">Refresh</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
+                <div class="opportunity-note" id="dailySeedStatusMessage">Generate today&apos;s opportunities to seed the review queue.</div>
                 <div class="flow-card" id="nextBestActionCard">
                   <div class="flow-card-title">Today&apos;s Best Move</div>
                   <div class="flow-card-body" id="nextBestActionText">Loading next action...</div>
@@ -297,6 +299,7 @@
               <div class="panel-header">
                 <h2>Best Opportunity Today</h2>
                 <div class="header-actions">
+                  <button class="btn success" onclick="app.generateDailyOpportunities()">Generate Today&apos;s Opportunities</button>
                   <button class="btn" onclick="app.loadOpportunities()">Refresh</button>
                 </div>
               </div>

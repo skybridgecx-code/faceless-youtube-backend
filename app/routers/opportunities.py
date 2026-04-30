@@ -11,6 +11,9 @@ from app.db import get_db
 from app.models import Channel, OpportunityReviewStatus, Video, VideoOpportunity, VideoStatus
 from app.schemas import (
     OpportunityCreate,
+    OpportunityDailySeedRequest,
+    OpportunityDailySeedResult,
+    OpportunityIntakeStatusRead,
     OpportunityRead,
     OpportunityReviewUpdate,
     OpportunityScoreBreakdown,
@@ -18,6 +21,7 @@ from app.schemas import (
 )
 from app.services.agents import ensure_channel_agents, first_active_agent_name, maybe_assign_agent_to_opportunity
 from app.services.audit import log_audit_event
+from app.services.opportunity_intake import build_daily_seed_blueprints, normalize_text
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
 
@@ -242,6 +246,44 @@ def list_review_queue(
     return [serialize_opportunity(row) for row in rows[:limit]]
 
 
+@router.get("/intake/status", response_model=OpportunityIntakeStatusRead)
+def intake_status(
+    channel_id: int | None = None,
+    db: Session = Depends(get_db),
+) -> OpportunityIntakeStatusRead:
+    today = datetime.utcnow().date()
+    channel: Channel | None = None
+    if channel_id is not None:
+        channel = db.get(Channel, channel_id)
+    if channel is None:
+        channel = db.scalar(select(Channel).order_by(Channel.created_at.asc()).limit(1))
+
+    if channel is None:
+        return OpportunityIntakeStatusRead(
+            date=today.isoformat(),
+            channel_id=None,
+            todays_count=0,
+            potential_seed_count=0,
+        )
+
+    todays_rows = list(
+        db.scalars(
+            select(VideoOpportunity).where(
+                VideoOpportunity.channel_id == channel.id,
+                VideoOpportunity.created_at >= datetime.combine(today, datetime.min.time()),
+            )
+        )
+    )
+    active_agents = [agent for agent in ensure_channel_agents(db, channel.id) if agent.is_active]
+    potential = build_daily_seed_blueprints(for_day=today, active_agents=active_agents, limit=7)
+    return OpportunityIntakeStatusRead(
+        date=today.isoformat(),
+        channel_id=channel.id,
+        todays_count=len(todays_rows),
+        potential_seed_count=len(potential),
+    )
+
+
 @router.post("", response_model=OpportunityRead)
 def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)) -> OpportunityRead:
     channel = db.get(Channel, payload.channel_id)
@@ -282,6 +324,103 @@ def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)
     )
 
     return serialize_opportunity(opportunity)
+
+
+@router.post("/intake/daily-seed", response_model=OpportunityDailySeedResult)
+def daily_seed_intake(
+    payload: OpportunityDailySeedRequest,
+    limit: int | None = Query(default=None, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> OpportunityDailySeedResult:
+    today = datetime.utcnow().date()
+    effective_limit = limit if limit is not None else payload.limit
+    channel: Channel | None = None
+    if payload.channel_id is not None:
+        channel = db.get(Channel, payload.channel_id)
+    if channel is None:
+        channel = db.scalar(select(Channel).order_by(Channel.created_at.asc()).limit(1))
+    if channel is None:
+        raise HTTPException(status_code=404, detail="No channel found. Create a channel before running daily intake.")
+
+    agents = [agent for agent in ensure_channel_agents(db, channel.id) if agent.is_active]
+    blueprints = build_daily_seed_blueprints(for_day=today, active_agents=agents, limit=effective_limit)
+
+    day_start = datetime.combine(today, datetime.min.time())
+    day_end = datetime.combine(today, datetime.max.time())
+    existing_today = list(
+        db.scalars(
+            select(VideoOpportunity).where(
+                VideoOpportunity.channel_id == channel.id,
+                VideoOpportunity.created_at >= day_start,
+                VideoOpportunity.created_at <= day_end,
+            )
+        )
+    )
+    existing_pairs = {
+        (normalize_text(item.topic), normalize_text(item.niche_lane))
+        for item in existing_today
+    }
+
+    created_ids: list[int] = []
+    skipped_duplicates = 0
+    created_rows: list[VideoOpportunity] = []
+    for blueprint in blueprints:
+        pair = (normalize_text(blueprint.topic), normalize_text(blueprint.niche_lane))
+        if pair in existing_pairs:
+            skipped_duplicates += 1
+            continue
+
+        opportunity = VideoOpportunity(
+            channel_id=channel.id,
+            assigned_agent_id=blueprint.assigned_agent_id,
+            topic=blueprint.topic,
+            niche_lane=blueprint.niche_lane,
+            audience=blueprint.audience,
+            monetization_path=blueprint.monetization_path,
+            notes=blueprint.notes,
+            assigned_agent=blueprint.assigned_agent,
+            review_status=OpportunityReviewStatus.unreviewed.value,
+        )
+        apply_scores(opportunity)
+        db.add(opportunity)
+        db.flush()
+        created_ids.append(opportunity.id)
+        created_rows.append(opportunity)
+        existing_pairs.add(pair)
+
+    if created_rows:
+        db.commit()
+        for row in created_rows:
+            db.refresh(row)
+            log_audit_event(
+                db,
+                "opportunity_daily_seed_created",
+                f"Daily seeded opportunity: {row.topic}",
+                metadata={
+                    "opportunity_id": row.id,
+                    "channel_id": row.channel_id,
+                    "lane": row.niche_lane,
+                    "total_score": row.total_score,
+                    "source": "daily_seed",
+                },
+            )
+    else:
+        db.rollback()
+
+    created_count = len(created_ids)
+    message = (
+        f"Created {created_count} opportunity candidates and skipped {skipped_duplicates} duplicate(s). "
+        "Next step: review, shortlist, and approve the strongest opportunities."
+    )
+    return OpportunityDailySeedResult(
+        date=today.isoformat(),
+        channel_id=channel.id,
+        requested_limit=effective_limit,
+        created_count=created_count,
+        skipped_duplicates=skipped_duplicates,
+        created_ids=created_ids,
+        message=message,
+    )
 
 
 @router.patch("/{opportunity_id}/review", response_model=OpportunityRead)

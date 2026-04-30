@@ -406,3 +406,25 @@ class CommandCenterTodayRead(BaseModel):
     recent_audit_events: list[AuditEventRead]
     summary_status: Literal["empty", "attention_needed", "on_track"]
     summary_message: str
+
+
+class OpportunityDailySeedRequest(BaseModel):
+    channel_id: int | None = None
+    limit: int = Field(default=7, ge=1, le=50)
+
+
+class OpportunityDailySeedResult(BaseModel):
+    date: str
+    channel_id: int
+    requested_limit: int
+    created_count: int
+    skipped_duplicates: int
+    created_ids: list[int]
+    message: str
+
+
+class OpportunityIntakeStatusRead(BaseModel):
+    date: str
+    channel_id: int | None = None
+    todays_count: int
+    potential_seed_count: int

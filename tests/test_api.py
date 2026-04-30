@@ -472,6 +472,107 @@ def test_opportunity_routes_and_promotion_workflow() -> None:
     assert "opportunity_promoted" in event_types
 
 
+def test_daily_seed_creates_opportunities_and_scores() -> None:
+    client = TestClient(app)
+    client.post("/channels", json={"name": "Daily Seed Channel"})
+
+    response = client.post("/opportunities/intake/daily-seed", json={"limit": 7})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 7
+    assert payload["skipped_duplicates"] == 0
+    assert len(payload["created_ids"]) == 7
+
+    opportunities = client.get("/opportunities").json()
+    assert len(opportunities) == 7
+    for row in opportunities:
+        assert row["recommended_title"]
+        assert row["thumbnail_angle"]
+        assert row["recommended_cta"]
+        assert row["review_status"] == "unreviewed"
+        assert row["promoted_video_id"] is None
+
+
+def test_daily_seed_is_idempotent_same_day() -> None:
+    client = TestClient(app)
+    client.post("/channels", json={"name": "Daily Seed Idempotent Channel"})
+
+    first = client.post("/opportunities/intake/daily-seed", json={"limit": 7})
+    second = client.post("/opportunities/intake/daily-seed", json={"limit": 7})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_body = first.json()
+    second_body = second.json()
+    assert first_body["created_count"] == 7
+    assert second_body["created_count"] == 0
+    assert second_body["skipped_duplicates"] == 7
+    assert len(client.get("/opportunities").json()) == 7
+
+
+def test_daily_seed_assigns_active_agents_by_lane() -> None:
+    client = TestClient(app)
+    channel_response = client.post("/channels", json={"name": "Daily Seed Agent Match Channel"})
+    channel_id = channel_response.json()["id"]
+    assert channel_response.status_code == 200
+
+    agents = client.get("/agents").json()
+    business_agent = next(
+        agent
+        for agent in agents
+        if agent["channel_id"] == channel_id and agent["name"] == "AI Business Automation Agent"
+    )
+    assert business_agent["is_active"] is True
+
+    response = client.post("/opportunities/intake/daily-seed", json={"limit": 7, "channel_id": channel_id})
+    assert response.status_code == 200
+    opportunities = client.get("/opportunities").json()
+    row = next(item for item in opportunities if item["niche_lane"] == "AI business automation")
+    assert row["assigned_agent_id"] == business_agent["id"]
+    assert row["assigned_agent"] == "AI Business Automation Agent"
+
+
+def test_daily_seed_audit_events_only_for_inserted_opportunities() -> None:
+    client = TestClient(app)
+    client.post("/channels", json={"name": "Daily Seed Audit Channel"})
+
+    first = client.post("/opportunities/intake/daily-seed", json={"limit": 7}).json()
+    second = client.post("/opportunities/intake/daily-seed", json={"limit": 7}).json()
+    assert first["created_count"] == 7
+    assert second["created_count"] == 0
+
+    audit = client.get("/audit?limit=200")
+    assert audit.status_code == 200
+    events = [event for event in audit.json() if event["event_type"] == "opportunity_daily_seed_created"]
+    assert len(events) == 7
+
+
+def test_daily_seed_does_not_auto_approve_or_promote() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Daily Seed No Auto Promote Channel"}).json()["id"]
+
+    seed = client.post("/opportunities/intake/daily-seed", json={"limit": 7, "channel_id": channel_id})
+    assert seed.status_code == 200
+    rows = client.get("/opportunities").json()
+    assert len(rows) == 7
+    assert all(row["review_status"] == "unreviewed" for row in rows)
+    assert all(row["promoted_video_id"] is None for row in rows)
+    videos = client.get("/videos").json()
+    assert len(videos) == 0
+
+
+def test_command_center_includes_seeded_opportunities_candidates() -> None:
+    client = TestClient(app)
+    client.post("/channels", json={"name": "Daily Seed Command Center Channel"})
+    seed = client.post("/opportunities/intake/daily-seed", json={"limit": 7})
+    assert seed.status_code == 200
+
+    command_center = client.get("/command-center/today")
+    assert command_center.status_code == 200
+    payload = command_center.json()
+    assert payload["best_opportunity"] is not None
+    assert payload["best_opportunity"]["id"] in seed.json()["created_ids"]
+
+
 def test_opportunity_review_status_validation_and_rejection() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Review Validation Channel"}).json()["id"]
