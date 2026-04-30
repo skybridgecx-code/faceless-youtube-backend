@@ -60,6 +60,7 @@ def latest_visual_plan_for_video(db: Session, video_id: int) -> VisualAssetPlan 
 def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
     plan = latest_visual_plan_for_video(db, video.id)
     if plan is None:
+        warnings = ["No visual asset plan exists. Preview renderer will use fallback slides."]
         return {
             "video_id": video.id,
             "title": video.title,
@@ -70,7 +71,8 @@ def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
             "included_asset_paths": [],
             "assets": [],
             "scenes": [],
-            "warnings": ["No visual asset plan exists. Preview renderer will use fallback slides."],
+            "warnings": warnings,
+            "visual_asset_warnings": warnings,
         }
 
     scenes = list(
@@ -158,6 +160,7 @@ def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
         "assets": included_assets,
         "scenes": scene_rows,
         "warnings": warnings,
+        "visual_asset_warnings": warnings,
     }
 
 

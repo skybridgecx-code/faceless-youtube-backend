@@ -237,6 +237,11 @@ class PreviewStatus(BaseModel):
     tts_provider: str | None = None
     tts_voice: str | None = None
     tts_model: str | None = None
+    preview_asset_mode: str = "fallback_only"
+    visual_assets_used_count: int = 0
+    visual_assets_missing_count: int = 0
+    included_asset_paths: list[str] = Field(default_factory=list)
+    visual_asset_warnings: list[str] = Field(default_factory=list)
     visual_assets_registered: bool = False
     visual_assets_count: int = 0
     visual_thumbnail_path: str | None = None

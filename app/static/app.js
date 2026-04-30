@@ -3160,11 +3160,16 @@ const app = {
     const ttsVoiceModelText = document.getElementById('previewTtsVoiceModelText');
     const ttsSetupHintText = document.getElementById('previewTtsSetupHintText');
     const visualAssetsStatusText = document.getElementById('previewVisualAssetsStatus');
+    const previewAssetModeText = document.getElementById('previewAssetMode');
+    const visualAssetsUsedCountText = document.getElementById('previewVisualAssetsUsedCount');
+    const visualAssetsMissingCountText = document.getElementById('previewVisualAssetsMissingCount');
     const visualThumbnailPathText = document.getElementById('previewVisualThumbnailPath');
+    const previewIncludedAssetPathsText = document.getElementById('previewIncludedAssetPaths');
+    const previewVisualWarningsText = document.getElementById('previewVisualWarnings');
     const previewPlayer = document.getElementById('previewPlayer');
     const missingMessage = document.getElementById('previewMissingMessage');
     const markReviewedBtn = document.getElementById('btnMarkPreviewReviewed');
-    if (!statusText || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !visualAssetsStatusText || !visualThumbnailPathText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
+    if (!statusText || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !visualAssetsStatusText || !previewAssetModeText || !visualAssetsUsedCountText || !visualAssetsMissingCountText || !visualThumbnailPathText || !previewIncludedAssetPathsText || !previewVisualWarningsText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
 
     if (!status) {
       statusText.textContent = 'No rendered video preview yet.';
@@ -3182,15 +3187,27 @@ const app = {
       ttsProviderText.textContent = 'Not rendered';
       ttsVoiceModelText.textContent = 'Not rendered';
       ttsSetupHintText.textContent = 'Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for premium voiceover.';
+      previewAssetModeText.textContent = 'fallback_only';
       visualAssetsStatusText.textContent = 'No registered visual assets.';
+      visualAssetsUsedCountText.textContent = '0';
+      visualAssetsMissingCountText.textContent = '0';
       visualThumbnailPathText.textContent = '-';
+      previewIncludedAssetPathsText.textContent = '-';
+      previewVisualWarningsText.textContent = '-';
       return;
     }
 
+    const includedAssetPaths = Array.isArray(status.included_asset_paths) ? status.included_asset_paths : [];
+    const visualWarnings = Array.isArray(status.visual_asset_warnings) ? status.visual_asset_warnings : [];
+    previewAssetModeText.textContent = status.preview_asset_mode || 'fallback_only';
+    visualAssetsUsedCountText.textContent = `${status.visual_assets_used_count || 0}`;
+    visualAssetsMissingCountText.textContent = `${status.visual_assets_missing_count || 0}`;
     visualAssetsStatusText.textContent = status.visual_assets_registered
       ? `${status.visual_assets_count || 0} registered visual asset(s) found.`
       : 'No registered visual assets.';
     visualThumbnailPathText.textContent = status.visual_thumbnail_path || '-';
+    previewIncludedAssetPathsText.textContent = includedAssetPaths.length ? includedAssetPaths.join('\n') : '-';
+    previewVisualWarningsText.textContent = visualWarnings.length ? visualWarnings.join('\n') : '-';
 
     expectedPath.textContent = status.expected_path || 'out/previews/{video_id}/draft.mp4';
     if (status.preview_exists && status.preview_url) {

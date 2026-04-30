@@ -68,6 +68,7 @@ from app.services.content_engine import (
     generate_video_ideas,
 )
 from app.services.package_builder import build_video_package, slugify
+from app.services.preview_visuals import build_preview_visual_manifest
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 PREVIEW_FILENAME = "draft.mp4"
@@ -563,7 +564,37 @@ def build_preview_status(video: Video, preview_path: Path | None, db: Session) -
     provider = str(meta.get("provider")) if meta.get("provider") else None
     voice = str(meta.get("voice")) if meta.get("voice") else None
     model = str(meta.get("model")) if meta.get("model") else None
-    visual_assets_count, visual_thumbnail_path = visual_asset_summary_for_video(db, video.id)
+    visual_manifest = build_preview_visual_manifest(db, video)
+    included_asset_paths = [
+        str(path_value)
+        for path_value in visual_manifest.get("included_asset_paths", [])
+        if isinstance(path_value, str)
+    ]
+    visual_asset_warnings = [
+        str(warning)
+        for warning in visual_manifest.get("visual_asset_warnings", visual_manifest.get("warnings", []))
+        if isinstance(warning, str)
+    ]
+    try:
+        visual_assets_used_count = int(visual_manifest.get("visual_assets_used_count", len(included_asset_paths)))
+    except (TypeError, ValueError):
+        visual_assets_used_count = len(included_asset_paths)
+    try:
+        visual_assets_missing_count = int(visual_manifest.get("visual_assets_missing_count", 0))
+    except (TypeError, ValueError):
+        visual_assets_missing_count = 0
+    preview_asset_mode = str(visual_manifest.get("preview_asset_mode", "fallback_only"))
+    visual_thumbnail_path = next(
+        (
+            str(asset.get("file_path"))
+            for asset in visual_manifest.get("assets", [])
+            if isinstance(asset, dict)
+            and asset.get("asset_type") == "thumbnail"
+            and isinstance(asset.get("file_path"), str)
+        ),
+        None,
+    )
+
     return PreviewStatus(
         video_id=video.id,
         title=video.title,
@@ -581,8 +612,13 @@ def build_preview_status(video: Video, preview_path: Path | None, db: Session) -
         tts_provider=provider,
         tts_voice=voice,
         tts_model=model,
-        visual_assets_registered=visual_assets_count > 0,
-        visual_assets_count=visual_assets_count,
+        preview_asset_mode=preview_asset_mode,
+        visual_assets_used_count=visual_assets_used_count,
+        visual_assets_missing_count=visual_assets_missing_count,
+        included_asset_paths=included_asset_paths,
+        visual_asset_warnings=visual_asset_warnings,
+        visual_assets_registered=visual_assets_used_count > 0,
+        visual_assets_count=visual_assets_used_count,
         visual_thumbnail_path=visual_thumbnail_path,
     )
 
@@ -1148,6 +1184,15 @@ def render_draft_preview(video_id: int, db: Session = Depends(get_db)) -> Previe
     final_render_path.replace(expected_path)
 
     duration_seconds = round(per_slide_duration * len(slides), 2)
+    visual_manifest = build_preview_visual_manifest(db, video)
+    try:
+        visual_assets_used_count = int(visual_manifest.get("visual_assets_used_count", 0))
+    except (TypeError, ValueError):
+        visual_assets_used_count = 0
+    try:
+        visual_assets_missing_count = int(visual_manifest.get("visual_assets_missing_count", 0))
+    except (TypeError, ValueError):
+        visual_assets_missing_count = 0
     meta_payload = {
         "audio_generated": audio_generated,
         "silent_reason": silent_reason,
@@ -1159,6 +1204,19 @@ def render_draft_preview(video_id: int, db: Session = Depends(get_db)) -> Previe
         "error_message": voiceover_result.error_message,
         "voiceover_path": str(voiceover_path) if audio_generated else None,
         "rendered_at": datetime.utcnow().isoformat(),
+        "preview_asset_mode": str(visual_manifest.get("preview_asset_mode", "fallback_only")),
+        "visual_assets_used_count": visual_assets_used_count,
+        "visual_assets_missing_count": visual_assets_missing_count,
+        "included_asset_paths": [
+            str(path_value)
+            for path_value in visual_manifest.get("included_asset_paths", [])
+            if isinstance(path_value, str)
+        ],
+        "visual_asset_warnings": [
+            str(warning)
+            for warning in visual_manifest.get("visual_asset_warnings", visual_manifest.get("warnings", []))
+            if isinstance(warning, str)
+        ],
     }
     write_preview_meta(video.id, meta_payload)
 

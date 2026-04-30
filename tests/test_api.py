@@ -21,7 +21,7 @@ import app.routers.research as research_router  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AuditEvent, ContentAgent, Video, VideoOpportunity  # noqa: E402
+from app.models import AuditEvent, ContentAgent, Video, VideoOpportunity, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
 from app.security import InMemoryRateLimiter  # noqa: E402
@@ -53,6 +53,54 @@ def _write_real_visual_asset_file(name: str = "visual_asset.png") -> Path:
     asset_path.parent.mkdir(parents=True, exist_ok=True)
     asset_path.write_bytes(b"\x89PNG\r\n\x1a\n")
     return asset_path
+
+
+def _create_approved_video_for_preview(client: TestClient, channel_name: str, title: str) -> int:
+    channel_id = client.post("/channels", json={"name": channel_name}).json()["id"]
+    video_id = client.post("/videos", json={"channel_id": channel_id, "title": title}).json()["id"]
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    return video_id
+
+
+def _install_fake_preview_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("PREVIEW_TTS_PROVIDER", "auto")
+
+    def fake_which(binary: str) -> str | None:
+        if binary == "ffmpeg":
+            return "/usr/bin/ffmpeg"
+        if binary == "qlmanage":
+            return "/usr/bin/qlmanage"
+        if binary == "say":
+            return None
+        return shutil.which(binary)
+
+    class FakeCompletedProcess:
+        def __init__(self) -> None:
+            self.returncode = 0
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(command: list[str], capture_output: bool, text: bool) -> FakeCompletedProcess:
+        if command and command[0].endswith("qlmanage"):
+            output_dir = Path(command[command.index("-o") + 1])
+            html_path = Path(command[-1])
+            png_path = output_dir / f"{html_path.name}.png"
+            png_path.parent.mkdir(parents=True, exist_ok=True)
+            png_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        else:
+            output_path = Path(command[-1])
+            if output_path.suffix == ".mp4":
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(
+                    b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom\x00\x00\x00\x08mdat"
+                )
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr(videos_router.shutil, "which", fake_which)
+    monkeypatch.setattr(videos_router.subprocess, "run", fake_run)
 
 
 @pytest.mark.usefixtures("monkeypatch")
@@ -1106,6 +1154,209 @@ def test_visual_generation_write_routes_require_internal_api_key_when_configured
         headers={"X-Internal-API-Key": "test-internal-key"},
     )
     assert allowed.status_code == 200
+
+
+def test_preview_status_fallback_only_when_no_visual_plan_or_assets() -> None:
+    client = TestClient(app)
+    video_id = _create_approved_video_for_preview(
+        client,
+        channel_name="Preview Fallback Channel",
+        title="Preview Fallback Video",
+    )
+
+    response = client.get(f"/videos/{video_id}/preview/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["preview_asset_mode"] == "fallback_only"
+    assert payload["visual_assets_used_count"] == 0
+    assert payload["visual_assets_missing_count"] == 0
+    assert payload["included_asset_paths"] == []
+    assert len(payload["visual_asset_warnings"]) >= 1
+
+
+def test_preview_status_registered_assets_mode_with_real_local_files() -> None:
+    client = TestClient(app)
+    video_id = _create_approved_video_for_preview(
+        client,
+        channel_name="Preview Registered Channel",
+        title="Preview Registered Video",
+    )
+    plan = client.post(f"/visual-assets/from-video/{video_id}").json()
+    real_asset_path = _write_real_visual_asset_file("preview_mode_registered.png")
+
+    db = SessionLocal()
+    try:
+        plan_row = db.scalar(select(VisualAssetPlan).where(VisualAssetPlan.id == plan["id"]).limit(1))
+        assert plan_row is not None
+        scenes = list(
+            db.scalars(
+                select(VisualScene)
+                .where(VisualScene.plan_id == plan_row.id)
+                .order_by(VisualScene.scene_number.asc())
+            )
+        )
+        assert len(scenes) >= 1
+        for scene in scenes:
+            db.add(
+                VisualGeneratedAsset(
+                    visual_asset_plan_id=plan_row.id,
+                    visual_scene_id=scene.id,
+                    generation_job_id=None,
+                    asset_type="image",
+                    file_path=str(real_asset_path),
+                    file_exists=True,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(f"/videos/{video_id}/preview/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["preview_asset_mode"] == "registered_assets"
+    assert payload["visual_assets_missing_count"] == 0
+    assert payload["visual_assets_used_count"] >= 1
+    assert str(real_asset_path) in payload["included_asset_paths"]
+
+
+def test_preview_status_mixed_mode_excludes_missing_fake_paths() -> None:
+    client = TestClient(app)
+    video_id = _create_approved_video_for_preview(
+        client,
+        channel_name="Preview Mixed Channel",
+        title="Preview Mixed Video",
+    )
+    plan = client.post(f"/visual-assets/from-video/{video_id}").json()
+    real_asset_path = _write_real_visual_asset_file("preview_mode_mixed_real.png")
+    fake_asset_path = (Path(os.environ["OUTPUT_DIR"]).resolve() / "generated" / "preview_mode_missing_fake.png").resolve()
+
+    db = SessionLocal()
+    try:
+        plan_row = db.scalar(select(VisualAssetPlan).where(VisualAssetPlan.id == plan["id"]).limit(1))
+        assert plan_row is not None
+        scenes = list(
+            db.scalars(
+                select(VisualScene)
+                .where(VisualScene.plan_id == plan_row.id)
+                .order_by(VisualScene.scene_number.asc())
+            )
+        )
+        assert len(scenes) >= 2
+
+        db.add(
+            VisualGeneratedAsset(
+                visual_asset_plan_id=plan_row.id,
+                visual_scene_id=scenes[0].id,
+                generation_job_id=None,
+                asset_type="image",
+                file_path=str(real_asset_path),
+                file_exists=True,
+            )
+        )
+        db.add(
+            VisualGeneratedAsset(
+                visual_asset_plan_id=plan_row.id,
+                visual_scene_id=scenes[1].id,
+                generation_job_id=None,
+                asset_type="image",
+                file_path=str(fake_asset_path),
+                file_exists=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(f"/videos/{video_id}/preview/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["preview_asset_mode"] == "mixed"
+    assert payload["visual_assets_missing_count"] >= 1
+    assert str(real_asset_path) in payload["included_asset_paths"]
+    assert str(fake_asset_path) not in payload["included_asset_paths"]
+    assert any("Skipped asset" in warning for warning in payload["visual_asset_warnings"])
+
+
+@pytest.mark.usefixtures("monkeypatch")
+def test_preview_render_meta_includes_visual_asset_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video_id = _create_approved_video_for_preview(
+        client,
+        channel_name="Preview Meta Visual Channel",
+        title="Preview Meta Visual Video",
+    )
+    plan = client.post(f"/visual-assets/from-video/{video_id}").json()
+    real_asset_path = _write_real_visual_asset_file("preview_meta_visual.png")
+
+    db = SessionLocal()
+    try:
+        plan_row = db.scalar(select(VisualAssetPlan).where(VisualAssetPlan.id == plan["id"]).limit(1))
+        assert plan_row is not None
+        first_scene = db.scalar(
+            select(VisualScene)
+            .where(VisualScene.plan_id == plan_row.id)
+            .order_by(VisualScene.scene_number.asc())
+            .limit(1)
+        )
+        assert first_scene is not None
+        db.add(
+            VisualGeneratedAsset(
+                visual_asset_plan_id=plan_row.id,
+                visual_scene_id=first_scene.id,
+                generation_job_id=None,
+                asset_type="image",
+                file_path=str(real_asset_path),
+                file_exists=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    _install_fake_preview_renderer(monkeypatch)
+    render = client.post(f"/videos/{video_id}/preview/render-draft")
+    assert render.status_code == 200
+
+    meta_path = Path(os.environ["OUTPUT_DIR"]).resolve() / "previews" / str(video_id) / "render_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["preview_asset_mode"] in {"fallback_only", "mixed", "registered_assets"}
+    assert isinstance(meta["visual_assets_used_count"], int)
+    assert isinstance(meta["visual_assets_missing_count"], int)
+    assert isinstance(meta["included_asset_paths"], list)
+    assert isinstance(meta["visual_asset_warnings"], list)
+    assert str(real_asset_path) in meta["included_asset_paths"]
+
+
+def test_preview_render_does_not_auto_approve_video() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Preview No Auto Approve Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Preview No Auto Approve Video"}).json()
+
+    render = client.post(f"/videos/{video['id']}/preview/render-draft")
+    assert render.status_code == 409
+    refreshed = client.get(f"/videos/{video['id']}").json()
+    assert refreshed["approved"] is False
+
+
+@pytest.mark.usefixtures("monkeypatch")
+def test_preview_render_does_not_mark_preview_reviewed(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video_id = _create_approved_video_for_preview(
+        client,
+        channel_name="Preview No Auto Review Channel",
+        title="Preview No Auto Review Video",
+    )
+    _install_fake_preview_renderer(monkeypatch)
+
+    render = client.post(f"/videos/{video_id}/preview/render-draft")
+    assert render.status_code == 200
+    body = render.json()
+    assert body["preview_reviewed"] is False
+
+    refreshed = client.get(f"/videos/{video_id}").json()
+    assert refreshed["approved"] is True
+    assert refreshed["preview_reviewed"] is False
 
 
 def test_command_center_includes_briefs_queues() -> None:
