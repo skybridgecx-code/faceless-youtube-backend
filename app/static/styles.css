@@ -451,6 +451,21 @@ body {
   border-color: rgba(46, 204, 113, 0.45);
 }
 
+.video-status.low {
+  color: #ffb37a;
+  border-color: rgba(255, 179, 122, 0.5);
+}
+
+.video-status.medium {
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.video-status.high {
+  color: var(--success);
+  border-color: rgba(46, 204, 113, 0.45);
+}
+
 .flow-card {
   border: 1px solid var(--studio-border);
   border-radius: 10px;
@@ -608,6 +623,10 @@ body {
   margin-top: 4px;
   font-size: 11px;
   color: var(--studio-dim);
+}
+
+.pre-wrap {
+  white-space: pre-wrap;
 }
 
 .opportunity-note {

@@ -16,6 +16,8 @@ const app = {
     packageDirsByVideoId: {},
     lastComplianceReportByVideoId: {},
     opportunities: [],
+    producerRecommendation: null,
+    producerHistory: [],
     stats: {
       ideas: 0,
       generated: 0,
@@ -35,6 +37,8 @@ const app = {
     await this.loadCalendar();
     await this.loadGlobalAudit();
     await this.loadOpportunities();
+    await this.loadExecutiveProducerRecommendation();
+    await this.loadProducerHistory();
   },
 
   setupNavigation() {
@@ -76,6 +80,7 @@ const app = {
     const titleMap = {
       dashboard: 'Dashboard',
       opportunities: 'Opportunities',
+      producer: 'Producer',
       content: 'Content',
       assets: 'Assets',
       publishing: 'Publishing',
@@ -86,6 +91,10 @@ const app = {
     if (topNavTitle) topNavTitle.textContent = titleMap[page] || 'Dashboard';
     if (page === 'opportunities') {
       this.loadOpportunities();
+    }
+    if (page === 'producer') {
+      this.loadExecutiveProducerRecommendation();
+      this.loadProducerHistory();
     }
   },
 
@@ -719,6 +728,180 @@ const app = {
     }
   },
 
+  async loadExecutiveProducerRecommendation() {
+    try {
+      const res = await fetch('/executive-producer/recommendation');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load executive producer recommendation');
+      }
+      this.state.producerRecommendation = data;
+      this.renderExecutiveProducerRecommendation(data);
+      return data;
+    } catch (err) {
+      this.log(`Producer recommendation load failed: ${err.message}`, 'error');
+      this.renderExecutiveProducerRecommendation(null);
+      return null;
+    }
+  },
+
+  async runExecutiveProducer() {
+    try {
+      const res = await fetch('/executive-producer/recommendation/run', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to run executive producer recommendation');
+      }
+      this.state.producerRecommendation = data;
+      this.renderExecutiveProducerRecommendation(data);
+      this.log('Executive producer recommendation generated.', 'success');
+      await this.loadProducerHistory();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Run executive producer failed: ${err.message}`, 'error');
+    }
+  },
+
+  renderExecutiveProducerRecommendation(data) {
+    const dashboardTopic = document.getElementById('producerDashboardTopic');
+    const dashboardConfidence = document.getElementById('producerDashboardConfidence');
+    const dashboardMonetization = document.getElementById('producerDashboardMonetization');
+    const producerTopic = document.getElementById('producerTopic');
+    const producerWhy = document.getElementById('producerWhy');
+    const producerNiche = document.getElementById('producerNiche');
+    const producerAgent = document.getElementById('producerAgent');
+    const producerTitle = document.getElementById('producerTitle');
+    const producerThumb = document.getElementById('producerThumb');
+    const producerCta = document.getElementById('producerCta');
+    const producerMonetization = document.getElementById('producerMonetization');
+    const producerConfidence = document.getElementById('producerConfidence');
+    const producerRisks = document.getElementById('producerRisks');
+    const producerChecklist = document.getElementById('producerChecklist');
+    const producerBrief = document.getElementById('producerBrief');
+    const producerEmptyState = document.getElementById('producerEmptyState');
+    const viewBtn = document.getElementById('btnProducerViewOpportunity');
+    const promoteBtn = document.getElementById('btnProducerPromote');
+
+    if (!dashboardTopic || !dashboardConfidence || !dashboardMonetization || !producerTopic || !producerWhy || !producerNiche || !producerAgent || !producerTitle || !producerThumb || !producerCta || !producerMonetization || !producerConfidence || !producerRisks || !producerChecklist || !producerBrief || !producerEmptyState || !viewBtn || !promoteBtn) {
+      return;
+    }
+
+    if (!data) {
+      dashboardTopic.textContent = 'Run Executive Producer to generate a daily recommendation.';
+      dashboardConfidence.textContent = 'n/a';
+      dashboardConfidence.className = 'video-status';
+      dashboardMonetization.textContent = '-';
+      producerTopic.textContent = 'Run Executive Producer to generate a recommendation.';
+      producerWhy.textContent = '-';
+      producerNiche.textContent = '-';
+      producerAgent.textContent = '-';
+      producerTitle.textContent = '-';
+      producerThumb.textContent = '-';
+      producerCta.textContent = '-';
+      producerMonetization.textContent = '-';
+      producerConfidence.textContent = 'n/a';
+      producerConfidence.className = 'video-status';
+      producerRisks.textContent = '-';
+      producerChecklist.textContent = '-';
+      producerBrief.textContent = '-';
+      producerEmptyState.textContent = 'No recommendation loaded.';
+      viewBtn.disabled = true;
+      promoteBtn.disabled = true;
+      return;
+    }
+
+    const emptyState = data.empty_state_message || '';
+    const hasOpportunity = !!data.selected_opportunity_id;
+    const confidence = data.confidence_label || 'low';
+    const confidenceLabel = confidence.charAt(0).toUpperCase() + confidence.slice(1);
+
+    dashboardTopic.textContent = hasOpportunity
+      ? (data.recommended_topic || data.recommended_title || 'Best pick generated.')
+      : emptyState || 'No recommendation available.';
+    dashboardConfidence.textContent = confidenceLabel;
+    dashboardConfidence.className = `video-status ${this.escapeHtml(confidence)}`;
+    dashboardMonetization.textContent = data.monetization_path || '-';
+
+    producerTopic.textContent = hasOpportunity
+      ? (data.recommended_topic || 'Recommendation generated.')
+      : (emptyState || 'No recommendation available.');
+    producerWhy.textContent = data.why_make_today || '-';
+    producerNiche.textContent = data.niche_lane || '-';
+    producerAgent.textContent = data.assigned_agent || '-';
+    producerTitle.textContent = data.recommended_title || '-';
+    producerThumb.textContent = data.thumbnail_angle || '-';
+    producerCta.textContent = data.recommended_cta || '-';
+    producerMonetization.textContent = data.monetization_path || '-';
+    producerConfidence.textContent = confidenceLabel;
+    producerConfidence.className = `video-status ${this.escapeHtml(confidence)}`;
+    producerRisks.textContent = data.risks_to_review || '-';
+    producerChecklist.textContent = data.operator_checklist || '-';
+    producerBrief.textContent = data.production_brief || '-';
+    producerEmptyState.textContent = emptyState || 'Recommendation ready.';
+
+    viewBtn.disabled = !hasOpportunity;
+    promoteBtn.disabled = !(hasOpportunity && data.selected_review_status === 'approved_for_video');
+  },
+
+  async loadProducerHistory() {
+    const container = document.getElementById('producerHistoryList');
+    if (!container) return;
+    try {
+      const res = await fetch('/executive-producer/history?limit=25');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load producer history');
+      }
+      this.state.producerHistory = Array.isArray(data) ? data : [];
+      this.renderProducerHistory();
+    } catch (err) {
+      this.log(`Producer history failed: ${err.message}`, 'error');
+      container.innerHTML = '<div class="empty-state">Failed to load recommendation history.</div>';
+    }
+  },
+
+  renderProducerHistory() {
+    const container = document.getElementById('producerHistoryList');
+    if (!container) return;
+    const history = this.state.producerHistory || [];
+    if (history.length === 0) {
+      container.innerHTML = '<div class="empty-state">No recommendation history yet.</div>';
+      return;
+    }
+    container.innerHTML = history.map(item => `
+      <div class="audit-event">
+        <div class="audit-event-top">
+          <span class="audit-badge">${this.escapeHtml((item.confidence_label || 'low').toUpperCase())}</span>
+          <span class="audit-time">${this.formatTime(item.created_at)}</span>
+        </div>
+        <div class="audit-message">${this.escapeHtml(item.recommended_topic || item.empty_state_message || 'Recommendation record')}</div>
+      </div>
+    `).join('');
+  },
+
+  viewRecommendedOpportunity() {
+    const recommendation = this.state.producerRecommendation;
+    if (!recommendation || !recommendation.selected_opportunity_id) {
+      this.log('No recommended opportunity to view.', 'error');
+      return;
+    }
+    this.setActivePage('opportunities');
+    this.log(`Opened opportunities for recommended item #${recommendation.selected_opportunity_id}.`, 'info');
+  },
+
+  async promoteRecommendedOpportunity() {
+    const recommendation = this.state.producerRecommendation;
+    if (!recommendation || !recommendation.selected_opportunity_id) {
+      this.log('No recommended opportunity to promote.', 'error');
+      return;
+    }
+    if (recommendation.selected_review_status !== 'approved_for_video') {
+      this.log('Promotion blocked: recommended opportunity is not approved_for_video.', 'error');
+      return;
+    }
+    await this.promoteOpportunity(recommendation.selected_opportunity_id);
+  },
+
   renderVideoList() {
     const list = document.getElementById('videoList');
     list.innerHTML = '';
@@ -1008,7 +1191,8 @@ const app = {
       reloadCalendar = true,
       reloadAudit = true,
       keepComplianceReport = false,
-      reloadOpportunities = false
+      reloadOpportunities = false,
+      reloadProducer = true
     } = options;
 
     await this.loadVideos();
@@ -1021,6 +1205,10 @@ const app = {
     }
     if (reloadOpportunities) {
       await this.loadOpportunities();
+    }
+    if (reloadProducer) {
+      await this.loadExecutiveProducerRecommendation();
+      await this.loadProducerHistory();
     }
     if (this.state.selectedVideoId) {
       await this.selectVideo(this.state.selectedVideoId, {

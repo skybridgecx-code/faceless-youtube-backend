@@ -41,6 +41,12 @@ class OpportunityReviewStatus(str, Enum):
     approved_for_video = "approved_for_video"
 
 
+class ProducerConfidenceLabel(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
 class Channel(Base):
     __tablename__ = "channels"
 
@@ -182,3 +188,26 @@ class VideoOpportunity(Base):
     scored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ExecutiveProducerRecommendation(Base):
+    __tablename__ = "executive_producer_recommendations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    selected_opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("video_opportunities.id"), nullable=True, index=True)
+    selected_review_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    recommended_topic: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    niche_lane: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    assigned_agent: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    recommended_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    thumbnail_angle: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    recommended_cta: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    monetization_path: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    why_make_today: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risks_to_review: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operator_checklist: Mapped[str | None] = mapped_column(Text, nullable=True)
+    production_brief: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence_label: Mapped[str] = mapped_column(String(20), default=ProducerConfidenceLabel.low.value)
+    selection_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    empty_state_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -12,8 +12,9 @@ os.environ["OUTPUT_DIR"] = tempfile.mkdtemp(prefix="yt_factory_test_")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app.routers.videos as videos_router  # noqa: E402
-from app.db import Base, engine  # noqa: E402
+from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import VideoOpportunity  # noqa: E402
 
 
 def setup_function() -> None:
@@ -545,3 +546,156 @@ def test_opportunity_review_queue_ordering_and_filtering() -> None:
     filtered = filter_response.json()
     assert len(filtered) == 1
     assert filtered[0]["id"] == second
+
+
+def test_executive_producer_run_empty_state_without_reviewed_opportunities() -> None:
+    client = TestClient(app)
+
+    run_response = client.post("/executive-producer/recommendation/run")
+    assert run_response.status_code == 200
+    data = run_response.json()
+    assert data["selected_opportunity_id"] is None
+    assert data["empty_state_message"] == "No reviewed opportunities are ready. Shortlist or approve an opportunity first."
+
+    current_response = client.get("/executive-producer/recommendation")
+    assert current_response.status_code == 200
+    assert current_response.json()["empty_state_message"] == data["empty_state_message"]
+
+
+def test_executive_producer_prefers_approved_for_video_over_shortlisted() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Producer Priority Channel"}).json()["id"]
+
+    shortlist = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "How to automate customer calls with AI",
+            "niche_lane": "Call operations",
+            "audience": "Local service business owners",
+            "monetization_path": "Service audit",
+        },
+    ).json()
+    approved = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Faceless YouTube automation workflow",
+            "niche_lane": "YouTube operations",
+            "audience": "Faceless channel operators",
+            "monetization_path": "Affiliate + template service",
+        },
+    ).json()
+
+    assert client.patch(
+        f"/opportunities/{shortlist['id']}/review",
+        json={"review_status": "shortlisted"},
+    ).status_code == 200
+    assert client.patch(
+        f"/opportunities/{approved['id']}/review",
+        json={"review_status": "approved_for_video"},
+    ).status_code == 200
+
+    run_response = client.post("/executive-producer/recommendation/run")
+    assert run_response.status_code == 200
+    result = run_response.json()
+    assert result["selected_opportunity_id"] == approved["id"]
+    assert result["selected_review_status"] == "approved_for_video"
+
+
+def test_executive_producer_penalizes_compliance_and_production_difficulty() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Producer Penalty Channel"}).json()["id"]
+
+    high_risk = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Best AI tools for small business owners",
+            "niche_lane": "AI tooling",
+            "audience": "Small business owners",
+            "monetization_path": "Affiliate stack",
+        },
+    ).json()
+    low_risk = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Local business AI automation audit",
+            "niche_lane": "AI consulting",
+            "audience": "Local operators",
+            "monetization_path": "Service audit",
+        },
+    ).json()
+
+    assert client.patch(
+        f"/opportunities/{high_risk['id']}/review",
+        json={"review_status": "shortlisted"},
+    ).status_code == 200
+    assert client.patch(
+        f"/opportunities/{low_risk['id']}/review",
+        json={"review_status": "shortlisted"},
+    ).status_code == 200
+
+    db = SessionLocal()
+    try:
+        risky_row = db.get(VideoOpportunity, high_risk["id"])
+        safe_row = db.get(VideoOpportunity, low_risk["id"])
+        assert risky_row is not None
+        assert safe_row is not None
+        risky_row.total_score = 34
+        risky_row.compliance_risk = 5
+        risky_row.production_difficulty = 5
+        risky_row.buyer_intent = 2
+        risky_row.product_connection = 2
+
+        safe_row.total_score = 30
+        safe_row.compliance_risk = 1
+        safe_row.production_difficulty = 1
+        safe_row.buyer_intent = 5
+        safe_row.product_connection = 5
+        db.commit()
+    finally:
+        db.close()
+
+    run_response = client.post("/executive-producer/recommendation/run")
+    assert run_response.status_code == 200
+    result = run_response.json()
+    assert result["selected_opportunity_id"] == low_risk["id"]
+
+
+def test_executive_producer_history_and_audit_event_written() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Producer History Channel"}).json()["id"]
+
+    opportunity = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI ecommerce product research workflow",
+            "niche_lane": "Ecommerce ops",
+            "audience": "Ecommerce founders",
+            "monetization_path": "Service + affiliate",
+        },
+    ).json()
+
+    assert client.patch(
+        f"/opportunities/{opportunity['id']}/review",
+        json={"review_status": "approved_for_video"},
+    ).status_code == 200
+
+    first = client.post("/executive-producer/recommendation/run")
+    second = client.post("/executive-producer/recommendation/run")
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    history_response = client.get("/executive-producer/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert len(history) >= 2
+    assert history[0]["id"] != history[1]["id"]
+
+    audit_response = client.get("/audit?limit=100")
+    assert audit_response.status_code == 200
+    event_types = [event["event_type"] for event in audit_response.json()]
+    assert "executive_producer_recommendation_created" in event_types

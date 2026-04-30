@@ -20,6 +20,7 @@
       <nav class="sidebar-nav" id="sidebarNav">
         <button class="nav-item active" data-page="dashboard">Dashboard</button>
         <button class="nav-item" data-page="opportunities">Opportunities</button>
+        <button class="nav-item" data-page="producer">Producer</button>
         <button class="nav-item" data-page="content">Content</button>
         <button class="nav-item" data-page="assets">Assets</button>
         <button class="nav-item" data-page="publishing">Publishing</button>
@@ -105,6 +106,24 @@
           <div class="panel-grid dashboard-grid">
             <div class="panel">
               <div class="panel-header">
+                <h2>Executive Producer</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.runExecutiveProducer()">Run Executive Producer</button>
+                  <button class="btn" onclick="app.setActivePage('producer')">Open Producer Page</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="flow-card">
+                  <div class="flow-card-title">Best Video To Make Today</div>
+                  <div class="flow-card-body" id="producerDashboardTopic">Run Executive Producer to generate a daily recommendation.</div>
+                  <div class="meta-row"><span class="meta-label">Confidence</span><span class="meta-value"><span class="video-status" id="producerDashboardConfidence">n/a</span></span></div>
+                  <div class="meta-row"><span class="meta-label">Monetization</span><span class="meta-value" id="producerDashboardMonetization">-</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
                 <h2>Pipeline Summary</h2>
                 <div class="header-actions">
                   <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
@@ -184,6 +203,51 @@
                   <tr><td colspan="6" class="table-empty">Loading videos...</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-producer">
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Executive Producer Recommendation</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.runExecutiveProducer()">Run Executive Producer</button>
+                  <button class="btn" id="btnProducerViewOpportunity" onclick="app.viewRecommendedOpportunity()" disabled>View Opportunity</button>
+                  <button class="btn success" id="btnProducerPromote" onclick="app.promoteRecommendedOpportunity()" disabled>Promote to Video</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note">Deterministic local recommendation. Not real analytics.</div>
+                <div class="meta-row"><span class="meta-label">Best Video To Make Today</span><span class="meta-value" id="producerTopic">Run Executive Producer to generate a recommendation.</span></div>
+                <div class="meta-row"><span class="meta-label">Why Today</span><span class="meta-value" id="producerWhy">-</span></div>
+                <div class="meta-row"><span class="meta-label">Niche Lane</span><span class="meta-value" id="producerNiche">-</span></div>
+                <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="producerAgent">-</span></div>
+                <div class="meta-row"><span class="meta-label">Suggested Title</span><span class="meta-value" id="producerTitle">-</span></div>
+                <div class="meta-row"><span class="meta-label">Thumbnail Angle</span><span class="meta-value" id="producerThumb">-</span></div>
+                <div class="meta-row"><span class="meta-label">CTA</span><span class="meta-value" id="producerCta">-</span></div>
+                <div class="meta-row"><span class="meta-label">Monetization Path</span><span class="meta-value" id="producerMonetization">-</span></div>
+                <div class="meta-row"><span class="meta-label">Confidence</span><span class="meta-value"><span class="video-status" id="producerConfidence">n/a</span></span></div>
+                <div class="meta-row"><span class="meta-label">Risks To Review</span><span class="meta-value pre-wrap" id="producerRisks">-</span></div>
+                <div class="meta-row"><span class="meta-label">Operator Checklist</span><span class="meta-value pre-wrap" id="producerChecklist">-</span></div>
+                <div class="meta-row"><span class="meta-label">Production Brief</span><span class="meta-value pre-wrap" id="producerBrief">-</span></div>
+                <div class="meta-row"><span class="meta-label">Status</span><span class="meta-value" id="producerEmptyState">-</span></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Recommendation History</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadProducerHistory()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="producerHistoryList" class="audit-list">
+                  <div class="empty-state">No recommendation history yet.</div>
+                </div>
+              </div>
             </div>
           </div>
         </section>

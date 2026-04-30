@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.models import AssetType, ContentType, OpportunityReviewStatus, VideoStatus
+from app.models import AssetType, ContentType, OpportunityReviewStatus, ProducerConfidenceLabel, VideoStatus
 
 
 class ChannelCreate(BaseModel):
@@ -315,3 +315,26 @@ class OpportunityReviewUpdate(BaseModel):
     operator_notes: str | None = None
     rejection_reason: str | None = None
     decision_summary: str | None = None
+
+
+class ExecutiveProducerRecommendationRead(BaseModel):
+    id: int
+    selected_opportunity_id: int | None = None
+    selected_review_status: OpportunityReviewStatus | None = None
+    recommended_topic: str | None = None
+    niche_lane: str | None = None
+    assigned_agent: str | None = None
+    recommended_title: str | None = None
+    thumbnail_angle: str | None = None
+    recommended_cta: str | None = None
+    monetization_path: str | None = None
+    why_make_today: str | None = None
+    risks_to_review: str | None = None
+    operator_checklist: str | None = None
+    production_brief: str | None = None
+    confidence_label: ProducerConfidenceLabel = ProducerConfidenceLabel.low
+    selection_score: int | None = None
+    empty_state_message: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

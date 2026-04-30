@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db, init_db
 from app.models import AuditEvent, PublishRecord, Video, VideoStatus
-from app.routers import channels, opportunities, publish, videos
+from app.routers import channels, executive_producer, opportunities, publish, videos
 from app.schemas import AuditEventRead, PipelineActionItem, PipelineSummary, VideoRead
 
 settings = get_settings()
@@ -56,6 +56,7 @@ app.include_router(channels.router)
 app.include_router(videos.router)
 app.include_router(publish.router)
 app.include_router(opportunities.router)
+app.include_router(executive_producer.router)
 
 
 def has_preview_file(video: Video) -> bool:
