@@ -33,6 +33,7 @@ def init_db() -> None:
     _apply_sqlite_video_opportunity_review_columns()
     _apply_sqlite_agent_system_columns()
     _apply_sqlite_production_brief_columns()
+    _apply_sqlite_research_columns()
     _seed_default_agents_for_existing_channels()
 
 
@@ -152,6 +153,97 @@ def _apply_sqlite_production_brief_columns() -> None:
             "operator_review_notes": "ALTER TABLE production_briefs ADD COLUMN operator_review_notes TEXT",
             "created_at": "ALTER TABLE production_briefs ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE production_briefs ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_research_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "research_runs",
+        {
+            "channel_id": "ALTER TABLE research_runs ADD COLUMN channel_id INTEGER",
+            "assigned_agent_id": "ALTER TABLE research_runs ADD COLUMN assigned_agent_id INTEGER",
+            "niche_lane": "ALTER TABLE research_runs ADD COLUMN niche_lane TEXT DEFAULT ''",
+            "query": "ALTER TABLE research_runs ADD COLUMN query TEXT DEFAULT ''",
+            "max_results": "ALTER TABLE research_runs ADD COLUMN max_results INTEGER DEFAULT 10",
+            "status": "ALTER TABLE research_runs ADD COLUMN status TEXT DEFAULT 'pending'",
+            "setup_required": "ALTER TABLE research_runs ADD COLUMN setup_required BOOLEAN DEFAULT 0",
+            "setup_message": "ALTER TABLE research_runs ADD COLUMN setup_message TEXT",
+            "source_video_count": "ALTER TABLE research_runs ADD COLUMN source_video_count INTEGER DEFAULT 0",
+            "source_channel_count": "ALTER TABLE research_runs ADD COLUMN source_channel_count INTEGER DEFAULT 0",
+            "created_at": "ALTER TABLE research_runs ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE research_runs ADD COLUMN updated_at DATETIME",
+        },
+    )
+    _apply_sqlite_additive_columns(
+        "research_source_videos",
+        {
+            "run_id": "ALTER TABLE research_source_videos ADD COLUMN run_id INTEGER",
+            "youtube_video_id": "ALTER TABLE research_source_videos ADD COLUMN youtube_video_id TEXT DEFAULT ''",
+            "youtube_channel_id": "ALTER TABLE research_source_videos ADD COLUMN youtube_channel_id TEXT DEFAULT ''",
+            "title": "ALTER TABLE research_source_videos ADD COLUMN title TEXT DEFAULT ''",
+            "channel_title": "ALTER TABLE research_source_videos ADD COLUMN channel_title TEXT DEFAULT ''",
+            "description_snippet": "ALTER TABLE research_source_videos ADD COLUMN description_snippet TEXT DEFAULT ''",
+            "published_at": "ALTER TABLE research_source_videos ADD COLUMN published_at DATETIME",
+            "duration": "ALTER TABLE research_source_videos ADD COLUMN duration TEXT",
+            "view_count": "ALTER TABLE research_source_videos ADD COLUMN view_count INTEGER",
+            "like_count": "ALTER TABLE research_source_videos ADD COLUMN like_count INTEGER",
+            "comment_count": "ALTER TABLE research_source_videos ADD COLUMN comment_count INTEGER",
+            "thumbnail_url": "ALTER TABLE research_source_videos ADD COLUMN thumbnail_url TEXT",
+            "position": "ALTER TABLE research_source_videos ADD COLUMN position INTEGER DEFAULT 0",
+            "created_at": "ALTER TABLE research_source_videos ADD COLUMN created_at DATETIME",
+        },
+    )
+    _apply_sqlite_additive_columns(
+        "research_source_channels",
+        {
+            "run_id": "ALTER TABLE research_source_channels ADD COLUMN run_id INTEGER",
+            "youtube_channel_id": "ALTER TABLE research_source_channels ADD COLUMN youtube_channel_id TEXT DEFAULT ''",
+            "title": "ALTER TABLE research_source_channels ADD COLUMN title TEXT DEFAULT ''",
+            "description_snippet": "ALTER TABLE research_source_channels ADD COLUMN description_snippet TEXT DEFAULT ''",
+            "subscriber_count": "ALTER TABLE research_source_channels ADD COLUMN subscriber_count INTEGER",
+            "video_count": "ALTER TABLE research_source_channels ADD COLUMN video_count INTEGER",
+            "view_count": "ALTER TABLE research_source_channels ADD COLUMN view_count INTEGER",
+            "created_at": "ALTER TABLE research_source_channels ADD COLUMN created_at DATETIME",
+        },
+    )
+    _apply_sqlite_additive_columns(
+        "research_patterns",
+        {
+            "run_id": "ALTER TABLE research_patterns ADD COLUMN run_id INTEGER",
+            "pattern_type": "ALTER TABLE research_patterns ADD COLUMN pattern_type TEXT DEFAULT ''",
+            "label": "ALTER TABLE research_patterns ADD COLUMN label TEXT DEFAULT ''",
+            "details": "ALTER TABLE research_patterns ADD COLUMN details TEXT DEFAULT ''",
+            "signal_strength": "ALTER TABLE research_patterns ADD COLUMN signal_strength INTEGER DEFAULT 1",
+            "created_at": "ALTER TABLE research_patterns ADD COLUMN created_at DATETIME",
+        },
+    )
+    _apply_sqlite_additive_columns(
+        "research_strategies",
+        {
+            "run_id": "ALTER TABLE research_strategies ADD COLUMN run_id INTEGER",
+            "assigned_agent_id": "ALTER TABLE research_strategies ADD COLUMN assigned_agent_id INTEGER",
+            "recommended_agent_name": "ALTER TABLE research_strategies ADD COLUMN recommended_agent_name TEXT",
+            "niche_lane": "ALTER TABLE research_strategies ADD COLUMN niche_lane TEXT DEFAULT ''",
+            "query": "ALTER TABLE research_strategies ADD COLUMN query TEXT DEFAULT ''",
+            "trend_thesis": "ALTER TABLE research_strategies ADD COLUMN trend_thesis TEXT DEFAULT ''",
+            "winning_patterns": "ALTER TABLE research_strategies ADD COLUMN winning_patterns TEXT DEFAULT ''",
+            "original_video_angles": "ALTER TABLE research_strategies ADD COLUMN original_video_angles TEXT DEFAULT ''",
+            "recommended_topics_json": "ALTER TABLE research_strategies ADD COLUMN recommended_topics_json TEXT DEFAULT '[]'",
+            "title_directions": "ALTER TABLE research_strategies ADD COLUMN title_directions TEXT DEFAULT ''",
+            "thumbnail_directions": "ALTER TABLE research_strategies ADD COLUMN thumbnail_directions TEXT DEFAULT ''",
+            "hook_directions": "ALTER TABLE research_strategies ADD COLUMN hook_directions TEXT DEFAULT ''",
+            "monetization_path": "ALTER TABLE research_strategies ADD COLUMN monetization_path TEXT DEFAULT ''",
+            "differentiation_strategy": "ALTER TABLE research_strategies ADD COLUMN differentiation_strategy TEXT DEFAULT ''",
+            "what_not_to_copy": "ALTER TABLE research_strategies ADD COLUMN what_not_to_copy TEXT DEFAULT ''",
+            "compliance_risks": "ALTER TABLE research_strategies ADD COLUMN compliance_risks TEXT DEFAULT ''",
+            "recommended_next_action": "ALTER TABLE research_strategies ADD COLUMN recommended_next_action TEXT DEFAULT ''",
+            "top_pattern": "ALTER TABLE research_strategies ADD COLUMN top_pattern TEXT",
+            "created_at": "ALTER TABLE research_strategies ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE research_strategies ADD COLUMN updated_at DATETIME",
         },
     )
 

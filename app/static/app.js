@@ -20,6 +20,10 @@ const app = {
     briefs: [],
     producerRecommendation: null,
     producerHistory: [],
+    researchRuns: [],
+    researchStrategies: [],
+    selectedResearchRunId: null,
+    selectedResearchRunDetail: null,
     commandCenterToday: null,
     pipelineDaily: null,
     stats: {
@@ -45,6 +49,7 @@ const app = {
     await this.loadBriefs();
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
+    await this.loadResearchData();
     await this.loadCommandCenter();
     await this.loadPipelineDaily();
   },
@@ -90,6 +95,7 @@ const app = {
       opportunities: 'Opportunities',
       agents: 'Agents',
       producer: 'Producer',
+      research: 'Research',
       briefs: 'Briefs',
       pipeline: 'Pipeline',
       content: 'Content',
@@ -109,6 +115,10 @@ const app = {
     if (page === 'producer') {
       this.loadExecutiveProducerRecommendation();
       this.loadProducerHistory();
+      this.loadResearchData();
+    }
+    if (page === 'research') {
+      this.loadResearchData();
     }
     if (page === 'briefs') {
       this.loadBriefs();
@@ -592,8 +602,12 @@ const app = {
     const recentActivityEl = document.getElementById('commandCenterRecentActivityList');
     const briefReviewEl = document.getElementById('commandCenterBriefsReviewList');
     const briefApprovedEl = document.getElementById('commandCenterBriefsApprovedList');
+    const researchThesisEl = document.getElementById('dashboardResearchThesis');
+    const researchPatternEl = document.getElementById('dashboardResearchPattern');
+    const researchActionEl = document.getElementById('dashboardResearchAction');
+    const researchActionBtn = document.getElementById('dashboardResearchActionBtn');
 
-    if (!nextText || !nextButton || !bestOppEl || !assignedAgentEl || !producerReasonEl || !blockersText || !checklistEl || !recentActivityEl || !briefReviewEl || !briefApprovedEl) {
+    if (!nextText || !nextButton || !bestOppEl || !assignedAgentEl || !producerReasonEl || !blockersText || !checklistEl || !recentActivityEl || !briefReviewEl || !briefApprovedEl || !researchThesisEl || !researchPatternEl || !researchActionEl || !researchActionBtn) {
       return;
     }
 
@@ -614,6 +628,11 @@ const app = {
       briefReviewEl.innerHTML = '<div class="empty-state">No briefs pending review.</div>';
       briefApprovedEl.innerHTML = '<div class="empty-state">No approved briefs ready to promote.</div>';
       recentActivityEl.innerHTML = '<div class="empty-state">Unable to load recent activity.</div>';
+      researchThesisEl.textContent = 'No research data available.';
+      researchPatternEl.textContent = '-';
+      researchActionEl.textContent = 'Run supervisor research when API setup is complete.';
+      researchActionBtn.textContent = 'Go To Research';
+      researchActionBtn.onclick = () => this.setActivePage('research');
       return;
     }
 
@@ -634,6 +653,20 @@ const app = {
       : '-';
 
     producerReasonEl.textContent = data.executive_recommendation?.why_make_today || data.summary_message || '-';
+    const researchSummary = data.latest_research_strategy;
+    if (researchSummary) {
+      researchThesisEl.textContent = researchSummary.trend_thesis || 'Research strategy available.';
+      researchPatternEl.textContent = researchSummary.top_pattern || '-';
+      researchActionEl.textContent = researchSummary.recommended_next_action || 'Review strategy and create opportunities.';
+      researchActionBtn.textContent = 'Open Research';
+      researchActionBtn.onclick = () => this.setActivePage('research');
+    } else {
+      researchThesisEl.textContent = 'No research strategy yet.';
+      researchPatternEl.textContent = '-';
+      researchActionEl.textContent = 'Run supervisor research to generate original strategy directions.';
+      researchActionBtn.textContent = 'Go To Research';
+      researchActionBtn.onclick = () => this.setActivePage('research');
+    }
 
     const blockers = Array.isArray(data.blockers) ? data.blockers : [];
     blockersText.textContent = blockers.length > 0
@@ -866,6 +899,7 @@ const app = {
       }
       this.state.agents = Array.isArray(data) ? data : [];
       this.renderAgents();
+      this.refreshResearchAgentSelect();
       this.renderOpportunities();
       this.renderExecutiveProducerRecommendation(this.state.producerRecommendation);
     } catch (err) {
@@ -1500,6 +1534,7 @@ const app = {
       viewBtn.disabled = true;
       createBriefBtn.disabled = true;
       promoteBtn.disabled = true;
+      this.renderProducerResearchStrategy(null);
       return;
     }
 
@@ -1543,6 +1578,7 @@ const app = {
     viewBtn.disabled = !hasOpportunity;
     createBriefBtn.disabled = !hasOpportunity;
     promoteBtn.disabled = !(hasOpportunity && data.selected_review_status === 'approved_for_video');
+    this.renderProducerResearchStrategy(data);
   },
 
   async loadProducerHistory() {
@@ -1579,6 +1615,318 @@ const app = {
         <div class="audit-message">${this.escapeHtml(item.recommended_topic || item.empty_state_message || 'Recommendation record')}</div>
       </div>
     `).join('');
+  },
+
+  getLatestResearchStrategy() {
+    const strategies = this.state.researchStrategies || [];
+    return strategies.length > 0 ? strategies[0] : null;
+  },
+
+  renderProducerResearchStrategy(recommendation = null) {
+    const thesisEl = document.getElementById('producerResearchThesis');
+    const patternEl = document.getElementById('producerResearchPattern');
+    const directionEl = document.getElementById('producerResearchDirection');
+    if (!thesisEl || !patternEl || !directionEl) return;
+
+    const strategies = this.state.researchStrategies || [];
+    if (strategies.length === 0) {
+      thesisEl.textContent = 'No related research strategy yet.';
+      patternEl.textContent = '-';
+      directionEl.textContent = 'Run research with a niche lane and query, then create opportunities from strategy.';
+      return;
+    }
+
+    const recLane = (recommendation?.niche_lane || '').toLowerCase().trim();
+    const matched = strategies.find(item => (item.niche_lane || '').toLowerCase().trim() === recLane) || strategies[0];
+    thesisEl.textContent = matched.trend_thesis || 'Research strategy available.';
+    patternEl.textContent = matched.top_pattern || '-';
+    directionEl.textContent = matched.recommended_next_action || 'Review strategy and apply original angles.';
+  },
+
+  openResearchFromProducer() {
+    this.setActivePage('research');
+    this.log('Opened Research workspace from Producer.', 'info');
+  },
+
+  refreshResearchAgentSelect() {
+    const selectEl = document.getElementById('researchAssignedAgent');
+    if (!selectEl) return;
+    const current = selectEl.value;
+    const activeAgents = (this.state.agents || []).filter(agent => agent.is_active);
+    const options = ['<option value="">Auto-match active agent</option>'];
+    activeAgents.forEach(agent => {
+      options.push(
+        `<option value="${agent.id}">${this.escapeHtml(agent.name)}${agent.lane ? ` (${this.escapeHtml(agent.lane)})` : ''}</option>`
+      );
+    });
+    selectEl.innerHTML = options.join('');
+    if (current && activeAgents.some(agent => String(agent.id) === String(current))) {
+      selectEl.value = current;
+    }
+  },
+
+  async loadResearchData() {
+    await this.loadResearchStrategies();
+    await this.loadResearchRuns();
+    this.refreshResearchAgentSelect();
+    this.renderProducerResearchStrategy(this.state.producerRecommendation);
+  },
+
+  async loadResearchRuns() {
+    const runList = document.getElementById('researchRunList');
+    if (!runList) return;
+    try {
+      const res = await fetch('/research/runs?limit=30');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load research runs');
+      }
+      this.state.researchRuns = Array.isArray(data) ? data : [];
+      this.renderResearchRuns();
+      const activeId = this.state.selectedResearchRunId;
+      if (activeId) {
+        const stillExists = this.state.researchRuns.some(item => item.id === activeId);
+        if (stillExists) {
+          await this.selectResearchRun(activeId);
+        } else {
+          this.state.selectedResearchRunId = null;
+          this.state.selectedResearchRunDetail = null;
+          this.renderResearchRunDetail(null);
+        }
+      } else if (this.state.researchRuns.length > 0) {
+        await this.selectResearchRun(this.state.researchRuns[0].id);
+      } else {
+        this.renderResearchRunDetail(null);
+      }
+    } catch (err) {
+      this.log(`Research runs load failed: ${err.message}`, 'error');
+      runList.innerHTML = '<div class="empty-state">Failed to load research runs.</div>';
+      this.renderResearchRunDetail(null);
+    }
+  },
+
+  async loadResearchStrategies() {
+    const container = document.getElementById('researchStrategyCards');
+    if (!container) return;
+    try {
+      const res = await fetch('/research/strategies?limit=20');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load research strategies');
+      }
+      this.state.researchStrategies = Array.isArray(data) ? data : [];
+      this.renderResearchStrategies();
+    } catch (err) {
+      this.log(`Research strategies load failed: ${err.message}`, 'error');
+      container.innerHTML = '<div class="empty-state">Failed to load research strategies.</div>';
+    }
+  },
+
+  renderResearchRuns() {
+    const container = document.getElementById('researchRunList');
+    if (!container) return;
+    const runs = this.state.researchRuns || [];
+    if (runs.length === 0) {
+      container.innerHTML = '<div class="empty-state">No research runs yet.</div>';
+      return;
+    }
+    container.innerHTML = runs.map(run => `
+      <div class="audit-event ${this.state.selectedResearchRunId === run.id ? 'clickable' : ''}" onclick="app.selectResearchRun(${run.id})">
+        <div class="audit-event-top">
+          <span class="audit-badge">${this.escapeHtml((run.status || 'pending').toUpperCase())}</span>
+          <span class="audit-time">${this.formatTime(run.created_at)}</span>
+        </div>
+        <div class="audit-message">${this.escapeHtml(run.query || run.niche_lane || `Run #${run.id}`)}</div>
+        <div class="video-meta-line">${this.escapeHtml(run.niche_lane || '-')} • videos: ${run.source_video_count || 0} • channels: ${run.source_channel_count || 0}</div>
+        ${run.setup_required ? `<div class="opportunity-help-text">${this.escapeHtml(run.setup_message || 'Setup required')}</div>` : ''}
+      </div>
+    `).join('');
+  },
+
+  renderResearchStrategies() {
+    const container = document.getElementById('researchStrategyCards');
+    if (!container) return;
+    const strategies = this.state.researchStrategies || [];
+    if (strategies.length === 0) {
+      container.innerHTML = '<div class="empty-state">No research strategies yet.</div>';
+      return;
+    }
+    container.innerHTML = strategies.slice(0, 4).map(strategy => `
+      <article class="agent-card">
+        <div class="agent-card-header">
+          <div>
+            <div class="video-title-main">${this.escapeHtml(strategy.niche_lane || 'Research Strategy')}</div>
+            <div class="video-meta-line">${this.escapeHtml(strategy.query || '-')}</div>
+          </div>
+          <span class="video-status approved">Strategy</span>
+        </div>
+        <div class="meta-row"><span class="meta-label">Thesis</span><span class="meta-value">${this.escapeHtml(strategy.trend_thesis || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Top Pattern</span><span class="meta-value">${this.escapeHtml(strategy.top_pattern || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Next Action</span><span class="meta-value">${this.escapeHtml(strategy.recommended_next_action || '-')}</span></div>
+      </article>
+    `).join('');
+  },
+
+  async runSupervisorResearch() {
+    const nicheLane = document.getElementById('researchNicheLane')?.value?.trim() || '';
+    const query = document.getElementById('researchQuery')?.value?.trim() || '';
+    const assignedAgentRaw = document.getElementById('researchAssignedAgent')?.value || '';
+    const maxResultsRaw = document.getElementById('researchMaxResults')?.value || '10';
+    const maxResults = Math.max(1, Math.min(25, Number(maxResultsRaw) || 10));
+    const button = document.getElementById('btnRunResearch');
+
+    if (!nicheLane || !query) {
+      this.log('Niche lane and query are required to run research.', 'error');
+      return;
+    }
+
+    if (button) {
+      button.classList.add('loading');
+      button.disabled = true;
+    }
+    try {
+      const payload = {
+        niche_lane: nicheLane,
+        query,
+        max_results: maxResults,
+      };
+      if (assignedAgentRaw) {
+        payload.assigned_agent_id = Number(assignedAgentRaw);
+      }
+      const res = await fetch('/research/youtube/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to run research');
+      }
+      this.state.selectedResearchRunId = data.id;
+      this.state.selectedResearchRunDetail = data;
+      this.renderResearchRunDetail(data);
+      if (data.setup_required) {
+        this.log(data.setup_message || 'Research setup required.', 'error');
+      } else if (data.status === 'failed') {
+        this.log(data.setup_message || 'Research run failed.', 'error');
+      } else {
+        this.log(`Research run #${data.id} completed with ${data.source_video_count || 0} source video(s).`, 'success');
+      }
+      await this.loadResearchData();
+      await this.loadCommandCenter();
+      await this.loadExecutiveProducerRecommendation();
+      await this.loadProducerHistory();
+    } catch (err) {
+      this.log(`Run research failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.classList.remove('loading');
+        button.disabled = false;
+      }
+    }
+  },
+
+  async selectResearchRun(runId) {
+    const id = Number(runId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    this.state.selectedResearchRunId = id;
+    this.renderResearchRuns();
+    try {
+      const res = await fetch(`/research/runs/${id}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load research run detail');
+      }
+      this.state.selectedResearchRunDetail = data;
+      this.renderResearchRunDetail(data);
+    } catch (err) {
+      this.log(`Research run detail failed: ${err.message}`, 'error');
+      this.renderResearchRunDetail(null);
+    }
+  },
+
+  renderResearchRunDetail(detail) {
+    const noticeEl = document.getElementById('researchSetupNotice');
+    const sourceEl = document.getElementById('researchSourceVideos');
+    const patternEl = document.getElementById('researchPatternCards');
+    const createBtn = document.getElementById('btnCreateResearchOpportunities');
+    if (!noticeEl || !sourceEl || !patternEl || !createBtn) return;
+
+    if (!detail) {
+      noticeEl.textContent = 'Use official YouTube Data API only. Strategy output is original and deterministic.';
+      sourceEl.innerHTML = '<div class="empty-state">Select a run to view source videos.</div>';
+      patternEl.innerHTML = '<div class="empty-state">Select a run to view extracted patterns.</div>';
+      createBtn.disabled = true;
+      return;
+    }
+
+    if (detail.setup_required) {
+      noticeEl.textContent = detail.setup_message || 'Setup required: set YOUTUBE_DATA_API_KEY.';
+      noticeEl.style.color = 'var(--warning)';
+    } else {
+      noticeEl.textContent = 'Use official YouTube Data API only. Strategy output is original and deterministic.';
+      noticeEl.style.color = 'var(--textSecondary)';
+    }
+
+    const sourceVideos = Array.isArray(detail.source_videos) ? detail.source_videos : [];
+    sourceEl.innerHTML = sourceVideos.length > 0
+      ? sourceVideos.slice(0, 8).map(video => `
+        <div class="video-card" style="padding:0.7rem;">
+          <div class="video-title">${this.escapeHtml(video.title || '-')}</div>
+          <div class="video-meta-line">${this.escapeHtml(video.channel_title || '-')} • views: ${this.escapeHtml(String(video.view_count ?? '-'))}</div>
+          <div class="video-meta-line">${this.escapeHtml(video.duration || 'duration n/a')}</div>
+        </div>
+      `).join('')
+      : '<div class="empty-state">No source videos stored for this run.</div>';
+
+    const patterns = Array.isArray(detail.patterns) ? detail.patterns : [];
+    patternEl.innerHTML = patterns.length > 0
+      ? patterns.map(pattern => `
+        <article class="agent-card">
+          <div class="agent-card-header">
+            <div class="video-title-main">${this.escapeHtml(pattern.label || pattern.pattern_type || 'Pattern')}</div>
+            <span class="video-status ${pattern.signal_strength >= 4 ? 'warning' : 'approved'}">S${this.escapeHtml(String(pattern.signal_strength || 1))}</span>
+          </div>
+          <div class="video-meta-line">${this.escapeHtml(pattern.pattern_type || '-')}</div>
+          <div class="meta-row"><span class="meta-value">${this.escapeHtml(pattern.details || '-')}</span></div>
+        </article>
+      `).join('')
+      : '<div class="empty-state">No patterns stored for this run.</div>';
+
+    createBtn.disabled = !detail.strategy_detail;
+  },
+
+  async createOpportunitiesFromResearch() {
+    const detail = this.state.selectedResearchRunDetail;
+    if (!detail || !detail.id) {
+      this.log('Select a research run first.', 'error');
+      return;
+    }
+    const button = document.getElementById('btnCreateResearchOpportunities');
+    if (button) {
+      button.classList.add('loading');
+      button.disabled = true;
+    }
+    try {
+      const res = await fetch(`/research/runs/${detail.id}/create-opportunities`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create opportunities from strategy');
+      }
+      this.log(data.message || 'Created opportunities from strategy.', 'success');
+      await this.loadOpportunities();
+      await this.loadCommandCenter();
+      await this.loadPipelineDaily();
+      await this.loadExecutiveProducerRecommendation();
+      await this.loadProducerHistory();
+    } catch (err) {
+      this.log(`Create opportunities failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.classList.remove('loading');
+        button.disabled = false;
+      }
+    }
   },
 
   viewRecommendedOpportunity() {

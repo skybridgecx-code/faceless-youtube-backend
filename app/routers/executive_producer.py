@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -12,11 +13,13 @@ from app.models import (
     ExecutiveProducerRecommendation,
     OpportunityReviewStatus,
     ProducerConfidenceLabel,
+    ResearchStrategy,
     VideoOpportunity,
 )
 from app.schemas import ExecutiveProducerRecommendationRead
 from app.services.agents import ensure_channel_agents, resolve_agent_for_opportunity
 from app.services.audit import log_audit_event
+from app.services.opportunity_intake import normalize_text
 
 router = APIRouter(prefix="/executive-producer", tags=["executive-producer"])
 
@@ -65,13 +68,44 @@ def monetization_bonus(path: str | None) -> int:
     return 1
 
 
-def compute_selection_score(opportunity: VideoOpportunity) -> int:
+def _strategy_topics_by_lane(db: Session, limit: int = 30) -> set[tuple[str, str]]:
+    rows = list(
+        db.scalars(
+            select(ResearchStrategy)
+            .order_by(ResearchStrategy.created_at.desc())
+            .limit(limit)
+        )
+    )
+    out: set[tuple[str, str]] = set()
+    for row in rows:
+        lane = normalize_text(row.niche_lane)
+        try:
+            parsed = json.loads(row.recommended_topics_json or "[]")
+        except json.JSONDecodeError:
+            parsed = []
+        if not isinstance(parsed, list):
+            continue
+        for topic in parsed:
+            topic_text = normalize_text(str(topic))
+            if topic_text:
+                out.add((topic_text, lane))
+    return out
+
+
+def compute_selection_score(opportunity: VideoOpportunity, *, research_topic_pairs: set[tuple[str, str]] | None = None) -> int:
     score = opportunity.total_score * 4
     score += opportunity.buyer_intent * 4
     score += opportunity.product_connection * 4
     score += monetization_bonus(opportunity.expected_monetization_path)
     score -= opportunity.compliance_risk * 3
     score -= opportunity.production_difficulty * 2
+    normalized_topic = normalize_text(opportunity.topic)
+    normalized_lane = normalize_text(opportunity.niche_lane)
+    notes = normalize_text(opportunity.notes)
+    if research_topic_pairs and (normalized_topic, normalized_lane) in research_topic_pairs:
+        score += 6
+    elif "research backed" in notes or "research strategy" in notes:
+        score += 4
     return score
 
 
@@ -137,7 +171,11 @@ def build_empty_recommendation_read() -> ExecutiveProducerRecommendationRead:
     )
 
 
-def choose_best_opportunity(opportunities: list[VideoOpportunity]) -> VideoOpportunity | None:
+def choose_best_opportunity(
+    opportunities: list[VideoOpportunity],
+    *,
+    research_topic_pairs: set[tuple[str, str]] | None = None,
+) -> VideoOpportunity | None:
     status_order = [
         OpportunityReviewStatus.approved_for_video.value,
         OpportunityReviewStatus.shortlisted.value,
@@ -148,7 +186,7 @@ def choose_best_opportunity(opportunities: list[VideoOpportunity]) -> VideoOppor
         if subset:
             subset.sort(
                 key=lambda item: (
-                    -compute_selection_score(item),
+                    -compute_selection_score(item, research_topic_pairs=research_topic_pairs),
                     -item.total_score,
                     -item.created_at.timestamp(),
                 )
@@ -157,9 +195,14 @@ def choose_best_opportunity(opportunities: list[VideoOpportunity]) -> VideoOppor
     return None
 
 
-def create_recommendation_from_opportunity(db: Session, opportunity: VideoOpportunity) -> ExecutiveProducerRecommendation:
+def create_recommendation_from_opportunity(
+    db: Session,
+    opportunity: VideoOpportunity,
+    *,
+    research_topic_pairs: set[tuple[str, str]] | None = None,
+) -> ExecutiveProducerRecommendation:
     matched_agent = resolve_agent_for_opportunity(db, opportunity)
-    selection_score = compute_selection_score(opportunity)
+    selection_score = compute_selection_score(opportunity, research_topic_pairs=research_topic_pairs)
     confidence = confidence_from_score(selection_score, opportunity.review_status)
     risk_lines: list[str] = []
     if opportunity.compliance_risk >= 4:
@@ -247,8 +290,13 @@ def run_recommendation(db: Session = Depends(get_db)) -> ExecutiveProducerRecomm
     channel_ids = {item.channel_id for item in opportunities}
     for channel_id in channel_ids:
         ensure_channel_agents(db, channel_id)
-    best = choose_best_opportunity(opportunities)
-    recommendation = create_recommendation_from_opportunity(db, best) if best else build_empty_recommendation()
+    research_topic_pairs = _strategy_topics_by_lane(db)
+    best = choose_best_opportunity(opportunities, research_topic_pairs=research_topic_pairs)
+    recommendation = (
+        create_recommendation_from_opportunity(db, best, research_topic_pairs=research_topic_pairs)
+        if best
+        else build_empty_recommendation()
+    )
 
     db.add(recommendation)
     db.commit()

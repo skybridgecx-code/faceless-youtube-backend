@@ -4,6 +4,7 @@ import tempfile
 import urllib.error
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
@@ -14,10 +15,12 @@ os.environ["OUTPUT_DIR"] = tempfile.mkdtemp(prefix="yt_factory_test_")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app.routers.videos as videos_router  # noqa: E402
+import app.routers.research as research_router  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import AuditEvent, ContentAgent, Video, VideoOpportunity  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
+from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
 
 
 def setup_function() -> None:
@@ -1573,3 +1576,177 @@ def test_pipeline_daily_get_does_not_create_audit_spam() -> None:
     assert after.status_code == 200
     after_count = len(after.json())
     assert after_count == before_count
+
+
+def _mock_research_sources() -> tuple[list[SourceVideo], list[SourceChannel]]:
+    videos = [
+        SourceVideo(
+            youtube_video_id="vid_1",
+            youtube_channel_id="chan_1",
+            title="How to build an AI tool stack for local business workflows",
+            channel_title="Ops Channel One",
+            description="Tutorial with tool comparison and workflow checklist for operators.",
+            published_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
+            duration="PT11M5S",
+            view_count=12000,
+            like_count=640,
+            comment_count=88,
+            thumbnail_url="https://example.com/thumb1.jpg",
+        ),
+        SourceVideo(
+            youtube_video_id="vid_2",
+            youtube_channel_id="chan_2",
+            title="Best AI tools vs old manual workflows (comparison)",
+            channel_title="Ops Channel Two",
+            description="Comparison format focused on tool stack upgrades and operator demos.",
+            published_at=datetime(2026, 1, 11, tzinfo=timezone.utc),
+            duration="PT9M40S",
+            view_count=9800,
+            like_count=521,
+            comment_count=52,
+            thumbnail_url="https://example.com/thumb2.jpg",
+        ),
+    ]
+    channels = [
+        SourceChannel(
+            youtube_channel_id="chan_1",
+            title="Ops Channel One",
+            description="Operator workflow videos",
+            subscriber_count=25000,
+            video_count=180,
+            view_count=1800000,
+        ),
+        SourceChannel(
+            youtube_channel_id="chan_2",
+            title="Ops Channel Two",
+            description="AI tools and automation breakdowns",
+            subscriber_count=17000,
+            video_count=140,
+            view_count=1200000,
+        ),
+    ]
+    return videos, channels
+
+
+def test_research_run_missing_api_key_returns_setup_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.delenv("YOUTUBE_DATA_API_KEY", raising=False)
+    monkeypatch.setattr(
+        research_router,
+        "get_settings",
+        lambda: type("SettingsStub", (), {"youtube_data_api_key": None})(),
+    )
+    channel_id = client.post("/channels", json={"name": "Research Setup Channel"}).json()["id"]
+    assert channel_id > 0
+
+    response = client.post(
+        "/research/youtube/run",
+        json={
+            "niche_lane": "AI tool breakdowns",
+            "query": "best ai tools for operators",
+            "max_results": 10,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "setup_required"
+    assert body["setup_required"] is True
+    assert "YOUTUBE_DATA_API_KEY" in (body["setup_message"] or "")
+
+    runs = client.get("/research/runs").json()
+    assert any(item["id"] == body["id"] for item in runs)
+
+
+def test_research_pattern_analysis_is_deterministic_from_mocked_sources() -> None:
+    videos, channels = _mock_research_sources()
+    first = build_research_patterns(
+        niche_lane="AI tool breakdowns",
+        query="best ai tools for operators",
+        source_videos=videos,
+        source_channels=channels,
+    )
+    second = build_research_patterns(
+        niche_lane="AI tool breakdowns",
+        query="best ai tools for operators",
+        source_videos=videos,
+        source_channels=channels,
+    )
+    first_payload = [(item.pattern_type, item.label, item.details, item.signal_strength) for item in first]
+    second_payload = [(item.pattern_type, item.label, item.details, item.signal_strength) for item in second]
+    assert first_payload == second_payload
+    assert any(item[0] == "title_patterns" for item in first_payload)
+    assert any(item[0] == "compliance_flags" for item in first_payload)
+
+
+def test_research_strategy_includes_original_direction_and_what_not_to_copy() -> None:
+    videos, channels = _mock_research_sources()
+    patterns = build_research_patterns(
+        niche_lane="AI tool breakdowns",
+        query="best ai tools for operators",
+        source_videos=videos,
+        source_channels=channels,
+    )
+    strategy = build_research_strategy(
+        niche_lane="AI tool breakdowns",
+        query="best ai tools for operators",
+        patterns=patterns,
+    )
+    assert strategy.original_video_angles
+    assert strategy.recommended_topics
+    assert "Do not copy exact titles" in strategy.what_not_to_copy
+    assert "original" in strategy.recommended_next_action.lower()
+
+
+def test_research_create_opportunities_workflow_and_duplicate_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Research Opportunity Channel"}).json()["id"]
+    assert channel_id > 0
+    monkeypatch.setenv("YOUTUBE_DATA_API_KEY", "test_key")
+
+    def fake_fetch_youtube_sources(*, api_key: str, query: str, max_results: int):  # noqa: ANN202
+        assert api_key == "test_key"
+        assert query == "best ai tools for operators"
+        assert max_results == 10
+        return _mock_research_sources()
+
+    monkeypatch.setattr(research_router, "fetch_youtube_sources", fake_fetch_youtube_sources)
+
+    run_response = client.post(
+        "/research/youtube/run",
+        json={
+            "niche_lane": "AI tool breakdowns",
+            "query": "best ai tools for operators",
+            "max_results": 10,
+        },
+    )
+    assert run_response.status_code == 200
+    run_body = run_response.json()
+    assert run_body["status"] == "completed"
+    assert run_body["setup_required"] is False
+    assert run_body["strategy_detail"] is not None
+    run_id = run_body["id"]
+
+    first_create = client.post(f"/research/runs/{run_id}/create-opportunities")
+    assert first_create.status_code == 200
+    first_body = first_create.json()
+    assert first_body["created_count"] >= 1
+    assert first_body["skipped_duplicates"] >= 0
+    assert len(first_body["created_ids"]) == first_body["created_count"]
+
+    opportunities = client.get("/opportunities").json()
+    created_map = {item["id"]: item for item in opportunities if item["id"] in first_body["created_ids"]}
+    assert len(created_map) == first_body["created_count"]
+    for created in created_map.values():
+        assert created["review_status"] == "unreviewed"
+        assert created["promoted_video_id"] is None
+
+    first_created_id = first_body["created_ids"][0]
+    blocked_promote = client.post(f"/opportunities/{first_created_id}/promote-to-video")
+    assert blocked_promote.status_code == 400
+    assert "approved" in blocked_promote.json()["detail"].lower()
+
+    second_create = client.post(f"/research/runs/{run_id}/create-opportunities")
+    assert second_create.status_code == 200
+    second_body = second_create.json()
+    assert second_body["created_count"] == 0
+    assert second_body["skipped_duplicates"] == first_body["requested_topics"]

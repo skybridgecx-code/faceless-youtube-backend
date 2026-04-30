@@ -14,6 +14,7 @@ from app.models import (
     ExecutiveProducerRecommendation,
     ProductionBrief,
     ProductionBriefStatus,
+    ResearchStrategy,
     Video,
     VideoOpportunity,
     VideoStatus,
@@ -26,6 +27,7 @@ from app.schemas import (
     CommandCenterBriefItem,
     CommandCenterTaskItem,
     CommandCenterTodayRead,
+    ResearchSummaryRead,
 )
 
 router = APIRouter(prefix="/command-center", tags=["command-center"])
@@ -87,6 +89,11 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
         .order_by(ExecutiveProducerRecommendation.created_at.desc())
         .limit(1)
     )
+    latest_research_strategy_row = db.scalar(
+        select(ResearchStrategy)
+        .order_by(ResearchStrategy.created_at.desc())
+        .limit(1)
+    )
     recent_audit_rows = list(
         db.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(12))
     )
@@ -136,6 +143,21 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
     executive_recommendation = (
         serialize_recommendation(latest_recommendation_row, db) if latest_recommendation_row else None
     )
+    latest_research_strategy = (
+        ResearchSummaryRead(
+            run_id=latest_research_strategy_row.run_id,
+            strategy_id=latest_research_strategy_row.id,
+            niche_lane=latest_research_strategy_row.niche_lane,
+            query=latest_research_strategy_row.query,
+            trend_thesis=latest_research_strategy_row.trend_thesis,
+            top_pattern=latest_research_strategy_row.top_pattern,
+            recommended_next_action=latest_research_strategy_row.recommended_next_action,
+            recommended_agent_name=latest_research_strategy_row.recommended_agent_name,
+            created_at=latest_research_strategy_row.created_at,
+        )
+        if latest_research_strategy_row
+        else None
+    )
 
     assigned_agent: ContentAgent | None = None
     if latest_recommendation_row and latest_recommendation_row.matched_agent_id:
@@ -143,10 +165,11 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
     if assigned_agent is None and best_opportunity_row and best_opportunity_row.assigned_agent_id:
         assigned_agent = db.get(ContentAgent, best_opportunity_row.assigned_agent_id)
 
-    if not videos and best_opportunity is None and executive_recommendation is None and not briefs:
+    if not videos and best_opportunity is None and executive_recommendation is None and latest_research_strategy is None and not briefs:
         return CommandCenterTodayRead(
             best_opportunity=None,
             executive_recommendation=None,
+            latest_research_strategy=None,
             assigned_agent=None,
             next_best_action=CommandCenterAction(
                 key="setup_opportunities",
@@ -317,6 +340,7 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
     return CommandCenterTodayRead(
         best_opportunity=best_opportunity,
         executive_recommendation=executive_recommendation,
+        latest_research_strategy=latest_research_strategy,
         assigned_agent=(assigned_agent if assigned_agent else None),
         next_best_action=next_action,
         operator_checklist=operator_checklist,

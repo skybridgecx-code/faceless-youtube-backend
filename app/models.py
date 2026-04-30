@@ -269,3 +269,93 @@ class ProductionBrief(Base):
     operator_review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ResearchRun(Base):
+    __tablename__ = "research_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    channel_id: Mapped[int | None] = mapped_column(ForeignKey("channels.id"), nullable=True, index=True)
+    assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
+    niche_lane: Mapped[str] = mapped_column(String(240))
+    query: Mapped[str] = mapped_column(String(240))
+    max_results: Mapped[int] = mapped_column(Integer, default=10)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    setup_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    setup_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_video_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_channel_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ResearchSourceVideo(Base):
+    __tablename__ = "research_source_videos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_runs.id"), index=True)
+    youtube_video_id: Mapped[str] = mapped_column(String(60), index=True)
+    youtube_channel_id: Mapped[str] = mapped_column(String(60), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    channel_title: Mapped[str] = mapped_column(String(240))
+    description_snippet: Mapped[str] = mapped_column(Text, default="")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    view_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    like_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ResearchSourceChannel(Base):
+    __tablename__ = "research_source_channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_runs.id"), index=True)
+    youtube_channel_id: Mapped[str] = mapped_column(String(60), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    description_snippet: Mapped[str] = mapped_column(Text, default="")
+    subscriber_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    video_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    view_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ResearchPattern(Base):
+    __tablename__ = "research_patterns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_runs.id"), index=True)
+    pattern_type: Mapped[str] = mapped_column(String(120), index=True)
+    label: Mapped[str] = mapped_column(String(240))
+    details: Mapped[str] = mapped_column(Text)
+    signal_strength: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ResearchStrategy(Base):
+    __tablename__ = "research_strategies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_runs.id"), index=True)
+    assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
+    recommended_agent_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    niche_lane: Mapped[str] = mapped_column(String(240))
+    query: Mapped[str] = mapped_column(String(240))
+    trend_thesis: Mapped[str] = mapped_column(Text)
+    winning_patterns: Mapped[str] = mapped_column(Text)
+    original_video_angles: Mapped[str] = mapped_column(Text)
+    recommended_topics_json: Mapped[str] = mapped_column(Text, default="[]")
+    title_directions: Mapped[str] = mapped_column(Text)
+    thumbnail_directions: Mapped[str] = mapped_column(Text)
+    hook_directions: Mapped[str] = mapped_column(Text)
+    monetization_path: Mapped[str] = mapped_column(Text)
+    differentiation_strategy: Mapped[str] = mapped_column(Text)
+    what_not_to_copy: Mapped[str] = mapped_column(Text)
+    compliance_risks: Mapped[str] = mapped_column(Text)
+    recommended_next_action: Mapped[str] = mapped_column(Text)
+    top_pattern: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -22,6 +22,7 @@
         <button class="nav-item" data-page="opportunities">Opportunities</button>
         <button class="nav-item" data-page="agents">Agents</button>
         <button class="nav-item" data-page="producer">Producer</button>
+        <button class="nav-item" data-page="research">Research</button>
         <button class="nav-item" data-page="briefs">Briefs</button>
         <button class="nav-item" data-page="pipeline">Pipeline</button>
         <button class="nav-item" data-page="content">Content</button>
@@ -135,6 +136,24 @@
           </div>
 
           <div class="panel-grid dashboard-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Supervisor Research</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.setActivePage('research')">Open Research</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="flow-card">
+                  <div class="flow-card-title">Latest Thesis</div>
+                  <div class="flow-card-body" id="dashboardResearchThesis">No research strategy yet.</div>
+                  <div class="meta-row"><span class="meta-label">Top Pattern</span><span class="meta-value" id="dashboardResearchPattern">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Recommended Action</span><span class="meta-value" id="dashboardResearchAction">Run research or create opportunities from strategy.</span></div>
+                  <button class="btn primary" id="dashboardResearchActionBtn" onclick="app.setActivePage('research')">Go To Research</button>
+                </div>
+              </div>
+            </div>
+
             <div class="panel">
               <div class="panel-header">
                 <h2>Executive Producer</h2>
@@ -276,6 +295,13 @@
                 <div class="meta-row"><span class="meta-label">Operator Checklist</span><span class="meta-value pre-wrap" id="producerChecklist">-</span></div>
                 <div class="meta-row"><span class="meta-label">Production Brief</span><span class="meta-value pre-wrap" id="producerBrief">-</span></div>
                 <div class="meta-row"><span class="meta-label">Status</span><span class="meta-value" id="producerEmptyState">-</span></div>
+                <div class="flow-card" style="margin-top:0.75rem;">
+                  <div class="flow-card-title">Related Research Strategy</div>
+                  <div class="flow-card-body" id="producerResearchThesis">No related research strategy yet.</div>
+                  <div class="meta-row"><span class="meta-label">Top Pattern</span><span class="meta-value" id="producerResearchPattern">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Direction</span><span class="meta-value pre-wrap" id="producerResearchDirection">-</span></div>
+                  <button class="btn" id="btnProducerOpenResearch" onclick="app.openResearchFromProducer()">Open Research</button>
+                </div>
               </div>
             </div>
 
@@ -289,6 +315,88 @@
               <div class="panel-body compact-body">
                 <div id="producerHistoryList" class="audit-list">
                   <div class="empty-state">No recommendation history yet.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-research">
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Supervisor Research Intelligence</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadResearchData()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body form-body">
+                <div class="opportunity-note" id="researchSetupNotice">Use official YouTube Data API only. Strategy output is original and deterministic.</div>
+                <div class="form-group">
+                  <label>Niche Lane</label>
+                  <input type="text" id="researchNicheLane" placeholder="AI tool breakdowns" />
+                </div>
+                <div class="form-group">
+                  <label>Research Query</label>
+                  <input type="text" id="researchQuery" placeholder="best ai tools for small business automation" />
+                </div>
+                <div class="form-group">
+                  <label>Assigned Agent</label>
+                  <select id="researchAssignedAgent" class="form-select">
+                    <option value="">Auto-match active agent</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Max Results</label>
+                  <input type="number" id="researchMaxResults" min="1" max="25" value="10" />
+                </div>
+                <div class="settings-actions">
+                  <button class="btn primary" id="btnRunResearch" onclick="app.runSupervisorResearch()">Run Research</button>
+                  <button class="btn success" id="btnCreateResearchOpportunities" onclick="app.createOpportunitiesFromResearch()" disabled>Create Opportunities From Strategy</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Latest Strategy</h2>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="researchStrategyCards" class="agents-grid">
+                  <div class="empty-state">No research strategies yet.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel" style="margin-top: 12px;">
+            <div class="panel-header">
+              <h2>Research Runs</h2>
+            </div>
+            <div class="panel-body compact-body">
+              <div id="researchRunList" class="audit-list">
+                <div class="empty-state">No research runs yet.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel" style="margin-top: 12px;">
+            <div class="panel-header">
+              <h2>Selected Run Sources & Patterns</h2>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="panel-grid split-grid">
+                <div>
+                  <h3 class="subheading">Source Videos</h3>
+                  <div id="researchSourceVideos" class="video-list">
+                    <div class="empty-state">Select a run to view source videos.</div>
+                  </div>
+                </div>
+                <div>
+                  <h3 class="subheading">Patterns</h3>
+                  <div id="researchPatternCards" class="agents-grid">
+                    <div class="empty-state">Select a run to view extracted patterns.</div>
+                  </div>
                 </div>
               </div>
             </div>

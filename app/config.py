@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     enable_youtube_uploads: bool = False
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.5"
+    youtube_data_api_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

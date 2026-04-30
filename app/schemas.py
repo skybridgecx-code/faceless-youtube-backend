@@ -373,6 +373,131 @@ class ExecutiveProducerRecommendationRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ResearchRunRequest(BaseModel):
+    niche_lane: str
+    query: str
+    assigned_agent_id: int | None = None
+    max_results: int = Field(default=10, ge=1, le=25)
+
+
+class ResearchSourceVideoRead(BaseModel):
+    id: int
+    run_id: int
+    youtube_video_id: str
+    youtube_channel_id: str
+    title: str
+    channel_title: str
+    description_snippet: str
+    published_at: datetime | None = None
+    duration: str | None = None
+    view_count: int | None = None
+    like_count: int | None = None
+    comment_count: int | None = None
+    thumbnail_url: str | None = None
+    position: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ResearchSourceChannelRead(BaseModel):
+    id: int
+    run_id: int
+    youtube_channel_id: str
+    title: str
+    description_snippet: str
+    subscriber_count: int | None = None
+    video_count: int | None = None
+    view_count: int | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ResearchPatternRead(BaseModel):
+    id: int
+    run_id: int
+    pattern_type: str
+    label: str
+    details: str
+    signal_strength: int = Field(ge=1, le=5)
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ResearchStrategyRead(BaseModel):
+    id: int
+    run_id: int
+    assigned_agent_id: int | None = None
+    recommended_agent_name: str | None = None
+    niche_lane: str
+    query: str
+    trend_thesis: str
+    winning_patterns: str
+    original_video_angles: str
+    recommended_topics: list[str]
+    title_directions: str
+    thumbnail_directions: str
+    hook_directions: str
+    monetization_path: str
+    differentiation_strategy: str
+    what_not_to_copy: str
+    compliance_risks: str
+    recommended_next_action: str
+    top_pattern: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchSummaryRead(BaseModel):
+    run_id: int
+    strategy_id: int
+    niche_lane: str
+    query: str
+    trend_thesis: str
+    top_pattern: str | None = None
+    recommended_next_action: str
+    recommended_agent_name: str | None = None
+    created_at: datetime
+
+
+class ResearchRunRead(BaseModel):
+    id: int
+    channel_id: int | None = None
+    assigned_agent_id: int | None = None
+    niche_lane: str
+    query: str
+    max_results: int
+    status: str
+    setup_required: bool = False
+    setup_message: str | None = None
+    source_video_count: int
+    source_channel_count: int
+    created_at: datetime
+    updated_at: datetime
+    strategy: ResearchSummaryRead | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ResearchRunDetailRead(ResearchRunRead):
+    source_videos: list[ResearchSourceVideoRead]
+    source_channels: list[ResearchSourceChannelRead]
+    patterns: list[ResearchPatternRead]
+    strategy_detail: ResearchStrategyRead | None = None
+
+
+class ResearchCreateOpportunitiesResult(BaseModel):
+    run_id: int
+    strategy_id: int
+    requested_topics: int
+    created_count: int
+    skipped_duplicates: int
+    created_ids: list[int]
+    message: str
+
+
 class CommandCenterAction(BaseModel):
     key: str
     label: str
@@ -395,6 +520,7 @@ class CommandCenterTaskItem(BaseModel):
 class CommandCenterTodayRead(BaseModel):
     best_opportunity: OpportunityRead | None = None
     executive_recommendation: ExecutiveProducerRecommendationRead | None = None
+    latest_research_strategy: ResearchSummaryRead | None = None
     assigned_agent: ContentAgentRead | None = None
     next_best_action: CommandCenterAction
     operator_checklist: list[str]
