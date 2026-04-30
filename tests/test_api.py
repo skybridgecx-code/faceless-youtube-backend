@@ -1360,3 +1360,147 @@ def test_executive_producer_alias_lane_includes_matched_agent_profile_fields() -
     assert payload["matched_agent_monetization_focus"]
     assert payload["matched_agent_compliance_notes"]
     assert payload["matched_agent_production_rules"]
+
+
+def test_pipeline_daily_empty_state() -> None:
+    client = TestClient(app)
+    response = client.get("/pipeline/daily")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["opportunities_to_review"] == []
+    assert body["producer_recommendations"] == []
+    assert body["briefs_to_review"] == []
+    assert body["approved_briefs_ready_to_promote"] == []
+    assert body["videos_needing_assets"] == []
+    assert body["videos_needing_preview"] == []
+    assert body["videos_needing_preview_review"] == []
+    assert body["videos_needing_compliance"] == []
+    assert body["videos_needing_manual_approval"] == []
+    assert body["videos_ready_to_package"] == []
+    assert body["videos_ready_for_payload"] == []
+    assert body["completed_payloads"] == []
+    assert body["next_step"]["key"] == "pipeline_clear"
+
+
+def test_pipeline_daily_includes_opportunities_to_review() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Opportunity Channel"}).json()["id"]
+    created = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Best AI tools for small business owners",
+            "niche_lane": "AI tool breakdowns",
+            "audience": "small business owners",
+            "monetization_path": "affiliate tools + templates",
+        },
+    )
+    assert created.status_code == 200
+
+    response = client.get("/pipeline/daily")
+    assert response.status_code == 200
+    body = response.json()
+    topics = {item["topic"] for item in body["opportunities_to_review"]}
+    assert "Best AI tools for small business owners" in topics
+
+
+def test_pipeline_daily_includes_briefs_review_and_approved_buckets() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Brief Buckets Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Faceless YouTube automation workflow",
+            "niche_lane": "faceless YouTube / creator automation",
+            "audience": "creator operators",
+            "monetization_path": "templates + affiliate software",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "approved_for_video"}).status_code == 200
+
+    draft_brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    approved_brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    assert client.patch(f"/production-briefs/{approved_brief['id']}/review", json={"status": "approved"}).status_code == 200
+
+    response = client.get("/pipeline/daily")
+    assert response.status_code == 200
+    body = response.json()
+    draft_ids = {item["brief_id"] for item in body["briefs_to_review"]}
+    approved_ids = {item["brief_id"] for item in body["approved_briefs_ready_to_promote"]}
+    assert draft_brief["id"] in draft_ids
+    assert approved_brief["id"] in approved_ids
+
+
+def test_pipeline_daily_video_stage_buckets() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Video Buckets Channel"}).json()["id"]
+
+    needs_assets = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Assets"}).json()
+
+    needs_compliance = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Compliance"}).json()
+    assert client.post(f"/videos/{needs_compliance['id']}/generate", json={"stage": "all"}).status_code == 200
+
+    needs_manual = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Manual Approval"}).json()
+    assert client.post(f"/videos/{needs_manual['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{needs_manual['id']}/compliance/run").status_code == 200
+
+    needs_preview = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Preview"}).json()
+    assert client.post(f"/videos/{needs_preview['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{needs_preview['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+
+    needs_preview_review = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Preview Review"}).json()
+    assert client.post(f"/videos/{needs_preview_review['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{needs_preview_review['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(needs_preview_review["id"])
+
+    ready_to_package = client.post("/videos", json={"channel_id": channel_id, "title": "Ready To Package"}).json()
+    assert client.post(f"/videos/{ready_to_package['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{ready_to_package['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(ready_to_package["id"])
+    assert client.post(f"/videos/{ready_to_package['id']}/preview/review", json={"reviewed": True}).status_code == 200
+
+    ready_for_payload = client.post("/videos", json={"channel_id": channel_id, "title": "Ready For Payload"}).json()
+    assert client.post(f"/videos/{ready_for_payload['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{ready_for_payload['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(ready_for_payload["id"])
+    assert client.post(f"/videos/{ready_for_payload['id']}/preview/review", json={"reviewed": True}).status_code == 200
+    assert client.post(f"/videos/{ready_for_payload['id']}/package").status_code == 200
+
+    completed_payload = client.post("/videos", json={"channel_id": channel_id, "title": "Completed Payload"}).json()
+    assert client.post(f"/videos/{completed_payload['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{completed_payload['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(completed_payload["id"])
+    assert client.post(f"/videos/{completed_payload['id']}/preview/review", json={"reviewed": True}).status_code == 200
+    assert client.post(f"/videos/{completed_payload['id']}/package").status_code == 200
+    assert client.post(f"/publish/{completed_payload['id']}/prepare-youtube-payload").status_code == 200
+
+    response = client.get("/pipeline/daily")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert needs_assets["id"] in {item["video_id"] for item in body["videos_needing_assets"]}
+    assert needs_compliance["id"] in {item["video_id"] for item in body["videos_needing_compliance"]}
+    assert needs_manual["id"] in {item["video_id"] for item in body["videos_needing_manual_approval"]}
+    assert needs_preview["id"] in {item["video_id"] for item in body["videos_needing_preview"]}
+    assert needs_preview_review["id"] in {item["video_id"] for item in body["videos_needing_preview_review"]}
+    assert ready_to_package["id"] in {item["video_id"] for item in body["videos_ready_to_package"]}
+    assert ready_for_payload["id"] in {item["video_id"] for item in body["videos_ready_for_payload"]}
+    assert completed_payload["id"] in {item["video_id"] for item in body["completed_payloads"]}
+
+
+def test_pipeline_daily_get_does_not_create_audit_spam() -> None:
+    client = TestClient(app)
+    before = client.get("/audit?limit=200")
+    assert before.status_code == 200
+    before_count = len(before.json())
+
+    first = client.get("/pipeline/daily")
+    second = client.get("/pipeline/daily")
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    after = client.get("/audit?limit=200")
+    assert after.status_code == 200
+    after_count = len(after.json())
+    assert after_count == before_count

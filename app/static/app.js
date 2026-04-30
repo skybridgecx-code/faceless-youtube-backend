@@ -21,6 +21,7 @@ const app = {
     producerRecommendation: null,
     producerHistory: [],
     commandCenterToday: null,
+    pipelineDaily: null,
     stats: {
       ideas: 0,
       generated: 0,
@@ -45,6 +46,7 @@ const app = {
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
     await this.loadCommandCenter();
+    await this.loadPipelineDaily();
   },
 
   setupNavigation() {
@@ -89,6 +91,7 @@ const app = {
       agents: 'Agents',
       producer: 'Producer',
       briefs: 'Briefs',
+      pipeline: 'Pipeline',
       content: 'Content',
       assets: 'Assets',
       publishing: 'Publishing',
@@ -110,8 +113,12 @@ const app = {
     if (page === 'briefs') {
       this.loadBriefs();
     }
+    if (page === 'pipeline') {
+      this.loadPipelineDaily();
+    }
     if (page === 'dashboard') {
       this.loadCommandCenter();
+      this.loadPipelineDaily();
     }
   },
 
@@ -337,6 +344,199 @@ const app = {
       this.renderCommandCenter(null);
       return null;
     }
+  },
+
+  async loadPipelineDaily() {
+    try {
+      const res = await fetch('/pipeline/daily');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load daily pipeline');
+      }
+      this.state.pipelineDaily = data;
+      this.renderDashboardPipelineSummary(data);
+      this.renderPipelineDaily(data);
+      return data;
+    } catch (err) {
+      this.log(`Pipeline load failed: ${err.message}`, 'error');
+      this.renderDashboardPipelineSummary(null);
+      this.renderPipelineDaily(null);
+      return null;
+    }
+  },
+
+  executePipelineAction(action) {
+    if (!action) return;
+    if (action.video_id) {
+      this.selectVideo(action.video_id, { fetchAssets: true, clearCompliance: false });
+    }
+    const targetPage = action.target_page || 'dashboard';
+    this.setActivePage(targetPage);
+  },
+
+  renderDashboardPipelineSummary(data) {
+    const container = document.getElementById('dashboardPipelineSummaryList');
+    if (!container) return;
+    if (!data || !data.summary_counts) {
+      container.innerHTML = '<div class="flow-item pending">• Pipeline summary unavailable.</div>';
+      return;
+    }
+    const counts = data.summary_counts;
+    const lines = [
+      `Opportunities to review: ${counts.opportunities_to_review || 0}`,
+      `Briefs to review: ${counts.briefs_to_review || 0}`,
+      `Approved briefs ready to promote: ${counts.approved_briefs_ready_to_promote || 0}`,
+      `Videos needing preview review: ${counts.videos_needing_preview_review || 0}`,
+      `Videos needing compliance/manual approval: ${(counts.videos_needing_compliance || 0) + (counts.videos_needing_manual_approval || 0)}`,
+      `Ready to package/payload: ${(counts.videos_ready_to_package || 0) + (counts.videos_ready_for_payload || 0)}`
+    ];
+    container.innerHTML = lines.map(line => `<div class="flow-item pending">• ${this.escapeHtml(line)}</div>`).join('');
+  },
+
+  renderPipelineDaily(data) {
+    const nextText = document.getElementById('pipelineNextStepText');
+    const nextButton = document.getElementById('pipelineNextStepButton');
+    const stagesList = document.getElementById('pipelineStagesList');
+    if (!nextText || !nextButton || !stagesList) return;
+
+    if (!data) {
+      nextText.textContent = 'Unable to load pipeline state.';
+      nextButton.textContent = 'No Action';
+      nextButton.disabled = true;
+      nextButton.onclick = null;
+      stagesList.innerHTML = '<div class="empty-state">Pipeline data unavailable.</div>';
+      return;
+    }
+
+    const nextStep = data.next_step || {};
+    nextText.textContent = nextStep.label ? `${nextStep.label} — ${nextStep.reason || ''}` : 'No urgent actions.';
+    nextButton.textContent = nextStep.label || 'No Action';
+    nextButton.disabled = !nextStep.label;
+    nextButton.onclick = () => this.executePipelineAction(nextStep);
+
+    const stageDefs = [
+      {
+        key: 'opportunities_to_review',
+        title: '1. Opportunities to Review',
+        targetPage: 'opportunities',
+        buttonLabel: 'Open Opportunities'
+      },
+      {
+        key: 'producer_recommendations',
+        title: '2. Producer Recommendations',
+        targetPage: 'producer',
+        buttonLabel: 'Open Producer'
+      },
+      {
+        key: 'briefs_to_review',
+        title: '3. Briefs to Review',
+        targetPage: 'briefs',
+        buttonLabel: 'Open Briefs'
+      },
+      {
+        key: 'approved_briefs_ready_to_promote',
+        title: '4. Approved Briefs Ready to Promote',
+        targetPage: 'briefs',
+        buttonLabel: 'Promote Briefs'
+      },
+      {
+        key: 'videos_needing_assets',
+        title: '5. Videos Needing Assets',
+        targetPage: 'assets',
+        buttonLabel: 'Open Assets'
+      },
+      {
+        key: 'videos_needing_preview',
+        title: '6. Videos Needing Preview Render',
+        targetPage: 'assets',
+        buttonLabel: 'Render Preview'
+      },
+      {
+        key: 'videos_needing_preview_review',
+        title: '7. Videos Needing Preview Review',
+        targetPage: 'assets',
+        buttonLabel: 'Review Preview'
+      },
+      {
+        key: 'videos_needing_compliance',
+        title: '8. Videos Needing Compliance',
+        targetPage: 'compliance',
+        buttonLabel: 'Run Compliance'
+      },
+      {
+        key: 'videos_needing_manual_approval',
+        title: '9. Videos Needing Manual Approval',
+        targetPage: 'compliance',
+        buttonLabel: 'Manual Review'
+      },
+      {
+        key: 'videos_ready_to_package',
+        title: '10. Videos Ready to Package',
+        targetPage: 'assets',
+        buttonLabel: 'Package Video'
+      },
+      {
+        key: 'videos_ready_for_payload',
+        title: '11. Videos Ready for Payload',
+        targetPage: 'publishing',
+        buttonLabel: 'Prepare Payload'
+      },
+      {
+        key: 'completed_payloads',
+        title: '12. Completed Payloads',
+        targetPage: 'audit',
+        buttonLabel: 'Open Audit'
+      }
+    ];
+
+    stagesList.innerHTML = stageDefs.map(stage => this.renderPipelineStage(stage, data[stage.key])).join('');
+    stageDefs.forEach(stage => {
+      const btn = document.getElementById(`pipelineStageBtn-${stage.key}`);
+      if (!btn) return;
+      btn.onclick = async () => {
+        const rows = Array.isArray(data[stage.key]) ? data[stage.key] : [];
+        const top = rows[0];
+        if (top?.video_id) {
+          await this.selectVideo(top.video_id, { fetchAssets: true, clearCompliance: false });
+        }
+        this.setActivePage(stage.targetPage);
+      };
+    });
+  },
+
+  renderPipelineStage(stage, items) {
+    const rows = Array.isArray(items) ? items : [];
+    const sampleRows = rows.slice(0, 3).map(item => {
+      const title = item.title || item.topic || item.recommended_topic || `Item #${item.id || item.video_id || item.brief_id}`;
+      const metaParts = [];
+      if (item.workflow_status) metaParts.push(`Status: ${item.workflow_status}`);
+      if (item.review_status) metaParts.push(`Review: ${item.review_status}`);
+      if (item.status && !item.workflow_status) metaParts.push(`Status: ${item.status}`);
+      if (item.total_score !== undefined) metaParts.push(`Score: ${item.total_score}`);
+      if (item.confidence_label) metaParts.push(`Confidence: ${item.confidence_label}`);
+      if (item.assigned_agent) metaParts.push(`Agent: ${item.assigned_agent}`);
+      const metaLine = metaParts.join(' • ');
+      return `
+        <div class="pipeline-stage-item">
+          <div class="pipeline-stage-item-title">${this.escapeHtml(title)}</div>
+          <div class="pipeline-stage-item-meta">${this.escapeHtml(metaLine || '—')}</div>
+          ${item.reason ? `<div class="pipeline-stage-item-reason">${this.escapeHtml(item.reason)}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <article class="pipeline-stage">
+        <div class="pipeline-stage-header">
+          <div class="pipeline-stage-title">${this.escapeHtml(stage.title)}</div>
+          <span class="pipeline-stage-count">${rows.length}</span>
+        </div>
+        <div class="pipeline-stage-items">
+          ${sampleRows || '<div class="empty-state">No items in this stage.</div>'}
+        </div>
+        <button class="btn" id="pipelineStageBtn-${this.escapeHtml(stage.key)}">${this.escapeHtml(stage.buttonLabel)}</button>
+      </article>
+    `;
   },
 
   renderTaskList(containerId, items, emptyMessage, defaultTargetPage = 'assets') {
@@ -983,6 +1183,7 @@ const app = {
       this.log(`Daily seed complete. ${summary}`, 'success');
       await this.loadOpportunities();
       await this.loadCommandCenter();
+      await this.loadPipelineDaily();
       await this.loadExecutiveProducerRecommendation();
       await this.loadProducerHistory();
     } catch (err) {
@@ -1233,6 +1434,7 @@ const app = {
       this.renderExecutiveProducerRecommendation(data);
       this.log('Executive producer recommendation generated.', 'success');
       await this.loadProducerHistory();
+      await this.loadPipelineDaily();
       await this.loadGlobalAudit();
     } catch (err) {
       this.log(`Run executive producer failed: ${err.message}`, 'error');
@@ -1694,7 +1896,8 @@ const app = {
       reloadOpportunities = false,
       reloadProducer = true,
       reloadBriefs = true,
-      reloadCommandCenter = true
+      reloadCommandCenter = true,
+      reloadPipelineDaily = true
     } = options;
 
     await this.loadVideos();
@@ -1717,6 +1920,9 @@ const app = {
     }
     if (reloadCommandCenter) {
       await this.loadCommandCenter();
+    }
+    if (reloadPipelineDaily) {
+      await this.loadPipelineDaily();
     }
     if (this.state.selectedVideoId) {
       await this.selectVideo(this.state.selectedVideoId, {

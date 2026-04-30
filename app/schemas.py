@@ -477,3 +477,89 @@ class CommandCenterBriefItem(BaseModel):
 class ProductionBriefCreateResult(BaseModel):
     brief: ProductionBriefRead
     message: str
+
+
+class PipelineOpportunityItem(BaseModel):
+    id: int
+    topic: str
+    niche_lane: str
+    review_status: OpportunityReviewStatus
+    total_score: int
+    assigned_agent_id: int | None = None
+    assigned_agent: str | None = None
+    created_at: datetime
+
+
+class PipelineRecommendationItem(BaseModel):
+    recommendation_id: int
+    selected_opportunity_id: int | None = None
+    recommended_topic: str | None = None
+    niche_lane: str | None = None
+    assigned_agent: str | None = None
+    confidence_label: ProducerConfidenceLabel
+    created_at: datetime
+
+
+class PipelineBriefItem(BaseModel):
+    brief_id: int
+    opportunity_id: int
+    title: str
+    topic: str
+    status: ProductionBriefStatus
+    assigned_agent_id: int | None = None
+    assigned_agent: str | None = None
+    updated_at: datetime
+
+
+class PipelineVideoItem(BaseModel):
+    video_id: int
+    title: str
+    workflow_status: VideoStatus
+    publish_status: str
+    approved: bool
+    preview_rendered: bool
+    preview_reviewed: bool
+    updated_at: datetime
+    reason: str | None = None
+
+
+class PipelineSummaryCounts(BaseModel):
+    opportunities_to_review: int
+    producer_recommendations: int
+    briefs_to_review: int
+    approved_briefs_ready_to_promote: int
+    videos_needing_assets: int
+    videos_needing_preview: int
+    videos_needing_preview_review: int
+    videos_needing_compliance: int
+    videos_needing_manual_approval: int
+    videos_ready_to_package: int
+    videos_ready_for_payload: int
+    completed_payloads: int
+
+
+class PipelineNextStep(BaseModel):
+    key: str
+    label: str
+    reason: str
+    target_page: Literal["opportunities", "producer", "briefs", "content", "assets", "publishing", "compliance", "audit"]
+    video_id: int | None = None
+    opportunity_id: int | None = None
+    brief_id: int | None = None
+
+
+class DailyPipelineRead(BaseModel):
+    opportunities_to_review: list[PipelineOpportunityItem]
+    producer_recommendations: list[PipelineRecommendationItem]
+    briefs_to_review: list[PipelineBriefItem]
+    approved_briefs_ready_to_promote: list[PipelineBriefItem]
+    videos_needing_assets: list[PipelineVideoItem]
+    videos_needing_preview: list[PipelineVideoItem]
+    videos_needing_preview_review: list[PipelineVideoItem]
+    videos_needing_compliance: list[PipelineVideoItem]
+    videos_needing_manual_approval: list[PipelineVideoItem]
+    videos_ready_to_package: list[PipelineVideoItem]
+    videos_ready_for_payload: list[PipelineVideoItem]
+    completed_payloads: list[PipelineVideoItem]
+    summary_counts: PipelineSummaryCounts
+    next_step: PipelineNextStep
