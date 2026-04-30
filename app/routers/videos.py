@@ -30,6 +30,7 @@ from app.models import (
     Review,
     Video,
     VideoStatus,
+    VisualAssetPlan,
 )
 from app.schemas import (
     AssetPreview,
@@ -571,6 +572,9 @@ def build_preview_status(video: Video, preview_path: Path | None) -> PreviewStat
 def build_readiness(video: Video, db: Session) -> VideoReadiness:
     preview_path = sync_preview_state(video)
     assets_generated = len(video.assets) > 0
+    has_visual_plan = (
+        db.scalar(select(VisualAssetPlan.id).where(VisualAssetPlan.video_id == video.id).limit(1)) is not None
+    )
     preview_rendered = preview_path is not None
     preview_reviewed = bool(video.preview_reviewed) and preview_rendered
     review_approved = video.approved
@@ -588,6 +592,8 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
     blocking_reasons: list[str] = []
     if not assets_generated:
         blocking_reasons.append("Assets must be generated first")
+    if not has_visual_plan:
+        blocking_reasons.append("Visual asset plan should be created before preview render")
     if not preview_rendered:
         blocking_reasons.append("Draft preview must be rendered before packaging")
     if preview_rendered and not preview_reviewed:

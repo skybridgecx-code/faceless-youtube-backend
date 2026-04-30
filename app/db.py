@@ -33,6 +33,7 @@ def init_db() -> None:
     _apply_sqlite_video_opportunity_review_columns()
     _apply_sqlite_agent_system_columns()
     _apply_sqlite_production_brief_columns()
+    _apply_sqlite_visual_asset_factory_columns()
     _apply_sqlite_research_columns()
     _seed_default_agents_for_existing_channels()
 
@@ -244,6 +245,60 @@ def _apply_sqlite_research_columns() -> None:
             "top_pattern": "ALTER TABLE research_strategies ADD COLUMN top_pattern TEXT",
             "created_at": "ALTER TABLE research_strategies ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE research_strategies ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_visual_asset_factory_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "visual_asset_plans",
+        {
+            "video_id": "ALTER TABLE visual_asset_plans ADD COLUMN video_id INTEGER",
+            "brief_id": "ALTER TABLE visual_asset_plans ADD COLUMN brief_id INTEGER",
+            "source_type": "ALTER TABLE visual_asset_plans ADD COLUMN source_type TEXT DEFAULT 'video'",
+            "status": "ALTER TABLE visual_asset_plans ADD COLUMN status TEXT DEFAULT 'draft'",
+            "title": "ALTER TABLE visual_asset_plans ADD COLUMN title TEXT DEFAULT ''",
+            "thumbnail_prompt": "ALTER TABLE visual_asset_plans ADD COLUMN thumbnail_prompt TEXT DEFAULT ''",
+            "thumbnail_text": "ALTER TABLE visual_asset_plans ADD COLUMN thumbnail_text TEXT DEFAULT ''",
+            "motion_style": "ALTER TABLE visual_asset_plans ADD COLUMN motion_style TEXT DEFAULT ''",
+            "color_direction": "ALTER TABLE visual_asset_plans ADD COLUMN color_direction TEXT DEFAULT ''",
+            "plan_notes": "ALTER TABLE visual_asset_plans ADD COLUMN plan_notes TEXT",
+            "safety_notes": "ALTER TABLE visual_asset_plans ADD COLUMN safety_notes TEXT DEFAULT ''",
+            "ready_marked_at": "ALTER TABLE visual_asset_plans ADD COLUMN ready_marked_at DATETIME",
+            "created_at": "ALTER TABLE visual_asset_plans ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE visual_asset_plans ADD COLUMN updated_at DATETIME",
+        },
+    )
+    _apply_sqlite_additive_columns(
+        "visual_scenes",
+        {
+            "plan_id": "ALTER TABLE visual_scenes ADD COLUMN plan_id INTEGER",
+            "scene_number": "ALTER TABLE visual_scenes ADD COLUMN scene_number INTEGER DEFAULT 1",
+            "scene_title": "ALTER TABLE visual_scenes ADD COLUMN scene_title TEXT DEFAULT ''",
+            "narrative_beat": "ALTER TABLE visual_scenes ADD COLUMN narrative_beat TEXT DEFAULT ''",
+            "on_screen_text": "ALTER TABLE visual_scenes ADD COLUMN on_screen_text TEXT DEFAULT ''",
+            "image_prompt": "ALTER TABLE visual_scenes ADD COLUMN image_prompt TEXT DEFAULT ''",
+            "animation_prompt": "ALTER TABLE visual_scenes ADD COLUMN animation_prompt TEXT DEFAULT ''",
+            "b_roll_prompt": "ALTER TABLE visual_scenes ADD COLUMN b_roll_prompt TEXT DEFAULT ''",
+            "dashboard_demo_prompt": "ALTER TABLE visual_scenes ADD COLUMN dashboard_demo_prompt TEXT DEFAULT ''",
+            "safety_notes": "ALTER TABLE visual_scenes ADD COLUMN safety_notes TEXT DEFAULT ''",
+            "created_at": "ALTER TABLE visual_scenes ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE visual_scenes ADD COLUMN updated_at DATETIME",
+        },
+    )
+    _apply_sqlite_additive_columns(
+        "visual_asset_prompts",
+        {
+            "plan_id": "ALTER TABLE visual_asset_prompts ADD COLUMN plan_id INTEGER",
+            "scene_id": "ALTER TABLE visual_asset_prompts ADD COLUMN scene_id INTEGER",
+            "prompt_type": "ALTER TABLE visual_asset_prompts ADD COLUMN prompt_type TEXT DEFAULT ''",
+            "label": "ALTER TABLE visual_asset_prompts ADD COLUMN label TEXT DEFAULT ''",
+            "prompt_text": "ALTER TABLE visual_asset_prompts ADD COLUMN prompt_text TEXT DEFAULT ''",
+            "created_at": "ALTER TABLE visual_asset_prompts ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE visual_asset_prompts ADD COLUMN updated_at DATETIME",
         },
     )
 

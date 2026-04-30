@@ -636,6 +636,120 @@ class ProductionBriefCreateResult(BaseModel):
     message: str
 
 
+class VisualAssetPromptRead(BaseModel):
+    id: int
+    plan_id: int
+    scene_id: int | None = None
+    prompt_type: str
+    label: str
+    prompt_text: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VisualSceneRead(BaseModel):
+    id: int
+    plan_id: int
+    scene_number: int
+    scene_title: str
+    narrative_beat: str
+    on_screen_text: str
+    image_prompt: str
+    animation_prompt: str
+    b_roll_prompt: str
+    dashboard_demo_prompt: str
+    safety_notes: str
+    created_at: datetime
+    updated_at: datetime
+    prompts: list[VisualAssetPromptRead] = []
+
+    model_config = {"from_attributes": True}
+
+
+class VisualAssetPlanRead(BaseModel):
+    id: int
+    video_id: int | None = None
+    brief_id: int | None = None
+    source_type: str
+    status: str
+    title: str
+    thumbnail_prompt: str
+    thumbnail_text: str
+    motion_style: str
+    color_direction: str
+    plan_notes: str | None = None
+    safety_notes: str
+    ready_marked_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    scenes: list[VisualSceneRead] = []
+    prompts: list[VisualAssetPromptRead] = []
+
+    model_config = {"from_attributes": True}
+
+
+class VisualAssetPlanUpdate(BaseModel):
+    status: str | None = Field(default=None, max_length=40)
+    thumbnail_prompt: str | None = None
+    thumbnail_text: str | None = Field(default=None, max_length=120)
+    motion_style: str | None = Field(default=None, max_length=240)
+    color_direction: str | None = Field(default=None, max_length=240)
+    plan_notes: str | None = None
+    safety_notes: str | None = None
+
+    @field_validator(
+        "status",
+        "thumbnail_prompt",
+        "thumbnail_text",
+        "motion_style",
+        "color_direction",
+        "plan_notes",
+        "safety_notes",
+        mode="before",
+    )
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class VisualSceneUpdate(BaseModel):
+    scene_title: str | None = Field(default=None, max_length=200)
+    narrative_beat: str | None = None
+    on_screen_text: str | None = Field(default=None, max_length=180)
+    image_prompt: str | None = None
+    animation_prompt: str | None = None
+    b_roll_prompt: str | None = None
+    dashboard_demo_prompt: str | None = None
+    safety_notes: str | None = None
+
+    @field_validator(
+        "scene_title",
+        "narrative_beat",
+        "on_screen_text",
+        "image_prompt",
+        "animation_prompt",
+        "b_roll_prompt",
+        "dashboard_demo_prompt",
+        "safety_notes",
+        mode="before",
+    )
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
 class PipelineOpportunityItem(BaseModel):
     id: int
     topic: str
@@ -686,6 +800,7 @@ class PipelineSummaryCounts(BaseModel):
     briefs_to_review: int
     approved_briefs_ready_to_promote: int
     videos_needing_assets: int
+    videos_missing_visual_plans: int
     videos_needing_preview: int
     videos_needing_preview_review: int
     videos_needing_compliance: int
@@ -711,6 +826,7 @@ class DailyPipelineRead(BaseModel):
     briefs_to_review: list[PipelineBriefItem]
     approved_briefs_ready_to_promote: list[PipelineBriefItem]
     videos_needing_assets: list[PipelineVideoItem]
+    videos_missing_visual_plans: list[PipelineVideoItem]
     videos_needing_preview: list[PipelineVideoItem]
     videos_needing_preview_review: list[PipelineVideoItem]
     videos_needing_compliance: list[PipelineVideoItem]

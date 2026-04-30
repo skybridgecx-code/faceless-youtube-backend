@@ -1439,6 +1439,32 @@ body {
   overflow: auto;
 }
 
+.visual-plan-meta-grid {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.visual-scene-list {
+  display: grid;
+  gap: 10px;
+}
+
+.visual-scene-card {
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: #161616;
+  padding: 10px;
+}
+
+.visual-scene-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 .hidden {
   display: none !important;
 }

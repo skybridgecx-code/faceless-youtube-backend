@@ -195,6 +195,25 @@
 
             <div class="panel">
               <div class="panel-header">
+                <h2>Visual Asset Factory</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.refreshVisualPlanSection()">Refresh</button>
+                  <button class="btn" onclick="app.setActivePage('assets')">Open Assets</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="flow-card">
+                  <div class="flow-card-title">Status</div>
+                  <div class="meta-row"><span class="meta-label">Plans Created</span><span class="meta-value" id="visualPlansCreatedCount">0</span></div>
+                  <div class="meta-row"><span class="meta-label">Plans Ready for Generation</span><span class="meta-value" id="visualPlansReadyCount">0</span></div>
+                  <div class="meta-row"><span class="meta-label">Videos Missing Visual Plans</span><span class="meta-value" id="videosMissingVisualPlanCount">0</span></div>
+                  <div class="opportunity-note" style="margin-top:0.5rem;">Prompts only. No image/video files are auto-generated in this phase.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
                 <h2>Recent Activity</h2>
                 <div class="header-actions">
                   <button class="btn" onclick="app.setActivePage('audit')">Open Audit</button>
@@ -637,6 +656,49 @@
                     No rendered video preview yet.
                   </div>
                   <video id="previewPlayer" class="preview-player hidden" controls preload="metadata"></video>
+                </div>
+              </div>
+
+              <div class="panel" style="margin-top:0.8rem;">
+                <div class="panel-header">
+                  <h2>Visual Asset Plan</h2>
+                  <div class="header-actions">
+                    <button class="btn" onclick="app.createVisualPlanFromSelectedVideo()">Create Visual Plan</button>
+                    <button class="btn success" onclick="app.markSelectedVisualPlanReady()">Mark Plan Ready For Generation</button>
+                    <button class="btn" onclick="app.refreshVisualPlanSection()">Refresh</button>
+                  </div>
+                </div>
+                <div class="panel-body compact-body">
+                  <div class="meta-row">
+                    <span class="meta-label">Select Plan</span>
+                    <span class="meta-value">
+                      <select id="visualPlanSelect" class="form-select" onchange="app.setSelectedVisualPlan(this.value)">
+                        <option value="">No plans yet</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Status</span>
+                    <span class="meta-value" id="visualPlanStatus">No plan created</span>
+                  </div>
+                  <label class="agent-field">
+                    <span>Thumbnail Text</span>
+                    <input id="visualPlanThumbTextInput" type="text" maxlength="120" placeholder="Thumbnail text" />
+                  </label>
+                  <label class="agent-field">
+                    <span>Thumbnail Prompt</span>
+                    <textarea id="visualPlanThumbPromptInput" class="opportunity-input agent-textarea" rows="4" placeholder="Thumbnail prompt"></textarea>
+                  </label>
+                  <label class="agent-field">
+                    <span>Plan Notes</span>
+                    <textarea id="visualPlanNotesInput" class="opportunity-input agent-textarea" rows="3" placeholder="Plan notes"></textarea>
+                  </label>
+                  <div class="settings-actions">
+                    <button class="btn" onclick="app.saveSelectedVisualPlan()">Save Plan Notes</button>
+                  </div>
+                  <div id="visualPlanBody" style="margin-top:0.65rem;">
+                    <div class="empty-state">Select a video to view visual plans.</div>
+                  </div>
                 </div>
               </div>
 

@@ -18,6 +18,8 @@ const app = {
     opportunities: [],
     agents: [],
     briefs: [],
+    visualPlans: [],
+    selectedVisualPlanId: null,
     producerRecommendation: null,
     producerHistory: [],
     researchRuns: [],
@@ -47,6 +49,7 @@ const app = {
     await this.loadOpportunities();
     await this.loadAgents();
     await this.loadBriefs();
+    await this.loadVisualPlans();
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
     await this.loadResearchData();
@@ -122,6 +125,7 @@ const app = {
     }
     if (page === 'briefs') {
       this.loadBriefs();
+      this.loadVisualPlans();
     }
     if (page === 'pipeline') {
       this.loadPipelineDaily();
@@ -129,6 +133,10 @@ const app = {
     if (page === 'dashboard') {
       this.loadCommandCenter();
       this.loadPipelineDaily();
+      this.loadVisualPlans();
+    }
+    if (page === 'assets') {
+      this.loadVisualPlans();
     }
   },
 
@@ -143,6 +151,15 @@ const app = {
     
     logContainer.appendChild(entry);
     logContainer.scrollTop = logContainer.scrollHeight;
+  },
+
+  buildWriteHeaders(extraHeaders = {}) {
+    const headers = { ...extraHeaders };
+    const internalApiKey = window.localStorage?.getItem('internal_api_key') || '';
+    if (internalApiKey) {
+      headers['X-Internal-API-Key'] = internalApiKey;
+    }
+    return headers;
   },
 
   getSelectedVideo() {
@@ -246,6 +263,7 @@ const app = {
       this.state.videos = data;
       this.renderVideoList();
       this.updateKPIs();
+      this.renderDashboardVisualAssetStatus();
       if (this.state.pipelineSummary) {
         this.renderGuidedFlow(this.state.pipelineSummary);
       }
@@ -396,11 +414,35 @@ const app = {
       `Opportunities to review: ${counts.opportunities_to_review || 0}`,
       `Briefs to review: ${counts.briefs_to_review || 0}`,
       `Approved briefs ready to promote: ${counts.approved_briefs_ready_to_promote || 0}`,
+      `Videos missing visual plans: ${counts.videos_missing_visual_plans || 0}`,
       `Videos needing preview review: ${counts.videos_needing_preview_review || 0}`,
       `Videos needing compliance/manual approval: ${(counts.videos_needing_compliance || 0) + (counts.videos_needing_manual_approval || 0)}`,
       `Ready to package/payload: ${(counts.videos_ready_to_package || 0) + (counts.videos_ready_for_payload || 0)}`
     ];
     container.innerHTML = lines.map(line => `<div class="flow-item pending">• ${this.escapeHtml(line)}</div>`).join('');
+  },
+
+  renderDashboardVisualAssetStatus() {
+    const plansCreatedEl = document.getElementById('visualPlansCreatedCount');
+    const plansReadyEl = document.getElementById('visualPlansReadyCount');
+    const videosMissingEl = document.getElementById('videosMissingVisualPlanCount');
+    if (!plansCreatedEl || !plansReadyEl || !videosMissingEl) return;
+
+    const plans = Array.isArray(this.state.visualPlans) ? this.state.visualPlans : [];
+    const plansCreated = plans.length;
+    const plansReady = plans.filter(plan => plan.status === 'ready_for_generation').length;
+
+    const videoIdsWithPlans = new Set(
+      plans
+        .map(plan => Number(plan.video_id))
+        .filter(Number.isFinite)
+    );
+    const videos = Array.isArray(this.state.videos) ? this.state.videos : [];
+    const missingCount = videos.filter(video => video.status !== 'published' && !videoIdsWithPlans.has(Number(video.id))).length;
+
+    plansCreatedEl.textContent = String(plansCreated);
+    plansReadyEl.textContent = String(plansReady);
+    videosMissingEl.textContent = String(missingCount);
   },
 
   renderPipelineDaily(data) {
@@ -456,44 +498,50 @@ const app = {
         buttonLabel: 'Open Assets'
       },
       {
+        key: 'videos_missing_visual_plans',
+        title: '6. Videos Missing Visual Plans',
+        targetPage: 'assets',
+        buttonLabel: 'Create Visual Plan'
+      },
+      {
         key: 'videos_needing_preview',
-        title: '6. Videos Needing Preview Render',
+        title: '7. Videos Needing Preview Render',
         targetPage: 'assets',
         buttonLabel: 'Render Preview'
       },
       {
         key: 'videos_needing_preview_review',
-        title: '7. Videos Needing Preview Review',
+        title: '8. Videos Needing Preview Review',
         targetPage: 'assets',
         buttonLabel: 'Review Preview'
       },
       {
         key: 'videos_needing_compliance',
-        title: '8. Videos Needing Compliance',
+        title: '9. Videos Needing Compliance',
         targetPage: 'compliance',
         buttonLabel: 'Run Compliance'
       },
       {
         key: 'videos_needing_manual_approval',
-        title: '9. Videos Needing Manual Approval',
+        title: '10. Videos Needing Manual Approval',
         targetPage: 'compliance',
         buttonLabel: 'Manual Review'
       },
       {
         key: 'videos_ready_to_package',
-        title: '10. Videos Ready to Package',
+        title: '11. Videos Ready to Package',
         targetPage: 'assets',
         buttonLabel: 'Package Video'
       },
       {
         key: 'videos_ready_for_payload',
-        title: '11. Videos Ready for Payload',
+        title: '12. Videos Ready for Payload',
         targetPage: 'publishing',
         buttonLabel: 'Prepare Payload'
       },
       {
         key: 'completed_payloads',
-        title: '12. Completed Payloads',
+        title: '13. Completed Payloads',
         targetPage: 'audit',
         buttonLabel: 'Open Audit'
       }
@@ -1321,6 +1369,71 @@ const app = {
     }
   },
 
+  async createVisualPlanFromBrief(briefId) {
+    try {
+      const res = await fetch(`/visual-assets/from-brief/${briefId}`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create visual plan from brief');
+      }
+      this.state.selectedVisualPlanId = data.id;
+      this.log(`Created visual plan #${data.id} from brief #${briefId}.`, 'success');
+      await this.loadVisualPlans();
+      await this.loadGlobalAudit();
+      if (data.video_id) {
+        await this.selectVideo(data.video_id, { fetchAssets: true, clearCompliance: false });
+        this.setActivePage('assets');
+      }
+    } catch (err) {
+      this.log(`Create visual plan from brief failed: ${err.message}`, 'error');
+    }
+  },
+
+  async loadVisualPlans() {
+    try {
+      const res = await fetch('/visual-assets/plans?limit=300');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load visual plans');
+      }
+      this.state.visualPlans = Array.isArray(data) ? data : [];
+      this.renderDashboardVisualAssetStatus();
+      this.renderBriefs();
+      this.renderVisualPlanSection();
+      this.renderPipelineDaily(this.state.pipelineDaily);
+    } catch (err) {
+      this.log(`Error loading visual plans: ${err.message}`, 'error');
+      this.state.visualPlans = [];
+      this.renderDashboardVisualAssetStatus();
+      this.renderVisualPlanSection();
+    }
+  },
+
+  getVisualPlansForVideo(videoId) {
+    if (!videoId) return [];
+    return (this.state.visualPlans || []).filter(plan => Number(plan.video_id) === Number(videoId));
+  },
+
+  getVisualPlansForBrief(briefId) {
+    if (!briefId) return [];
+    return (this.state.visualPlans || []).filter(plan => Number(plan.brief_id) === Number(briefId));
+  },
+
+  getSelectedVisualPlan(videoId = null) {
+    const targetVideoId = videoId || this.state.selectedVideoId;
+    const plans = this.getVisualPlansForVideo(targetVideoId);
+    if (plans.length === 0) return null;
+    const selectedId = this.state.selectedVisualPlanId;
+    if (selectedId) {
+      const selected = plans.find(plan => Number(plan.id) === Number(selectedId));
+      if (selected) return selected;
+    }
+    return plans[0];
+  },
+
   async loadBriefs() {
     const container = document.getElementById('briefsList');
     if (!container) return;
@@ -1353,6 +1466,11 @@ const app = {
       const agentText = agent ? `${agent.name} (${agent.lane || 'lane n/a'})` : 'Unassigned agent';
       const status = this.escapeHtml(brief.status || 'draft');
       const promoteDisabled = brief.status !== 'approved';
+      const briefPlans = this.getVisualPlansForBrief(brief.id);
+      const latestBriefPlan = briefPlans[0];
+      const planStatusText = latestBriefPlan
+        ? `Plan #${latestBriefPlan.id} • ${latestBriefPlan.status} • ${latestBriefPlan.scenes?.length || 0} scenes`
+        : 'No visual plan yet';
       return `
         <article class="agent-card">
           <div class="agent-card-header">
@@ -1368,6 +1486,7 @@ const app = {
           <div class="meta-row"><span class="meta-label">Outline</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.outline || '-')}</span></div>
           <div class="meta-row"><span class="meta-label">Script Plan</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.script_plan || '-')}</span></div>
           <div class="meta-row"><span class="meta-label">B-Roll Plan</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.b_roll_plan || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Visual Plan</span><span class="meta-value">${this.escapeHtml(planStatusText)}</span></div>
           <div class="meta-row"><span class="meta-label">CTA</span><span class="meta-value">${this.escapeHtml(brief.cta || '-')}</span></div>
           <div class="meta-row"><span class="meta-label">Compliance Notes</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.compliance_notes || '-')}</span></div>
           <div class="meta-row"><span class="meta-label">Claims To Verify</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.claims_to_verify || '-')}</span></div>
@@ -1379,6 +1498,7 @@ const app = {
             <button class="btn" onclick="app.updateBriefStatus(${brief.id}, 'needs_revision')">Mark Needs Revision</button>
             <button class="btn success" onclick="app.updateBriefStatus(${brief.id}, 'approved')">Approve Brief</button>
             <button class="btn" onclick="app.updateBriefStatus(${brief.id}, 'draft')">Set Draft</button>
+            <button class="btn" onclick="app.createVisualPlanFromBrief(${brief.id})">Create Visual Plan</button>
             <button class="btn success" ${promoteDisabled ? 'disabled' : ''} onclick="app.promoteBriefToVideo(${brief.id})">Promote to Video</button>
           </div>
         </article>
@@ -2099,6 +2219,9 @@ const app = {
       this.clearComplianceResults();
     }
 
+    await this.loadVisualPlans();
+    this.renderVisualPlanSection();
+
     if (fetchAssets) {
       await this.loadAssets();
     }
@@ -2137,6 +2260,7 @@ const app = {
     this.renderPreviewStatus(null);
     this.clearComplianceResults();
     this.renderAssets();
+    this.renderVisualPlanSection();
     this.renderVideoAudit();
   },
 
@@ -2244,6 +2368,7 @@ const app = {
       reloadOpportunities = false,
       reloadProducer = true,
       reloadBriefs = true,
+      reloadVisualPlans = true,
       reloadCommandCenter = true,
       reloadPipelineDaily = true
     } = options;
@@ -2265,6 +2390,9 @@ const app = {
     }
     if (reloadBriefs) {
       await this.loadBriefs();
+    }
+    if (reloadVisualPlans) {
+      await this.loadVisualPlans();
     }
     if (reloadCommandCenter) {
       await this.loadCommandCenter();
@@ -2359,6 +2487,218 @@ const app = {
         <div class="asset-body" id="${bodyId}">${this.escapeHtml(selectedAsset.body)}</div>
       `;
     }
+  },
+
+  upsertVisualPlanInState(plan) {
+    if (!plan || !plan.id) return;
+    const existing = Array.isArray(this.state.visualPlans) ? this.state.visualPlans : [];
+    const next = existing.filter(item => Number(item.id) !== Number(plan.id));
+    next.unshift(plan);
+    this.state.visualPlans = next;
+  },
+
+  async createVisualPlanFromSelectedVideo() {
+    const selected = this.requireSelectedVideo('create visual plan');
+    if (!selected) return;
+    try {
+      const res = await fetch(`/visual-assets/from-video/${selected.id}`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create visual plan');
+      }
+      this.state.selectedVisualPlanId = data.id;
+      this.upsertVisualPlanInState(data);
+      this.renderVisualPlanSection();
+      this.renderBriefs();
+      this.renderDashboardVisualAssetStatus();
+      this.log(`Created visual plan #${data.id} (${data.scenes?.length || 0} scenes).`, 'success');
+      await this.loadGlobalAudit();
+      await this.loadPipelineDaily();
+    } catch (err) {
+      this.log(`Create visual plan failed: ${err.message}`, 'error');
+    }
+  },
+
+  async markSelectedVisualPlanReady() {
+    const plan = this.getSelectedVisualPlan();
+    if (!plan) {
+      this.log('No visual plan selected to mark ready.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch(`/visual-assets/plans/${plan.id}/mark-ready`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to mark plan ready');
+      }
+      this.upsertVisualPlanInState(data);
+      this.state.selectedVisualPlanId = data.id;
+      this.renderVisualPlanSection();
+      this.renderDashboardVisualAssetStatus();
+      this.log(`Visual plan #${data.id} marked ready for generation.`, 'success');
+      await this.loadPipelineDaily();
+    } catch (err) {
+      this.log(`Mark visual plan ready failed: ${err.message}`, 'error');
+    }
+  },
+
+  async saveSelectedVisualPlan() {
+    const plan = this.getSelectedVisualPlan();
+    if (!plan) {
+      this.log('No visual plan selected to save.', 'error');
+      return;
+    }
+    const planNotesEl = document.getElementById('visualPlanNotesInput');
+    const thumbPromptEl = document.getElementById('visualPlanThumbPromptInput');
+    const thumbTextEl = document.getElementById('visualPlanThumbTextInput');
+    const payload = {
+      plan_notes: planNotesEl?.value?.trim() || null,
+      thumbnail_prompt: thumbPromptEl?.value?.trim() || plan.thumbnail_prompt,
+      thumbnail_text: thumbTextEl?.value?.trim() || plan.thumbnail_text
+    };
+
+    try {
+      const res = await fetch(`/visual-assets/plans/${plan.id}`, {
+        method: 'PATCH',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to save visual plan');
+      }
+      this.upsertVisualPlanInState(data);
+      this.state.selectedVisualPlanId = data.id;
+      this.renderVisualPlanSection();
+      this.log(`Saved visual plan #${data.id}.`, 'success');
+    } catch (err) {
+      this.log(`Save visual plan failed: ${err.message}`, 'error');
+    }
+  },
+
+  async saveVisualScene(sceneId) {
+    const sceneTitle = document.getElementById(`visualSceneTitle-${sceneId}`)?.value?.trim() || '';
+    const onScreenText = document.getElementById(`visualSceneText-${sceneId}`)?.value?.trim() || '';
+    const imagePrompt = document.getElementById(`visualSceneImage-${sceneId}`)?.value?.trim() || '';
+    const animationPrompt = document.getElementById(`visualSceneAnimation-${sceneId}`)?.value?.trim() || '';
+    const bRollPrompt = document.getElementById(`visualSceneBRoll-${sceneId}`)?.value?.trim() || '';
+    const demoPrompt = document.getElementById(`visualSceneDemo-${sceneId}`)?.value?.trim() || '';
+    const safetyNotes = document.getElementById(`visualSceneSafety-${sceneId}`)?.value?.trim() || '';
+
+    try {
+      const res = await fetch(`/visual-assets/scenes/${sceneId}`, {
+        method: 'PATCH',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          scene_title: sceneTitle,
+          on_screen_text: onScreenText,
+          image_prompt: imagePrompt,
+          animation_prompt: animationPrompt,
+          b_roll_prompt: bRollPrompt,
+          dashboard_demo_prompt: demoPrompt,
+          safety_notes: safetyNotes
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update scene');
+      }
+      this.upsertVisualPlanInState(data);
+      this.state.selectedVisualPlanId = data.id;
+      this.renderVisualPlanSection();
+      this.log(`Saved visual scene #${sceneId}.`, 'success');
+    } catch (err) {
+      this.log(`Save visual scene failed: ${err.message}`, 'error');
+    }
+  },
+
+  async refreshVisualPlanSection() {
+    await this.loadVisualPlans();
+    this.renderVisualPlanSection();
+  },
+
+  setSelectedVisualPlan(planId) {
+    this.state.selectedVisualPlanId = Number(planId) || null;
+    this.renderVisualPlanSection();
+  },
+
+  renderVisualPlanSection() {
+    const selectEl = document.getElementById('visualPlanSelect');
+    const statusEl = document.getElementById('visualPlanStatus');
+    const bodyEl = document.getElementById('visualPlanBody');
+    const notesEl = document.getElementById('visualPlanNotesInput');
+    const thumbPromptEl = document.getElementById('visualPlanThumbPromptInput');
+    const thumbTextEl = document.getElementById('visualPlanThumbTextInput');
+    if (!selectEl || !statusEl || !bodyEl || !notesEl || !thumbPromptEl || !thumbTextEl) return;
+
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      selectEl.innerHTML = '<option value=\"\">Select a video first</option>';
+      statusEl.textContent = 'No video selected';
+      bodyEl.innerHTML = '<div class=\"empty-state\">Select a video to view visual asset plans.</div>';
+      notesEl.value = '';
+      thumbPromptEl.value = '';
+      thumbTextEl.value = '';
+      return;
+    }
+
+    const plans = this.getVisualPlansForVideo(selected.id);
+    if (plans.length === 0) {
+      selectEl.innerHTML = '<option value=\"\">No plans yet</option>';
+      statusEl.textContent = 'No plan created';
+      bodyEl.innerHTML = '<div class=\"empty-state\">No visual plan for this video yet. Create one to start scene-by-scene prompt editing.</div>';
+      notesEl.value = '';
+      thumbPromptEl.value = '';
+      thumbTextEl.value = '';
+      return;
+    }
+
+    const selectedPlan = this.getSelectedVisualPlan(selected.id);
+    if (!selectedPlan) return;
+    this.state.selectedVisualPlanId = selectedPlan.id;
+
+    selectEl.innerHTML = plans.map(plan => `
+      <option value=\"${Number(plan.id)}\" ${Number(plan.id) === Number(selectedPlan.id) ? 'selected' : ''}>
+        Plan #${Number(plan.id)} • ${this.escapeHtml(plan.status || 'draft')} • ${this.escapeHtml(plan.source_type || 'video')}
+      </option>
+    `).join('');
+    statusEl.textContent = `${selectedPlan.status || 'draft'} • ${selectedPlan.scenes?.length || 0} scenes`;
+    notesEl.value = selectedPlan.plan_notes || '';
+    thumbPromptEl.value = selectedPlan.thumbnail_prompt || '';
+    thumbTextEl.value = selectedPlan.thumbnail_text || '';
+
+    const scenes = Array.isArray(selectedPlan.scenes) ? [...selectedPlan.scenes].sort((a, b) => (a.scene_number || 0) - (b.scene_number || 0)) : [];
+    bodyEl.innerHTML = `
+      <div class=\"visual-plan-meta-grid\">
+        <div class=\"meta-row\"><span class=\"meta-label\">Motion Style</span><span class=\"meta-value\">${this.escapeHtml(selectedPlan.motion_style || '-')}</span></div>
+        <div class=\"meta-row\"><span class=\"meta-label\">Color Direction</span><span class=\"meta-value\">${this.escapeHtml(selectedPlan.color_direction || '-')}</span></div>
+        <div class=\"meta-row\"><span class=\"meta-label\">Safety Notes</span><span class=\"meta-value pre-wrap\">${this.escapeHtml(selectedPlan.safety_notes || '-')}</span></div>
+      </div>
+      <div class=\"visual-scene-list\">
+        ${scenes.map(scene => `
+          <article class=\"visual-scene-card\">
+            <div class=\"visual-scene-head\">
+              <div class=\"video-title-main\">Scene ${Number(scene.scene_number)}: ${this.escapeHtml(scene.scene_title || 'Untitled')}</div>
+              <button class=\"btn\" onclick=\"app.saveVisualScene(${Number(scene.id)})\">Save Scene</button>
+            </div>
+            <div class=\"meta-row\"><span class=\"meta-label\">Narrative Beat</span><span class=\"meta-value pre-wrap\">${this.escapeHtml(scene.narrative_beat || '-')}</span></div>
+            <label class=\"agent-field\"><span>Scene Title</span><input id=\"visualSceneTitle-${Number(scene.id)}\" value=\"${this.escapeHtml(scene.scene_title || '')}\" /></label>
+            <label class=\"agent-field\"><span>On-Screen Text</span><textarea id=\"visualSceneText-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"2\">${this.escapeHtml(scene.on_screen_text || '')}</textarea></label>
+            <label class=\"agent-field\"><span>Image Prompt</span><textarea id=\"visualSceneImage-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"4\">${this.escapeHtml(scene.image_prompt || '')}</textarea></label>
+            <label class=\"agent-field\"><span>Animation Prompt</span><textarea id=\"visualSceneAnimation-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"4\">${this.escapeHtml(scene.animation_prompt || '')}</textarea></label>
+            <label class=\"agent-field\"><span>B-Roll Prompt</span><textarea id=\"visualSceneBRoll-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"3\">${this.escapeHtml(scene.b_roll_prompt || '')}</textarea></label>
+            <label class=\"agent-field\"><span>Dashboard / Demo Shot Prompt</span><textarea id=\"visualSceneDemo-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"3\">${this.escapeHtml(scene.dashboard_demo_prompt || '')}</textarea></label>
+            <label class=\"agent-field\"><span>Safety Notes</span><textarea id=\"visualSceneSafety-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"2\">${this.escapeHtml(scene.safety_notes || '')}</textarea></label>
+          </article>
+        `).join('')}
+      </div>
+    `;
   },
 
   openReviewModal() {

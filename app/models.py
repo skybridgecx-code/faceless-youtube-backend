@@ -121,6 +121,7 @@ class Video(Base):
     reviews: Mapped[list["Review"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     publish_records: Mapped[list["PublishRecord"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="video", cascade="all, delete-orphan")
+    visual_plans: Mapped[list["VisualAssetPlan"]] = relationship(back_populates="video", cascade="all, delete-orphan")
 
 
 class ContentAsset(Base):
@@ -269,6 +270,69 @@ class ProductionBrief(Base):
     operator_review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    visual_plans: Mapped[list["VisualAssetPlan"]] = relationship(back_populates="brief", cascade="all, delete-orphan")
+
+
+class VisualAssetPlan(Base):
+    __tablename__ = "visual_asset_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True, index=True)
+    brief_id: Mapped[int | None] = mapped_column(ForeignKey("production_briefs.id"), nullable=True, index=True)
+    source_type: Mapped[str] = mapped_column(String(20), default="video", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="draft", index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    thumbnail_prompt: Mapped[str] = mapped_column(Text)
+    thumbnail_text: Mapped[str] = mapped_column(String(120))
+    motion_style: Mapped[str] = mapped_column(String(240))
+    color_direction: Mapped[str] = mapped_column(String(240))
+    plan_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    safety_notes: Mapped[str] = mapped_column(Text)
+    ready_marked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    video: Mapped[Video | None] = relationship(back_populates="visual_plans")
+    brief: Mapped[ProductionBrief | None] = relationship(back_populates="visual_plans")
+    scenes: Mapped[list["VisualScene"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+    prompts: Mapped[list["VisualAssetPrompt"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+
+
+class VisualScene(Base):
+    __tablename__ = "visual_scenes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("visual_asset_plans.id"), index=True)
+    scene_number: Mapped[int] = mapped_column(Integer, index=True)
+    scene_title: Mapped[str] = mapped_column(String(200))
+    narrative_beat: Mapped[str] = mapped_column(Text)
+    on_screen_text: Mapped[str] = mapped_column(String(180))
+    image_prompt: Mapped[str] = mapped_column(Text)
+    animation_prompt: Mapped[str] = mapped_column(Text)
+    b_roll_prompt: Mapped[str] = mapped_column(Text)
+    dashboard_demo_prompt: Mapped[str] = mapped_column(Text)
+    safety_notes: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plan: Mapped[VisualAssetPlan] = relationship(back_populates="scenes")
+    prompts: Mapped[list["VisualAssetPrompt"]] = relationship(back_populates="scene", cascade="all, delete-orphan")
+
+
+class VisualAssetPrompt(Base):
+    __tablename__ = "visual_asset_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("visual_asset_plans.id"), index=True)
+    scene_id: Mapped[int | None] = mapped_column(ForeignKey("visual_scenes.id"), nullable=True, index=True)
+    prompt_type: Mapped[str] = mapped_column(String(60), index=True)
+    label: Mapped[str] = mapped_column(String(200))
+    prompt_text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plan: Mapped[VisualAssetPlan] = relationship(back_populates="prompts")
+    scene: Mapped[VisualScene | None] = relationship(back_populates="prompts")
 
 
 class ResearchRun(Base):

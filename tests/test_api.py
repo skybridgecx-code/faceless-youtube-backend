@@ -878,6 +878,98 @@ def test_brief_audit_events_written_for_create_review_promote() -> None:
     assert "production_brief_promoted_to_video" in event_types
 
 
+def test_create_visual_plan_from_brief() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Brief Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Faceless YouTube visual workflow",
+            "niche_lane": "faceless YouTube / creator automation",
+            "audience": "creator operators",
+            "monetization_path": "templates + affiliates",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "shortlisted"}).status_code == 200
+    brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+
+    response = client.post(f"/visual-assets/from-brief/{brief['id']}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["brief_id"] == brief["id"]
+    assert payload["thumbnail_prompt"]
+    assert 6 <= len(payload["scenes"]) <= 10
+    first_scene = payload["scenes"][0]
+    assert first_scene["image_prompt"]
+    assert first_scene["animation_prompt"]
+
+
+def test_create_visual_plan_from_video_does_not_approve_or_generate_assets() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Video Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Plan Video"}).json()
+
+    response = client.post(f"/visual-assets/from-video/{video['id']}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["video_id"] == video["id"]
+    assert payload["thumbnail_prompt"]
+    assert 6 <= len(payload["scenes"]) <= 10
+
+    refreshed_video = client.get(f"/videos/{video['id']}").json()
+    assert refreshed_video["approved"] is False
+    assert refreshed_video["status"] == "idea"
+
+    assets = client.get(f"/videos/{video['id']}/assets").json()
+    assert assets == []
+    readiness = client.get(f"/videos/{video['id']}/readiness").json()
+    assert readiness["assets_generated"] is False
+
+
+def test_visual_plan_mark_ready_changes_only_plan_status() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Ready Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Ready Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+
+    mark_ready = client.post(f"/visual-assets/plans/{plan['id']}/mark-ready")
+    assert mark_ready.status_code == 200
+    ready_plan = mark_ready.json()
+    assert ready_plan["status"] == "ready_for_generation"
+    assert ready_plan["ready_marked_at"] is not None
+
+    refreshed_video = client.get(f"/videos/{video['id']}").json()
+    assert refreshed_video["approved"] is False
+    assert refreshed_video["status"] == "idea"
+    assert client.get(f"/videos/{video['id']}/assets").json() == []
+
+
+def test_visual_asset_write_routes_require_internal_api_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    channel_id = client.post(
+        "/channels",
+        json={"name": "Visual Key Channel"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()["id"]
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Visual Key Video"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()
+
+    denied = client.post(f"/visual-assets/from-video/{video['id']}")
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        f"/visual-assets/from-video/{video['id']}",
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
 def test_command_center_includes_briefs_queues() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Command Center Brief Queue Channel"}).json()["id"]
@@ -1530,6 +1622,7 @@ def test_pipeline_daily_empty_state() -> None:
     assert body["briefs_to_review"] == []
     assert body["approved_briefs_ready_to_promote"] == []
     assert body["videos_needing_assets"] == []
+    assert body["videos_missing_visual_plans"] == []
     assert body["videos_needing_preview"] == []
     assert body["videos_needing_preview_review"] == []
     assert body["videos_needing_compliance"] == []
@@ -1560,6 +1653,23 @@ def test_pipeline_daily_includes_opportunities_to_review() -> None:
     body = response.json()
     topics = {item["topic"] for item in body["opportunities_to_review"]}
     assert "Best AI tools for small business owners" in topics
+
+
+def test_pipeline_daily_surfaces_missing_visual_plan_before_preview() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Visual Plan Gate Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Visual Plan"}).json()
+    video_id = video["id"]
+
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+
+    response = client.get("/pipeline/daily")
+    assert response.status_code == 200
+    body = response.json()
+    missing_ids = {item["video_id"] for item in body["videos_missing_visual_plans"]}
+    assert video_id in missing_ids
+    assert video_id not in {item["video_id"] for item in body["videos_needing_preview"]}
 
 
 def test_pipeline_daily_includes_briefs_review_and_approved_buckets() -> None:
@@ -1606,21 +1716,25 @@ def test_pipeline_daily_video_stage_buckets() -> None:
     needs_preview = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Preview"}).json()
     assert client.post(f"/videos/{needs_preview['id']}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{needs_preview['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{needs_preview['id']}").status_code == 200
 
     needs_preview_review = client.post("/videos", json={"channel_id": channel_id, "title": "Needs Preview Review"}).json()
     assert client.post(f"/videos/{needs_preview_review['id']}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{needs_preview_review['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{needs_preview_review['id']}").status_code == 200
     _write_real_preview_file(needs_preview_review["id"])
 
     ready_to_package = client.post("/videos", json={"channel_id": channel_id, "title": "Ready To Package"}).json()
     assert client.post(f"/videos/{ready_to_package['id']}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{ready_to_package['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{ready_to_package['id']}").status_code == 200
     _write_real_preview_file(ready_to_package["id"])
     assert client.post(f"/videos/{ready_to_package['id']}/preview/review", json={"reviewed": True}).status_code == 200
 
     ready_for_payload = client.post("/videos", json={"channel_id": channel_id, "title": "Ready For Payload"}).json()
     assert client.post(f"/videos/{ready_for_payload['id']}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{ready_for_payload['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{ready_for_payload['id']}").status_code == 200
     _write_real_preview_file(ready_for_payload["id"])
     assert client.post(f"/videos/{ready_for_payload['id']}/preview/review", json={"reviewed": True}).status_code == 200
     assert client.post(f"/videos/{ready_for_payload['id']}/package").status_code == 200
@@ -1628,6 +1742,7 @@ def test_pipeline_daily_video_stage_buckets() -> None:
     completed_payload = client.post("/videos", json={"channel_id": channel_id, "title": "Completed Payload"}).json()
     assert client.post(f"/videos/{completed_payload['id']}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{completed_payload['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{completed_payload['id']}").status_code == 200
     _write_real_preview_file(completed_payload["id"])
     assert client.post(f"/videos/{completed_payload['id']}/preview/review", json={"reviewed": True}).status_code == 200
     assert client.post(f"/videos/{completed_payload['id']}/package").status_code == 200
@@ -1655,6 +1770,7 @@ def test_pipeline_daily_needing_preview_is_not_completed_payload() -> None:
 
     assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{video_id}").status_code == 200
 
     db = SessionLocal()
     try:
@@ -1683,6 +1799,7 @@ def test_pipeline_daily_completed_payload_only_after_prior_blockers_cleared() ->
 
     assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
     assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{video_id}").status_code == 200
 
     first = client.get("/pipeline/daily")
     assert first.status_code == 200

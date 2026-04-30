@@ -14,8 +14,20 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db, init_db
-from app.models import AuditEvent, PublishRecord, Video, VideoStatus
-from app.routers import agents, channels, command_center, executive_producer, opportunities, pipeline, production_briefs, publish, research, videos
+from app.models import AuditEvent, PublishRecord, Video, VideoStatus, VisualAssetPlan
+from app.routers import (
+    agents,
+    channels,
+    command_center,
+    executive_producer,
+    opportunities,
+    pipeline,
+    production_briefs,
+    publish,
+    research,
+    videos,
+    visual_assets,
+)
 from app.security import InMemoryRateLimiter, auth_error_payload, check_internal_api_key, client_ip, is_ai_cost_route, is_public_path, needs_auth
 from app.schemas import AuditEventRead, PipelineActionItem, PipelineSummary, VideoRead
 
@@ -96,6 +108,7 @@ app.include_router(command_center.router)
 app.include_router(production_briefs.router)
 app.include_router(pipeline.router)
 app.include_router(research.router)
+app.include_router(visual_assets.router)
 
 
 def has_preview_file(video: Video) -> bool:
@@ -153,6 +166,11 @@ def get_audit_events(
 @app.get("/pipeline/summary", response_model=PipelineSummary)
 def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
     all_videos = list(db.scalars(select(Video)))
+    visual_plan_video_ids = {
+        video_id
+        for video_id in db.scalars(select(VisualAssetPlan.video_id).where(VisualAssetPlan.video_id.is_not(None)))
+        if video_id is not None
+    }
 
     status_counts: dict[str, int] = {}
     publish_status_counts: dict[str, int] = {}
@@ -204,6 +222,20 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
             continue
 
         preview_exists = has_preview_file(video)
+        has_visual_plan = video.id in visual_plan_video_ids
+
+        if video.approved and not has_visual_plan:
+            action_queue.append(
+                PipelineActionItem(
+                    video_id=video.id,
+                    title=video.title,
+                    workflow_status=video.status.value,
+                    publish_status=video.publish_status,
+                    reason="Visual plan missing",
+                    suggested_next_action="Create visual plan",
+                )
+            )
+            continue
 
         if video.approved and not preview_exists:
             action_queue.append(
@@ -283,6 +315,7 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
         "Video is blocked": 0,
         "Assets generated but need review": 1,
         "Generated but not approved": 1,
+        "Visual plan missing": 2,
         "Preview not available yet": 2,
         "Preview ready but not reviewed": 2,
         "Approved but not packaged": 3,
