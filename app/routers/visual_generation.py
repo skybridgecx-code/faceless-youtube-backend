@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
-from app.models import VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
+from app.models import Video, VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
 from app.schemas import (
     VisualGeneratedAssetRead,
     VisualGenerationJobRead,
@@ -18,6 +18,7 @@ from app.schemas import (
     VisualGenerationRegisterOutputRequest,
 )
 from app.services.audit import log_audit_event
+from app.services.preview_visuals import build_preview_visual_manifest
 from app.services.visual_generation import (
     build_provider_payload,
     build_scene_context,
@@ -349,3 +350,11 @@ def get_visual_generated_asset(asset_id: int, db: Session = Depends(get_db)) -> 
     if not row:
         raise HTTPException(status_code=404, detail="Visual generated asset not found")
     return VisualGeneratedAssetRead.model_validate(row)
+
+
+@router.get("/preview-assets/videos/{video_id}")
+def get_video_preview_visual_asset_manifest(video_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    video = db.get(Video, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return build_preview_visual_manifest(db, video)
