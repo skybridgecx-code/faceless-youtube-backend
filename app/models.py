@@ -33,6 +33,14 @@ class AssetType(str, Enum):
     package_manifest = "package_manifest"
 
 
+class OpportunityReviewStatus(str, Enum):
+    unreviewed = "unreviewed"
+    shortlisted = "shortlisted"
+    rejected = "rejected"
+    needs_more_research = "needs_more_research"
+    approved_for_video = "approved_for_video"
+
+
 class Channel(Base):
     __tablename__ = "channels"
 
@@ -163,6 +171,11 @@ class VideoOpportunity(Base):
     recommended_cta: Mapped[str] = mapped_column(String(240), default="Comment your workflow bottleneck")
     assigned_agent: Mapped[str] = mapped_column(String(120), default="Opportunity Research Agent")
     compliance_risk_note: Mapped[str] = mapped_column(Text, default="Estimate only. Run compliance checks after assets.")
+    review_status: Mapped[str] = mapped_column(String(40), default=OpportunityReviewStatus.unreviewed.value, index=True)
+    operator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     promoted_video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True)
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

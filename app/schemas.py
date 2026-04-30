@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.models import AssetType, ContentType, VideoStatus
+from app.models import AssetType, ContentType, OpportunityReviewStatus, VideoStatus
 
 
 class ChannelCreate(BaseModel):
@@ -296,6 +296,11 @@ class OpportunityRead(BaseModel):
     recommended_cta: str
     assigned_agent: str
     compliance_risk_note: str
+    review_status: OpportunityReviewStatus = OpportunityReviewStatus.unreviewed
+    operator_notes: str | None = None
+    rejection_reason: str | None = None
+    decision_summary: str | None = None
+    reviewed_at: datetime | None = None
     promoted_video_id: int | None = None
     promoted_at: datetime | None = None
     scored_at: datetime | None = None
@@ -303,3 +308,10 @@ class OpportunityRead(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class OpportunityReviewUpdate(BaseModel):
+    review_status: OpportunityReviewStatus
+    operator_notes: str | None = None
+    rejection_reason: str | None = None
+    decision_summary: str | None = None

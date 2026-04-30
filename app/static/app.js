@@ -462,7 +462,7 @@ const app = {
     const tableBody = document.getElementById('opportunityList');
     if (!tableBody) return;
     try {
-      const res = await fetch('/opportunities');
+      const res = await fetch('/opportunities/review-queue?limit=200');
       const data = await res.json().catch(() => ([]));
       if (!res.ok) {
         throw new Error(data.detail || 'Failed to load opportunities');
@@ -471,7 +471,7 @@ const app = {
       this.renderOpportunities();
     } catch (err) {
       this.log(`Error loading opportunities: ${err.message}`, 'error');
-      tableBody.innerHTML = '<tr><td colspan="6" class="table-empty">Failed to load opportunities.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="7" class="table-empty">Failed to load opportunities.</td></tr>';
       this.renderBestOpportunity(null);
     }
   },
@@ -483,7 +483,7 @@ const app = {
     this.renderBestOpportunity(items.length > 0 ? items[0] : null);
 
     if (items.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="6" class="table-empty">No opportunities yet.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="7" class="table-empty">No opportunities yet.</td></tr>';
       return;
     }
 
@@ -493,18 +493,40 @@ const app = {
           <div class="video-title-main">${this.escapeHtml(item.topic)}</div>
           <div class="video-meta-line">${this.escapeHtml(item.niche_lane || '—')} • ${this.escapeHtml(item.audience || '—')}</div>
         </td>
+        <td>
+          <span class="video-status ${this.escapeHtml(item.review_status || 'unreviewed')}">${this.escapeHtml(this.formatReviewStatus(item.review_status))}</span>
+        </td>
         <td><strong>${this.escapeHtml(String(item.score?.total_score ?? '-'))}</strong></td>
-        <td>${this.escapeHtml(item.expected_monetization_path || item.monetization_path || '—')}</td>
-        <td>${this.escapeHtml(item.assigned_agent || '—')}</td>
+        <td>
+          <div>${this.escapeHtml(item.expected_monetization_path || item.monetization_path || '—')}</div>
+          <div class="video-meta-line">${this.escapeHtml(item.assigned_agent || '—')}</div>
+        </td>
+        <td>
+          <textarea class="opportunity-input" id="oppOperatorNotes-${item.id}" rows="2" placeholder="Operator notes">${this.escapeHtml(item.operator_notes || '')}</textarea>
+          <textarea class="opportunity-input" id="oppDecisionSummary-${item.id}" rows="2" placeholder="Decision summary">${this.escapeHtml(item.decision_summary || '')}</textarea>
+          <textarea class="opportunity-input ${item.review_status === 'rejected' ? '' : 'hidden'}" id="oppRejectionReason-${item.id}" rows="2" placeholder="Rejection reason">${this.escapeHtml(item.rejection_reason || '')}</textarea>
+        </td>
         <td>${item.promoted_video_id ? `#${item.promoted_video_id}` : '—'}</td>
         <td>
           <div class="row-actions">
             <button class="btn" onclick="app.scoreOpportunity(${item.id})">Score Opportunity</button>
-            <button class="btn success" onclick="app.promoteOpportunity(${item.id})">Promote to Video</button>
+            <button class="btn" onclick="app.updateOpportunityReview(${item.id}, 'shortlisted')">Shortlist</button>
+            <button class="btn" onclick="app.updateOpportunityReview(${item.id}, 'needs_more_research')">Needs More Research</button>
+            <button class="btn danger" onclick="app.updateOpportunityReview(${item.id}, 'rejected')">Reject</button>
+            <button class="btn success" onclick="app.updateOpportunityReview(${item.id}, 'approved_for_video')">Approve for Video</button>
+            <button class="btn success" ${item.review_status === 'approved_for_video' ? '' : 'disabled'} onclick="app.promoteOpportunity(${item.id})">Promote to Video</button>
           </div>
+          ${item.review_status === 'approved_for_video'
+            ? '<div class="opportunity-help-text">Ready for promotion.</div>'
+            : '<div class="opportunity-help-text">Promotion blocked: approve for video first.</div>'}
         </td>
       </tr>
     `).join('');
+  },
+
+  formatReviewStatus(status) {
+    const label = (status || 'unreviewed').replaceAll('_', ' ').trim();
+    return label.charAt(0).toUpperCase() + label.slice(1);
   },
 
   renderBestOpportunity(item) {
@@ -516,8 +538,9 @@ const app = {
     const ctaEl = document.getElementById('oppBestCta');
     const agentEl = document.getElementById('oppBestAgent');
     const complianceEl = document.getElementById('oppBestCompliance');
+    const reviewStatusEl = document.getElementById('oppBestReviewStatus');
     const scoreGridEl = document.getElementById('oppScoreBreakdown');
-    if (!topicEl || !scoreEl || !monetizationEl || !titleEl || !thumbEl || !ctaEl || !agentEl || !complianceEl || !scoreGridEl) {
+    if (!topicEl || !scoreEl || !monetizationEl || !titleEl || !thumbEl || !ctaEl || !agentEl || !complianceEl || !reviewStatusEl || !scoreGridEl) {
       return;
     }
 
@@ -530,6 +553,8 @@ const app = {
       ctaEl.textContent = '-';
       agentEl.textContent = '-';
       complianceEl.textContent = '-';
+      reviewStatusEl.textContent = 'unreviewed';
+      reviewStatusEl.className = 'video-status unreviewed';
       scoreGridEl.innerHTML = '<div class="empty-state" style="height:auto; padding:0.75rem;">Add an opportunity to see scoring.</div>';
       return;
     }
@@ -542,6 +567,8 @@ const app = {
     ctaEl.textContent = item.recommended_cta || '-';
     agentEl.textContent = item.assigned_agent || '-';
     complianceEl.textContent = item.compliance_risk_note || '-';
+    reviewStatusEl.textContent = this.formatReviewStatus(item.review_status);
+    reviewStatusEl.className = `video-status ${this.escapeHtml(item.review_status || 'unreviewed')}`;
 
     const score = item.score || {};
     const rows = [
@@ -627,7 +654,50 @@ const app = {
     }
   },
 
+  async updateOpportunityReview(opportunityId, reviewStatus) {
+    const item = (this.state.opportunities || []).find(opportunity => opportunity.id === opportunityId);
+    if (!item) {
+      this.log('Opportunity not found in current queue.', 'error');
+      return;
+    }
+
+    const operatorNotes = document.getElementById(`oppOperatorNotes-${opportunityId}`)?.value?.trim() || null;
+    const decisionSummary = document.getElementById(`oppDecisionSummary-${opportunityId}`)?.value?.trim() || null;
+    const rejectionReasonEl = document.getElementById(`oppRejectionReason-${opportunityId}`);
+    const rejectionReason = rejectionReasonEl?.value?.trim() || null;
+
+    if (rejectionReasonEl) {
+      rejectionReasonEl.classList.toggle('hidden', reviewStatus !== 'rejected');
+    }
+
+    try {
+      const res = await fetch(`/opportunities/${opportunityId}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          review_status: reviewStatus,
+          operator_notes: operatorNotes,
+          decision_summary: decisionSummary,
+          rejection_reason: reviewStatus === 'rejected' ? rejectionReason : null
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update opportunity review');
+      }
+      this.log(`Opportunity review updated: ${data.topic} -> ${this.formatReviewStatus(data.review_status)}.`, 'success');
+      await this.loadOpportunities();
+    } catch (err) {
+      this.log(`Review update failed: ${err.message}`, 'error');
+    }
+  },
+
   async promoteOpportunity(opportunityId) {
+    const item = (this.state.opportunities || []).find(opportunity => opportunity.id === opportunityId);
+    if (item && item.review_status !== 'approved_for_video') {
+      this.log('Promotion blocked: opportunity must be approved for video first.', 'error');
+      return;
+    }
     try {
       const res = await fetch(`/opportunities/${opportunityId}/promote-to-video`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));

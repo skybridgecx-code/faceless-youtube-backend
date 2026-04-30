@@ -8,11 +8,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Channel, Video, VideoOpportunity, VideoStatus
-from app.schemas import OpportunityCreate, OpportunityRead, OpportunityScoreBreakdown, VideoRead
+from app.models import Channel, OpportunityReviewStatus, Video, VideoOpportunity, VideoStatus
+from app.schemas import (
+    OpportunityCreate,
+    OpportunityRead,
+    OpportunityReviewUpdate,
+    OpportunityScoreBreakdown,
+    VideoRead,
+)
 from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
+
+REVIEW_STATUS_PRIORITY = {
+    OpportunityReviewStatus.shortlisted.value: 0,
+    OpportunityReviewStatus.needs_more_research.value: 1,
+    OpportunityReviewStatus.unreviewed.value: 2,
+    OpportunityReviewStatus.approved_for_video.value: 3,
+    OpportunityReviewStatus.rejected.value: 4,
+}
 
 
 def clamp_score(value: int) -> int:
@@ -166,6 +180,11 @@ def serialize_opportunity(opportunity: VideoOpportunity) -> OpportunityRead:
         recommended_cta=opportunity.recommended_cta,
         assigned_agent=opportunity.assigned_agent,
         compliance_risk_note=opportunity.compliance_risk_note,
+        review_status=OpportunityReviewStatus(opportunity.review_status),
+        operator_notes=opportunity.operator_notes,
+        rejection_reason=opportunity.rejection_reason,
+        decision_summary=opportunity.decision_summary,
+        reviewed_at=opportunity.reviewed_at,
         promoted_video_id=opportunity.promoted_video_id,
         promoted_at=opportunity.promoted_at,
         scored_at=opportunity.scored_at,
@@ -202,6 +221,27 @@ def list_top_opportunities(
     return [serialize_opportunity(row) for row in rows]
 
 
+@router.get("/review-queue", response_model=list[OpportunityRead])
+def list_review_queue(
+    review_status: OpportunityReviewStatus | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[OpportunityRead]:
+    stmt = select(VideoOpportunity)
+    if review_status is not None:
+        stmt = stmt.where(VideoOpportunity.review_status == review_status.value)
+
+    rows = list(db.scalars(stmt))
+    rows.sort(
+        key=lambda item: (
+            REVIEW_STATUS_PRIORITY.get(item.review_status, 99),
+            -item.total_score,
+            -item.created_at.timestamp(),
+        )
+    )
+    return [serialize_opportunity(row) for row in rows[:limit]]
+
+
 @router.post("", response_model=OpportunityRead)
 def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)) -> OpportunityRead:
     channel = db.get(Channel, payload.channel_id)
@@ -217,6 +257,7 @@ def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)
         audience=payload.audience,
         monetization_path=payload.monetization_path,
         notes=payload.notes,
+        review_status=OpportunityReviewStatus.unreviewed.value,
     )
     apply_scores(opportunity)
     db.add(opportunity)
@@ -235,6 +276,47 @@ def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)
         },
     )
 
+    return serialize_opportunity(opportunity)
+
+
+@router.patch("/{opportunity_id}/review", response_model=OpportunityRead)
+def review_opportunity(
+    opportunity_id: int,
+    payload: OpportunityReviewUpdate,
+    db: Session = Depends(get_db),
+) -> OpportunityRead:
+    opportunity = get_opportunity_or_404(db, opportunity_id)
+    previous_status = opportunity.review_status
+    next_status = payload.review_status.value
+
+    opportunity.review_status = next_status
+    opportunity.operator_notes = clean_text(payload.operator_notes) or None
+    opportunity.decision_summary = clean_text(payload.decision_summary) or None
+    opportunity.rejection_reason = clean_text(payload.rejection_reason) or None
+
+    if next_status == OpportunityReviewStatus.unreviewed.value:
+        opportunity.reviewed_at = None
+    elif previous_status != next_status and (
+        previous_status == OpportunityReviewStatus.unreviewed.value or opportunity.reviewed_at is None
+    ):
+        opportunity.reviewed_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(opportunity)
+
+    log_audit_event(
+        db,
+        "opportunity_review_updated",
+        f"Updated opportunity review status: {opportunity.topic} -> {next_status}",
+        metadata={
+            "opportunity_id": opportunity.id,
+            "previous_status": previous_status,
+            "review_status": next_status,
+            "has_operator_notes": bool(opportunity.operator_notes),
+            "has_decision_summary": bool(opportunity.decision_summary),
+            "has_rejection_reason": bool(opportunity.rejection_reason),
+        },
+    )
     return serialize_opportunity(opportunity)
 
 
@@ -262,6 +344,8 @@ def score_opportunity(opportunity_id: int, db: Session = Depends(get_db)) -> Opp
 @router.post("/{opportunity_id}/promote-to-video", response_model=VideoRead)
 def promote_opportunity_to_video(opportunity_id: int, db: Session = Depends(get_db)) -> Video:
     opportunity = get_opportunity_or_404(db, opportunity_id)
+    if opportunity.review_status != OpportunityReviewStatus.approved_for_video.value:
+        raise HTTPException(status_code=400, detail="Opportunity must be approved for video before promotion.")
     channel = db.get(Channel, opportunity.channel_id)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found for opportunity")

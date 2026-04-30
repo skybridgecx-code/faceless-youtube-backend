@@ -405,7 +405,9 @@ body {
 .video-status.idea,
 .video-status.drafted,
 .video-status.needs_review,
-.video-status.draft {
+.video-status.draft,
+.video-status.unreviewed,
+.video-status.needs_more_research {
   color: #c1c1c1;
 }
 
@@ -437,6 +439,16 @@ body {
 .video-status.blocked {
   color: var(--danger);
   border-color: rgba(239, 68, 68, 0.45);
+}
+
+.video-status.shortlisted {
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.video-status.approved_for_video {
+  color: var(--success);
+  border-color: rgba(46, 204, 113, 0.45);
 }
 
 .flow-card {
@@ -583,6 +595,19 @@ body {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.opportunity-input {
+  width: 100%;
+  margin-bottom: 6px;
+  min-height: 56px;
+}
+
+.opportunity-help-text {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--studio-dim);
 }
 
 .opportunity-note {

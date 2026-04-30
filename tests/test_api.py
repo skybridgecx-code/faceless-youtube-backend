@@ -429,6 +429,23 @@ def test_opportunity_routes_and_promotion_workflow() -> None:
     rescored = score_response.json()
     assert rescored["score"]["total_score"] == created["score"]["total_score"]
 
+    blocked_promote_response = client.post(f"/opportunities/{created['id']}/promote-to-video")
+    assert blocked_promote_response.status_code == 400
+    assert blocked_promote_response.json()["detail"] == "Opportunity must be approved for video before promotion."
+
+    review_response = client.patch(
+        f"/opportunities/{created['id']}/review",
+        json={
+            "review_status": "approved_for_video",
+            "operator_notes": "Strong fit for local business audience.",
+            "decision_summary": "Approve for production queue.",
+        },
+    )
+    assert review_response.status_code == 200
+    reviewed = review_response.json()
+    assert reviewed["review_status"] == "approved_for_video"
+    assert reviewed["reviewed_at"] is not None
+
     promote_response = client.post(f"/opportunities/{created['id']}/promote-to-video")
     assert promote_response.status_code == 200
     promoted_video = promote_response.json()
@@ -445,4 +462,86 @@ def test_opportunity_routes_and_promotion_workflow() -> None:
     event_types = [event["event_type"] for event in audit_response.json()]
     assert "opportunity_created" in event_types
     assert "opportunity_scored" in event_types
+    assert "opportunity_review_updated" in event_types
     assert "opportunity_promoted" in event_types
+
+
+def test_opportunity_review_status_validation_and_rejection() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Review Validation Channel"}).json()["id"]
+    opportunity_id = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Local business AI automation audit",
+            "niche_lane": "Local AI consulting",
+            "audience": "Service business owners",
+            "monetization_path": "Audit service",
+        },
+    ).json()["id"]
+
+    invalid = client.patch(
+        f"/opportunities/{opportunity_id}/review",
+        json={"review_status": "not_a_status"},
+    )
+    assert invalid.status_code == 422
+
+    rejected = client.patch(
+        f"/opportunities/{opportunity_id}/review",
+        json={
+            "review_status": "rejected",
+            "operator_notes": "Too generic compared with current queue.",
+            "rejection_reason": "Low differentiation for this week.",
+            "decision_summary": "Revisit with sharper angle and examples.",
+        },
+    )
+    assert rejected.status_code == 200
+    body = rejected.json()
+    assert body["review_status"] == "rejected"
+    assert body["rejection_reason"] == "Low differentiation for this week."
+    assert body["reviewed_at"] is not None
+
+
+def test_opportunity_review_queue_ordering_and_filtering() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Queue Channel"}).json()["id"]
+
+    created_ids: list[int] = []
+    for topic in [
+        "Best AI tools for small business owners",
+        "How to automate customer calls with AI",
+        "AI side hustles that are actually useful",
+        "Faceless YouTube automation workflow",
+    ]:
+        response = client.post(
+            "/opportunities",
+            json={
+                "channel_id": channel_id,
+                "topic": topic,
+                "niche_lane": "Operator lane",
+                "audience": "Business operators",
+                "monetization_path": "Service + affiliate",
+            },
+        )
+        assert response.status_code == 200
+        created_ids.append(response.json()["id"])
+
+    assert len(created_ids) == 4
+    first, second, third, fourth = created_ids
+
+    assert client.patch(f"/opportunities/{first}/review", json={"review_status": "unreviewed"}).status_code == 200
+    assert client.patch(f"/opportunities/{second}/review", json={"review_status": "shortlisted"}).status_code == 200
+    assert client.patch(f"/opportunities/{third}/review", json={"review_status": "needs_more_research"}).status_code == 200
+    assert client.patch(f"/opportunities/{fourth}/review", json={"review_status": "rejected"}).status_code == 200
+
+    queue_response = client.get("/opportunities/review-queue")
+    assert queue_response.status_code == 200
+    queue = queue_response.json()
+    queue_by_id = {item["id"]: idx for idx, item in enumerate(queue)}
+    assert queue_by_id[second] < queue_by_id[third] < queue_by_id[first] < queue_by_id[fourth]
+
+    filter_response = client.get("/opportunities/review-queue?review_status=shortlisted")
+    assert filter_response.status_code == 200
+    filtered = filter_response.json()
+    assert len(filtered) == 1
+    assert filtered[0]["id"] == second

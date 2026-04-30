@@ -207,6 +207,7 @@
                 <div class="meta-row"><span class="meta-label">CTA</span><span class="meta-value" id="oppBestCta">-</span></div>
                 <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="oppBestAgent">-</span></div>
                 <div class="meta-row"><span class="meta-label">Compliance Risk Note</span><span class="meta-value" id="oppBestCompliance">-</span></div>
+                <div class="meta-row"><span class="meta-label">Review Status</span><span class="meta-value"><span class="video-status" id="oppBestReviewStatus">unreviewed</span></span></div>
                 <div id="oppScoreBreakdown" class="score-grid"></div>
               </div>
             </div>
@@ -245,7 +246,7 @@
 
           <div class="panel" style="margin-top: 12px;">
             <div class="panel-header">
-              <h2>All Opportunities</h2>
+              <h2>All Opportunities Review Queue</h2>
             </div>
             <div class="panel-body compact-body">
               <div class="table-wrap">
@@ -253,15 +254,16 @@
                   <thead>
                     <tr>
                       <th>Topic</th>
+                      <th>Review</th>
                       <th>Total</th>
                       <th>Monetization</th>
-                      <th>Agent</th>
+                      <th>Decision Inputs</th>
                       <th>Promoted Video</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody id="opportunityList">
-                    <tr><td colspan="6" class="table-empty">Loading opportunities...</td></tr>
+                    <tr><td colspan="7" class="table-empty">Loading opportunities...</td></tr>
                   </tbody>
                 </table>
               </div>
