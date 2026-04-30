@@ -70,30 +70,40 @@
           <div class="panel-grid flow-grid">
             <div class="panel">
               <div class="panel-header">
-                <h2>Today&apos;s Operator Flow</h2>
+                <h2>Daily Command Center</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadCommandCenter()">Refresh</button>
+                </div>
               </div>
               <div class="panel-body compact-body">
                 <div class="flow-card" id="nextBestActionCard">
-                  <div class="flow-card-title">Start Here / Next Best Action</div>
+                  <div class="flow-card-title">Today&apos;s Best Move</div>
                   <div class="flow-card-body" id="nextBestActionText">Loading next action...</div>
+                  <div class="meta-row"><span class="meta-label">Best Opportunity</span><span class="meta-value" id="ccBestOpportunity">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="ccAssignedAgent">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Executive Producer Reason</span><span class="meta-value pre-wrap" id="ccProducerReason">-</span></div>
                   <button class="btn primary" id="nextBestActionButton" disabled>No Action</button>
                 </div>
                 <div class="flow-card">
-                  <div class="flow-card-title">Daily Checklist</div>
+                  <div class="flow-card-title">Operator Checklist</div>
                   <div class="flow-list" id="dailyChecklistList"></div>
                 </div>
                 <div class="flow-card">
-                  <div class="flow-card-title">Current Blockers / Next Step</div>
+                  <div class="flow-card-title">Blockers</div>
                   <div class="flow-card-body" id="blockersNextStep">Loading workflow guidance...</div>
+                  <div class="video-list" id="commandCenterBlockersList">
+                    <div class="empty-state">No blockers loaded.</div>
+                  </div>
                 </div>
               </div>
             </div>
 
             <div class="panel">
               <div class="panel-header">
-                <h2>Needs Attention Queue</h2>
+                <h2>Needs Review</h2>
                 <div class="header-actions">
-                  <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
+                  <button class="btn" onclick="app.setActivePage('compliance')">Open Compliance</button>
+                  <button class="btn" onclick="app.setActivePage('assets')">Open Assets</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
@@ -126,29 +136,34 @@
 
             <div class="panel">
               <div class="panel-header">
-                <h2>Pipeline Summary</h2>
+                <h2>Ready for Packaging / Payload</h2>
                 <div class="header-actions">
-                  <button class="btn" onclick="app.loadPipelineSummary()">Refresh</button>
+                  <button class="btn" onclick="app.setActivePage('publishing')">Open Publishing</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
                 <div class="pipeline-counts" id="pipelineCounts"></div>
-                <h3 class="subheading">Action Queue</h3>
-                <div id="actionQueueList" class="video-list">
-                  <div class="empty-state">Loading action queue...</div>
+                <h3 class="subheading">Ready for Packaging</h3>
+                <div id="commandCenterPackagingList" class="video-list">
+                  <div class="empty-state">No packaging queue loaded.</div>
+                </div>
+                <h3 class="subheading">Ready for Payload</h3>
+                <div id="commandCenterPayloadList" class="video-list">
+                  <div class="empty-state">No payload queue loaded.</div>
                 </div>
               </div>
             </div>
 
             <div class="panel">
               <div class="panel-header">
-                <h2>Recent Operator History</h2>
+                <h2>Recent Activity</h2>
                 <div class="header-actions">
-                  <button class="btn" onclick="app.loadGlobalAudit()">Refresh</button>
+                  <button class="btn" onclick="app.setActivePage('audit')">Open Audit</button>
+                  <button class="btn" onclick="app.loadCommandCenter()">Refresh</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
-                <div id="globalAuditList" class="audit-list">
+                <div id="commandCenterRecentActivityList" class="audit-list">
                   <div class="empty-state">Loading history...</div>
                 </div>
               </div>

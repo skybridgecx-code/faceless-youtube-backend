@@ -706,6 +706,146 @@ def test_executive_producer_history_and_audit_event_written() -> None:
     assert "executive_producer_recommendation_created" in event_types
 
 
+def test_command_center_today_empty_state_when_no_data() -> None:
+    client = TestClient(app)
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary_status"] == "empty"
+    assert body["best_opportunity"] is None
+    assert body["executive_recommendation"] is None
+    assert body["next_best_action"]["target_page"] == "opportunities"
+    assert len(body["operator_checklist"]) >= 3
+
+
+def test_command_center_today_includes_best_opportunity() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "CC Best Opportunity Channel"}).json()["id"]
+    client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Best AI tools for small business owners",
+            "niche_lane": "AI tool breakdowns",
+            "audience": "small business owners",
+            "monetization_path": "affiliate tools + templates",
+        },
+    )
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["best_opportunity"] is not None
+    assert body["best_opportunity"]["topic"] == "Best AI tools for small business owners"
+
+
+def test_command_center_today_includes_latest_executive_recommendation() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "CC Recommendation Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Faceless YouTube automation workflow",
+            "niche_lane": "faceless YouTube / creator automation",
+            "audience": "creator operators",
+            "monetization_path": "templates + affiliate software",
+        },
+    ).json()
+    assert client.patch(
+        f"/opportunities/{opp['id']}/review",
+        json={"review_status": "approved_for_video"},
+    ).status_code == 200
+    assert client.post("/executive-producer/recommendation/run").status_code == 200
+
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["executive_recommendation"] is not None
+    assert body["executive_recommendation"]["selected_opportunity_id"] == opp["id"]
+
+
+def test_command_center_identifies_videos_needing_preview_review() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "CC Preview Review Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Preview Queue Demo"}).json()
+    video_id = video["id"]
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(video_id)
+
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    preview_ids = {item["video_id"] for item in body["needs_preview_review"]}
+    assert video_id in preview_ids
+
+
+def test_command_center_identifies_videos_needing_compliance_review() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "CC Compliance Review Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Compliance Queue Demo"}).json()
+    video_id = video["id"]
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    compliance_ids = {item["video_id"] for item in body["needs_compliance_review"]}
+    assert video_id in compliance_ids
+
+
+def test_command_center_identifies_videos_ready_for_packaging() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "CC Packaging Ready Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Packaging Ready Demo"}).json()
+    video_id = video["id"]
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(video_id)
+    assert client.post(f"/videos/{video_id}/preview/review", json={"reviewed": True}).status_code == 200
+
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    packaging_ids = {item["video_id"] for item in body["ready_for_packaging"]}
+    assert video_id in packaging_ids
+
+
+def test_command_center_identifies_videos_ready_for_payload() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "CC Payload Ready Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Payload Ready Demo"}).json()
+    video_id = video["id"]
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(video_id)
+    assert client.post(f"/videos/{video_id}/preview/review", json={"reviewed": True}).status_code == 200
+    assert client.post(f"/videos/{video_id}/package").status_code == 200
+
+    response = client.get("/command-center/today")
+    assert response.status_code == 200
+    body = response.json()
+    payload_ids = {item["video_id"] for item in body["ready_for_payload"]}
+    assert video_id in payload_ids
+
+
+def test_command_center_get_route_does_not_create_audit_spam() -> None:
+    client = TestClient(app)
+    before = client.get("/audit?limit=200")
+    assert before.status_code == 200
+    before_count = len(before.json())
+
+    first = client.get("/command-center/today")
+    second = client.get("/command-center/today")
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    after = client.get("/audit?limit=200")
+    assert after.status_code == 200
+    after_count = len(after.json())
+    assert after_count == before_count
+
+
 def test_default_agents_seeded_and_listed() -> None:
     client = TestClient(app)
     channel_response = client.post("/channels", json={"name": "Agent Seed Channel"})

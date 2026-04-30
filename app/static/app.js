@@ -19,6 +19,7 @@ const app = {
     agents: [],
     producerRecommendation: null,
     producerHistory: [],
+    commandCenterToday: null,
     stats: {
       ideas: 0,
       generated: 0,
@@ -41,6 +42,7 @@ const app = {
     await this.loadAgents();
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
+    await this.loadCommandCenter();
   },
 
   setupNavigation() {
@@ -101,6 +103,9 @@ const app = {
     if (page === 'producer') {
       this.loadExecutiveProducerRecommendation();
       this.loadProducerHistory();
+    }
+    if (page === 'dashboard') {
+      this.loadCommandCenter();
     }
   },
 
@@ -309,6 +314,148 @@ const app = {
       }
       queueList.appendChild(item);
     });
+  },
+
+  async loadCommandCenter() {
+    try {
+      const res = await fetch('/command-center/today');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load command center summary');
+      }
+      this.state.commandCenterToday = data;
+      this.renderCommandCenter(data);
+      return data;
+    } catch (err) {
+      this.log(`Command center load failed: ${err.message}`, 'error');
+      this.renderCommandCenter(null);
+      return null;
+    }
+  },
+
+  renderTaskList(containerId, items, emptyMessage, defaultTargetPage = 'assets') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const rows = Array.isArray(items) ? items : [];
+    if (rows.length === 0) {
+      container.innerHTML = `<div class="empty-state">${this.escapeHtml(emptyMessage)}</div>`;
+      return;
+    }
+    container.innerHTML = rows.map(item => `
+      <div class="video-card" style="padding:0.75rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
+          <div class="video-status ${this.escapeHtml(item.workflow_status || 'idea')}">${this.escapeHtml(item.workflow_status || 'idea')}</div>
+        </div>
+        <div style="font-size:0.82rem; color: var(--textSecondary); margin-top:0.35rem;">${this.escapeHtml(item.reason || '')}</div>
+        <button class="btn warning" style="margin-top:0.55rem;" onclick="app.openCommandCenterTask(${Number(item.video_id)}, '${this.escapeHtml(item.target_page || defaultTargetPage)}')">Open</button>
+      </div>
+    `).join('');
+  },
+
+  openCommandCenterTask(videoId, targetPage) {
+    const page = targetPage || 'assets';
+    if (videoId && Number.isFinite(videoId)) {
+      this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    }
+    this.setActivePage(page);
+  },
+
+  executeCommandCenterAction(action) {
+    if (!action) return;
+    const targetPage = action.target_page || 'dashboard';
+    if (action.video_id) {
+      this.selectVideo(action.video_id, { fetchAssets: true, clearCompliance: false });
+    }
+    if (action.opportunity_id) {
+      this.setActivePage('opportunities');
+      this.log(`Focused opportunity #${action.opportunity_id} from command center.`, 'info');
+      return;
+    }
+    this.setActivePage(targetPage);
+  },
+
+  renderCommandCenter(data) {
+    const nextText = document.getElementById('nextBestActionText');
+    const nextButton = document.getElementById('nextBestActionButton');
+    const bestOppEl = document.getElementById('ccBestOpportunity');
+    const assignedAgentEl = document.getElementById('ccAssignedAgent');
+    const producerReasonEl = document.getElementById('ccProducerReason');
+    const blockersText = document.getElementById('blockersNextStep');
+    const checklistEl = document.getElementById('dailyChecklistList');
+    const recentActivityEl = document.getElementById('commandCenterRecentActivityList');
+
+    if (!nextText || !nextButton || !bestOppEl || !assignedAgentEl || !producerReasonEl || !blockersText || !checklistEl || !recentActivityEl) {
+      return;
+    }
+
+    if (!data) {
+      nextText.textContent = 'Unable to load command center summary.';
+      nextButton.disabled = true;
+      nextButton.textContent = 'No Action';
+      nextButton.onclick = null;
+      bestOppEl.textContent = '-';
+      assignedAgentEl.textContent = '-';
+      producerReasonEl.textContent = '-';
+      blockersText.textContent = 'Command center data unavailable.';
+      checklistEl.innerHTML = '<div class="flow-item pending">• Retry command center refresh.</div>';
+      this.renderTaskList('commandCenterBlockersList', [], 'No blockers loaded.');
+      this.renderTaskList('needsAttentionQueueList', [], 'No review queue loaded.');
+      this.renderTaskList('commandCenterPackagingList', [], 'No packaging queue loaded.');
+      this.renderTaskList('commandCenterPayloadList', [], 'No payload queue loaded.', 'publishing');
+      recentActivityEl.innerHTML = '<div class="empty-state">Unable to load recent activity.</div>';
+      return;
+    }
+
+    const nextAction = data.next_best_action || {};
+    nextText.textContent = nextAction.label || 'No urgent actions.';
+    nextButton.disabled = !nextAction.cta_label;
+    nextButton.textContent = nextAction.cta_label || 'No Action';
+    nextButton.onclick = () => this.executeCommandCenterAction(nextAction);
+
+    const bestOpportunity = data.best_opportunity;
+    bestOppEl.textContent = bestOpportunity
+      ? `${bestOpportunity.topic} (${bestOpportunity.score?.total_score ?? '-'} / 40)`
+      : 'No opportunity selected yet.';
+
+    const assignedAgent = data.assigned_agent;
+    assignedAgentEl.textContent = assignedAgent
+      ? `${assignedAgent.name} (${assignedAgent.lane || 'lane n/a'})`
+      : '-';
+
+    producerReasonEl.textContent = data.executive_recommendation?.why_make_today || data.summary_message || '-';
+
+    const blockers = Array.isArray(data.blockers) ? data.blockers : [];
+    blockersText.textContent = blockers.length > 0
+      ? `${blockers.length} blocker(s) require attention before advancing.`
+      : 'No current blockers.';
+
+    const checklistItems = Array.isArray(data.operator_checklist) ? data.operator_checklist : [];
+    checklistEl.innerHTML = checklistItems.length > 0
+      ? checklistItems.map(line => `<div class="flow-item pending">• ${this.escapeHtml(line)}</div>`).join('')
+      : '<div class="flow-item done">✅ No checklist items.</div>';
+
+    const needsCompliance = Array.isArray(data.needs_compliance_review) ? data.needs_compliance_review : [];
+    const needsPreview = Array.isArray(data.needs_preview_review) ? data.needs_preview_review : [];
+    this.renderTaskList('commandCenterBlockersList', blockers, 'No blockers right now.');
+    this.renderTaskList('needsAttentionQueueList', [...needsCompliance, ...needsPreview], 'No review items right now.');
+    this.renderTaskList('commandCenterPackagingList', data.ready_for_packaging || [], 'No videos ready for packaging.');
+    this.renderTaskList('commandCenterPayloadList', data.ready_for_payload || [], 'No videos ready for payload.', 'publishing');
+
+    const recentEvents = Array.isArray(data.recent_audit_events) ? data.recent_audit_events : [];
+    if (recentEvents.length === 0) {
+      recentActivityEl.innerHTML = '<div class="empty-state">No recent activity yet.</div>';
+      return;
+    }
+    recentActivityEl.innerHTML = recentEvents.map(event => `
+      <div class="audit-event ${event.video_id ? 'clickable' : ''}" ${event.video_id ? `onclick="app.selectVideo(${event.video_id})"` : ''}>
+        <div class="audit-event-top">
+          <span class="audit-badge">${this.escapeHtml(event.event_type || '')}</span>
+          <span class="audit-time">${this.formatTime(event.created_at)}</span>
+        </div>
+        <div class="audit-message">${this.escapeHtml(event.message || '')}</div>
+      </div>
+    `).join('');
   },
 
   renderGuidedFlow(summary) {
@@ -1343,7 +1490,8 @@ const app = {
       reloadAudit = true,
       keepComplianceReport = false,
       reloadOpportunities = false,
-      reloadProducer = true
+      reloadProducer = true,
+      reloadCommandCenter = true
     } = options;
 
     await this.loadVideos();
@@ -1360,6 +1508,9 @@ const app = {
     if (reloadProducer) {
       await this.loadExecutiveProducerRecommendation();
       await this.loadProducerHistory();
+    }
+    if (reloadCommandCenter) {
+      await this.loadCommandCenter();
     }
     if (this.state.selectedVideoId) {
       await this.selectVideo(this.state.selectedVideoId, {

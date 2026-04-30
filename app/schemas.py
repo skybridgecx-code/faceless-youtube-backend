@@ -371,3 +371,38 @@ class ExecutiveProducerRecommendationRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CommandCenterAction(BaseModel):
+    key: str
+    label: str
+    reason: str
+    target_page: Literal["dashboard", "opportunities", "producer", "content", "assets", "publishing", "compliance", "audit"]
+    cta_label: str
+    video_id: int | None = None
+    opportunity_id: int | None = None
+
+
+class CommandCenterTaskItem(BaseModel):
+    video_id: int
+    title: str
+    workflow_status: str
+    publish_status: str
+    reason: str
+    target_page: Literal["assets", "publishing", "compliance", "audit", "content"]
+
+
+class CommandCenterTodayRead(BaseModel):
+    best_opportunity: OpportunityRead | None = None
+    executive_recommendation: ExecutiveProducerRecommendationRead | None = None
+    assigned_agent: ContentAgentRead | None = None
+    next_best_action: CommandCenterAction
+    operator_checklist: list[str]
+    blockers: list[CommandCenterTaskItem]
+    needs_preview_review: list[CommandCenterTaskItem]
+    needs_compliance_review: list[CommandCenterTaskItem]
+    ready_for_packaging: list[CommandCenterTaskItem]
+    ready_for_payload: list[CommandCenterTaskItem]
+    recent_audit_events: list[AuditEventRead]
+    summary_status: Literal["empty", "attention_needed", "on_track"]
+    summary_message: str
