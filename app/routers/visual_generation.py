@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,6 +22,7 @@ from app.schemas import (
 )
 from app.services.audit import log_audit_event
 from app.services.preview_visuals import build_preview_visual_manifest
+from app.services.visual_asset_review import update_visual_asset_review, visual_generated_asset_payload
 from app.services.visual_generation import (
     build_provider_payload,
     build_scene_context,
@@ -28,6 +32,35 @@ from app.services.visual_generation import (
 )
 
 router = APIRouter(prefix="/visual-generation", tags=["visual-generation"])
+
+
+class VisualAssetReviewUpdate(BaseModel):
+    review_status: Literal["pending", "approved", "rejected"]
+    review_notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("review_notes", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class VisualAssetRejectRequest(BaseModel):
+    review_notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("review_notes", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
 
 
 def get_plan_for_generation_or_404(db: Session, plan_id: int) -> VisualAssetPlan:
@@ -63,6 +96,13 @@ def get_job_or_404(db: Session, job_id: int) -> VisualGenerationJob:
     if not job:
         raise HTTPException(status_code=404, detail="Visual generation job not found")
     return job
+
+
+def get_visual_generated_asset_or_404(db: Session, asset_id: int) -> VisualGeneratedAsset:
+    row = db.get(VisualGeneratedAsset, asset_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Visual generated asset not found")
+    return row
 
 
 @router.post("/plans/{plan_id}/queue", response_model=VisualGenerationQueueResult)
@@ -252,7 +292,7 @@ def register_visual_generation_output(
     job_id: int,
     payload: VisualGenerationRegisterOutputRequest,
     db: Session = Depends(get_db),
-) -> VisualGeneratedAssetRead:
+) -> dict[str, object]:
     job = get_job_or_404(db, job_id)
 
     raw_path = Path(payload.output_path).expanduser()
@@ -316,7 +356,7 @@ def register_visual_generation_output(
             "scene_id": asset.visual_scene_id,
         },
     )
-    return VisualGeneratedAssetRead.model_validate(asset)
+    return visual_generated_asset_payload(db, asset)
 
 
 @router.get("/assets", response_model=list[VisualGeneratedAssetRead])
@@ -327,7 +367,7 @@ def list_visual_generated_assets(
     video_id: int | None = None,
     limit: int = Query(default=250, ge=1, le=500),
     db: Session = Depends(get_db),
-) -> list[VisualGeneratedAssetRead]:
+) -> list[dict[str, object]]:
     stmt = select(VisualGeneratedAsset).order_by(VisualGeneratedAsset.created_at.desc()).limit(limit)
     if plan_id is not None:
         stmt = stmt.where(VisualGeneratedAsset.visual_asset_plan_id == plan_id)
@@ -341,15 +381,70 @@ def list_visual_generated_assets(
         )
 
     rows = list(db.scalars(stmt))
-    return [VisualGeneratedAssetRead.model_validate(row) for row in rows]
+    return [visual_generated_asset_payload(db, row) for row in rows]
 
 
 @router.get("/assets/{asset_id}", response_model=VisualGeneratedAssetRead)
-def get_visual_generated_asset(asset_id: int, db: Session = Depends(get_db)) -> VisualGeneratedAssetRead:
-    row = db.get(VisualGeneratedAsset, asset_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Visual generated asset not found")
-    return VisualGeneratedAssetRead.model_validate(row)
+def get_visual_generated_asset(asset_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    row = get_visual_generated_asset_or_404(db, asset_id)
+    return visual_generated_asset_payload(db, row)
+
+
+@router.patch("/assets/{asset_id}/review")
+def review_visual_generated_asset(
+    asset_id: int,
+    payload: VisualAssetReviewUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    asset = get_visual_generated_asset_or_404(db, asset_id)
+    try:
+        result = update_visual_asset_review(db, asset, payload.review_status, payload.review_notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.commit()
+    log_audit_event(
+        db,
+        "visual_asset_review_updated",
+        f"Updated visual generated asset #{asset.id} review status to {payload.review_status}",
+        video_id=asset.plan.video_id,
+        metadata={"asset_id": asset.id, "review_status": payload.review_status},
+    )
+    return result
+
+
+@router.post("/assets/{asset_id}/approve")
+def approve_visual_generated_asset(asset_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    asset = get_visual_generated_asset_or_404(db, asset_id)
+    result = update_visual_asset_review(db, asset, "approved", None)
+    db.commit()
+    log_audit_event(
+        db,
+        "visual_asset_approved",
+        f"Approved visual generated asset #{asset.id}",
+        video_id=asset.plan.video_id,
+        metadata={"asset_id": asset.id, "review_status": "approved"},
+    )
+    return result
+
+
+@router.post("/assets/{asset_id}/reject")
+def reject_visual_generated_asset(
+    asset_id: int,
+    payload: VisualAssetRejectRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    asset = get_visual_generated_asset_or_404(db, asset_id)
+    notes = payload.review_notes if payload else None
+    result = update_visual_asset_review(db, asset, "rejected", notes)
+    db.commit()
+    log_audit_event(
+        db,
+        "visual_asset_rejected",
+        f"Rejected visual generated asset #{asset.id}",
+        video_id=asset.plan.video_id,
+        metadata={"asset_id": asset.id, "review_status": "rejected"},
+    )
+    return result
 
 
 @router.get("/preview-assets/videos/{video_id}")
