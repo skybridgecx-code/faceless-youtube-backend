@@ -133,3 +133,39 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     video: Mapped[Video | None] = relationship(back_populates="audit_events")
+
+
+class VideoOpportunity(Base):
+    __tablename__ = "video_opportunities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    topic: Mapped[str] = mapped_column(String(240), index=True)
+    niche_lane: Mapped[str] = mapped_column(String(240))
+    audience: Mapped[str] = mapped_column(String(500))
+    monetization_path: Mapped[str] = mapped_column(String(240))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    search_demand: Mapped[int] = mapped_column(Integer, default=3)
+    buyer_intent: Mapped[int] = mapped_column(Integer, default=3)
+    affiliate_potential: Mapped[int] = mapped_column(Integer, default=3)
+    sponsorship_potential: Mapped[int] = mapped_column(Integer, default=3)
+    production_difficulty: Mapped[int] = mapped_column(Integer, default=3)
+    compliance_risk: Mapped[int] = mapped_column(Integer, default=2)
+    trend_freshness: Mapped[int] = mapped_column(Integer, default=3)
+    product_connection: Mapped[int] = mapped_column(Integer, default=3)
+    total_score: Mapped[int] = mapped_column(Integer, default=24, index=True)
+
+    expected_monetization_path: Mapped[str] = mapped_column(String(240), default="Lead magnet")
+    why_make_this: Mapped[str] = mapped_column(Text, default="Deterministic local estimate. Validate manually.")
+    recommended_title: Mapped[str] = mapped_column(String(240))
+    thumbnail_angle: Mapped[str] = mapped_column(String(240), default="Clear before/after operator workflow")
+    recommended_cta: Mapped[str] = mapped_column(String(240), default="Comment your workflow bottleneck")
+    assigned_agent: Mapped[str] = mapped_column(String(120), default="Opportunity Research Agent")
+    compliance_risk_note: Mapped[str] = mapped_column(Text, default="Estimate only. Run compliance checks after assets.")
+
+    promoted_video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

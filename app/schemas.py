@@ -257,3 +257,49 @@ class OperatorExport(BaseModel):
     audit_events: list[AuditEventRead]
     package_dir: str | None = None
     youtube_payload_readiness: dict[str, object]
+
+
+class OpportunityCreate(BaseModel):
+    channel_id: int = 1
+    topic: str
+    niche_lane: str
+    audience: str
+    monetization_path: str
+    notes: str | None = None
+
+
+class OpportunityScoreBreakdown(BaseModel):
+    search_demand: int = Field(ge=1, le=5)
+    buyer_intent: int = Field(ge=1, le=5)
+    affiliate_potential: int = Field(ge=1, le=5)
+    sponsorship_potential: int = Field(ge=1, le=5)
+    production_difficulty: int = Field(ge=1, le=5)
+    compliance_risk: int = Field(ge=1, le=5)
+    trend_freshness: int = Field(ge=1, le=5)
+    product_connection: int = Field(ge=1, le=5)
+    total_score: int
+
+
+class OpportunityRead(BaseModel):
+    id: int
+    channel_id: int
+    topic: str
+    niche_lane: str
+    audience: str
+    monetization_path: str
+    notes: str | None = None
+    score: OpportunityScoreBreakdown
+    expected_monetization_path: str
+    why_make_this: str
+    recommended_title: str
+    thumbnail_angle: str
+    recommended_cta: str
+    assigned_agent: str
+    compliance_risk_note: str
+    promoted_video_id: int | None = None
+    promoted_at: datetime | None = None
+    scored_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

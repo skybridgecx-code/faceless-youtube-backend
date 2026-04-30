@@ -19,6 +19,7 @@
 
       <nav class="sidebar-nav" id="sidebarNav">
         <button class="nav-item active" data-page="dashboard">Dashboard</button>
+        <button class="nav-item" data-page="opportunities">Opportunities</button>
         <button class="nav-item" data-page="content">Content</button>
         <button class="nav-item" data-page="assets">Assets</button>
         <button class="nav-item" data-page="publishing">Publishing</button>
@@ -183,6 +184,87 @@
                   <tr><td colspan="6" class="table-empty">Loading videos...</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-opportunities">
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Best Opportunity Today</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadOpportunities()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note">Deterministic local estimates only. Not real analytics.</div>
+                <div class="meta-row"><span class="meta-label">Topic</span><span class="meta-value" id="oppBestTopic">Loading...</span></div>
+                <div class="meta-row"><span class="meta-label">Total Score</span><span class="meta-value" id="oppBestScore">-</span></div>
+                <div class="meta-row"><span class="meta-label">Monetization Path</span><span class="meta-value" id="oppBestMonetization">-</span></div>
+                <div class="meta-row"><span class="meta-label">Suggested Title</span><span class="meta-value" id="oppBestTitle">-</span></div>
+                <div class="meta-row"><span class="meta-label">Thumbnail Angle</span><span class="meta-value" id="oppBestThumb">-</span></div>
+                <div class="meta-row"><span class="meta-label">CTA</span><span class="meta-value" id="oppBestCta">-</span></div>
+                <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="oppBestAgent">-</span></div>
+                <div class="meta-row"><span class="meta-label">Compliance Risk Note</span><span class="meta-value" id="oppBestCompliance">-</span></div>
+                <div id="oppScoreBreakdown" class="score-grid"></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Add Opportunity</h2>
+              </div>
+              <div class="panel-body form-body">
+                <div class="form-group">
+                  <label>Topic</label>
+                  <input type="text" id="oppTopic" placeholder="Best AI tools for small business owners" />
+                </div>
+                <div class="form-group">
+                  <label>Niche Lane</label>
+                  <input type="text" id="oppNicheLane" placeholder="Local business AI operations" />
+                </div>
+                <div class="form-group">
+                  <label>Audience</label>
+                  <input type="text" id="oppAudience" placeholder="Local business operators" />
+                </div>
+                <div class="form-group">
+                  <label>Monetization Path</label>
+                  <input type="text" id="oppMonetizationPath" placeholder="Affiliate + consulting audit" />
+                </div>
+                <div class="form-group">
+                  <label>Notes</label>
+                  <textarea id="oppNotes" rows="4" placeholder="Context, constraints, or angle notes"></textarea>
+                </div>
+                <div class="settings-actions">
+                  <button class="btn success" id="btnCreateOpportunity" onclick="app.createOpportunity()">Create Opportunity</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel" style="margin-top: 12px;">
+            <div class="panel-header">
+              <h2>All Opportunities</h2>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="table-wrap">
+                <table class="content-table">
+                  <thead>
+                    <tr>
+                      <th>Topic</th>
+                      <th>Total</th>
+                      <th>Monetization</th>
+                      <th>Agent</th>
+                      <th>Promoted Video</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="opportunityList">
+                    <tr><td colspan="6" class="table-empty">Loading opportunities...</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>

@@ -386,3 +386,63 @@ def test_audit_trail_and_operator_export_are_safe() -> None:
     assert long_body not in export_response.text
     assert "audit_events" in export_payload
     assert "youtube_payload_readiness" in export_payload
+
+
+def test_opportunity_routes_and_promotion_workflow() -> None:
+    client = TestClient(app)
+
+    channel_response = client.post("/channels", json={"name": "Opportunity Channel"})
+    assert channel_response.status_code == 200
+    channel_id = channel_response.json()["id"]
+
+    create_response = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Best AI tools for small business owners",
+            "niche_lane": "Local business AI operations",
+            "audience": "Small business owners",
+            "monetization_path": "Affiliate + consulting audit",
+            "notes": "Educational operator workflow only",
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["topic"] == "Best AI tools for small business owners"
+    assert created["score"]["total_score"] >= 8
+    assert created["assigned_agent"] == "Opportunity Research Agent (Local Deterministic)"
+
+    list_response = client.get("/opportunities")
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == created["id"]
+
+    top_response = client.get("/opportunities/top")
+    assert top_response.status_code == 200
+    top_items = top_response.json()
+    assert len(top_items) == 1
+    assert top_items[0]["id"] == created["id"]
+
+    score_response = client.post(f"/opportunities/{created['id']}/score")
+    assert score_response.status_code == 200
+    rescored = score_response.json()
+    assert rescored["score"]["total_score"] == created["score"]["total_score"]
+
+    promote_response = client.post(f"/opportunities/{created['id']}/promote-to-video")
+    assert promote_response.status_code == 200
+    promoted_video = promote_response.json()
+    assert promoted_video["title"] == created["recommended_title"]
+    assert promoted_video["approved"] is False
+    assert promoted_video["status"] == "idea"
+    assert promoted_video["preview_reviewed"] is False
+
+    updated_opp = client.get("/opportunities").json()[0]
+    assert updated_opp["promoted_video_id"] == promoted_video["id"]
+
+    audit_response = client.get("/audit?limit=100")
+    assert audit_response.status_code == 200
+    event_types = [event["event_type"] for event in audit_response.json()]
+    assert "opportunity_created" in event_types
+    assert "opportunity_scored" in event_types
+    assert "opportunity_promoted" in event_types

@@ -15,6 +15,7 @@ const app = {
     previewStatusByVideoId: {},
     packageDirsByVideoId: {},
     lastComplianceReportByVideoId: {},
+    opportunities: [],
     stats: {
       ideas: 0,
       generated: 0,
@@ -33,6 +34,7 @@ const app = {
     await this.loadPipelineSummary();
     await this.loadCalendar();
     await this.loadGlobalAudit();
+    await this.loadOpportunities();
   },
 
   setupNavigation() {
@@ -73,6 +75,7 @@ const app = {
 
     const titleMap = {
       dashboard: 'Dashboard',
+      opportunities: 'Opportunities',
       content: 'Content',
       assets: 'Assets',
       publishing: 'Publishing',
@@ -81,6 +84,9 @@ const app = {
     };
     const topNavTitle = document.getElementById('topNavTitle');
     if (topNavTitle) topNavTitle.textContent = titleMap[page] || 'Dashboard';
+    if (page === 'opportunities') {
+      this.loadOpportunities();
+    }
   },
 
   log(msg, type = 'info') {
@@ -452,6 +458,197 @@ const app = {
     document.getElementById('kpiPackagesCreated').textContent = packages;
   },
 
+  async loadOpportunities() {
+    const tableBody = document.getElementById('opportunityList');
+    if (!tableBody) return;
+    try {
+      const res = await fetch('/opportunities');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load opportunities');
+      }
+      this.state.opportunities = Array.isArray(data) ? data : [];
+      this.renderOpportunities();
+    } catch (err) {
+      this.log(`Error loading opportunities: ${err.message}`, 'error');
+      tableBody.innerHTML = '<tr><td colspan="6" class="table-empty">Failed to load opportunities.</td></tr>';
+      this.renderBestOpportunity(null);
+    }
+  },
+
+  renderOpportunities() {
+    const tableBody = document.getElementById('opportunityList');
+    if (!tableBody) return;
+    const items = this.state.opportunities || [];
+    this.renderBestOpportunity(items.length > 0 ? items[0] : null);
+
+    if (items.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="6" class="table-empty">No opportunities yet.</td></tr>';
+      return;
+    }
+
+    tableBody.innerHTML = items.map(item => `
+      <tr>
+        <td>
+          <div class="video-title-main">${this.escapeHtml(item.topic)}</div>
+          <div class="video-meta-line">${this.escapeHtml(item.niche_lane || '—')} • ${this.escapeHtml(item.audience || '—')}</div>
+        </td>
+        <td><strong>${this.escapeHtml(String(item.score?.total_score ?? '-'))}</strong></td>
+        <td>${this.escapeHtml(item.expected_monetization_path || item.monetization_path || '—')}</td>
+        <td>${this.escapeHtml(item.assigned_agent || '—')}</td>
+        <td>${item.promoted_video_id ? `#${item.promoted_video_id}` : '—'}</td>
+        <td>
+          <div class="row-actions">
+            <button class="btn" onclick="app.scoreOpportunity(${item.id})">Score Opportunity</button>
+            <button class="btn success" onclick="app.promoteOpportunity(${item.id})">Promote to Video</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  },
+
+  renderBestOpportunity(item) {
+    const topicEl = document.getElementById('oppBestTopic');
+    const scoreEl = document.getElementById('oppBestScore');
+    const monetizationEl = document.getElementById('oppBestMonetization');
+    const titleEl = document.getElementById('oppBestTitle');
+    const thumbEl = document.getElementById('oppBestThumb');
+    const ctaEl = document.getElementById('oppBestCta');
+    const agentEl = document.getElementById('oppBestAgent');
+    const complianceEl = document.getElementById('oppBestCompliance');
+    const scoreGridEl = document.getElementById('oppScoreBreakdown');
+    if (!topicEl || !scoreEl || !monetizationEl || !titleEl || !thumbEl || !ctaEl || !agentEl || !complianceEl || !scoreGridEl) {
+      return;
+    }
+
+    if (!item) {
+      topicEl.textContent = 'No opportunities yet';
+      scoreEl.textContent = '-';
+      monetizationEl.textContent = '-';
+      titleEl.textContent = '-';
+      thumbEl.textContent = '-';
+      ctaEl.textContent = '-';
+      agentEl.textContent = '-';
+      complianceEl.textContent = '-';
+      scoreGridEl.innerHTML = '<div class="empty-state" style="height:auto; padding:0.75rem;">Add an opportunity to see scoring.</div>';
+      return;
+    }
+
+    topicEl.textContent = item.topic || '-';
+    scoreEl.textContent = `${item.score?.total_score ?? '-'} / 40`;
+    monetizationEl.textContent = item.expected_monetization_path || item.monetization_path || '-';
+    titleEl.textContent = item.recommended_title || '-';
+    thumbEl.textContent = item.thumbnail_angle || '-';
+    ctaEl.textContent = item.recommended_cta || '-';
+    agentEl.textContent = item.assigned_agent || '-';
+    complianceEl.textContent = item.compliance_risk_note || '-';
+
+    const score = item.score || {};
+    const rows = [
+      ['Search Demand', score.search_demand],
+      ['Buyer Intent', score.buyer_intent],
+      ['Affiliate Potential', score.affiliate_potential],
+      ['Sponsorship Potential', score.sponsorship_potential],
+      ['Production Difficulty (lower is better)', score.production_difficulty],
+      ['Compliance Risk (lower is better)', score.compliance_risk],
+      ['Trend Freshness', score.trend_freshness],
+      ['Product Connection', score.product_connection],
+    ];
+    scoreGridEl.innerHTML = rows.map(([label, value]) => `
+      <div class="score-row">
+        <span>${this.escapeHtml(String(label))}</span>
+        <strong>${this.escapeHtml(String(value ?? '-'))}/5</strong>
+      </div>
+    `).join('');
+  },
+
+  async createOpportunity() {
+    const topic = document.getElementById('oppTopic')?.value?.trim() || '';
+    const nicheLane = document.getElementById('oppNicheLane')?.value?.trim() || '';
+    const audience = document.getElementById('oppAudience')?.value?.trim() || '';
+    const monetizationPath = document.getElementById('oppMonetizationPath')?.value?.trim() || '';
+    const notes = document.getElementById('oppNotes')?.value?.trim() || '';
+    const btn = document.getElementById('btnCreateOpportunity');
+
+    if (!topic || !nicheLane || !audience || !monetizationPath) {
+      this.log('Topic, niche lane, audience, and monetization path are required.', 'error');
+      return;
+    }
+
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+    }
+    try {
+      const res = await fetch('/opportunities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel_id: 1,
+          topic,
+          niche_lane: nicheLane,
+          audience,
+          monetization_path: monetizationPath,
+          notes: notes || null
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create opportunity');
+      }
+      this.log('Opportunity created and scored.', 'success');
+      const fieldIds = ['oppTopic', 'oppNicheLane', 'oppAudience', 'oppMonetizationPath', 'oppNotes'];
+      fieldIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      await this.loadOpportunities();
+    } catch (err) {
+      this.log(`Create opportunity failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Create Opportunity';
+      }
+    }
+  },
+
+  async scoreOpportunity(opportunityId) {
+    try {
+      const res = await fetch(`/opportunities/${opportunityId}/score`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to score opportunity');
+      }
+      this.log(`Opportunity rescored: ${data.topic}`, 'success');
+      await this.loadOpportunities();
+    } catch (err) {
+      this.log(`Score opportunity failed: ${err.message}`, 'error');
+    }
+  },
+
+  async promoteOpportunity(opportunityId) {
+    try {
+      const res = await fetch(`/opportunities/${opportunityId}/promote-to-video`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to promote opportunity');
+      }
+      this.log(`Promoted opportunity to video idea: ${data.title}`, 'success');
+      this.state.selectedVideoId = data.id;
+      await this.refreshAfterMutation({
+        reloadAssets: false,
+        reloadCalendar: true,
+        reloadAudit: true,
+        keepComplianceReport: false,
+        reloadOpportunities: true
+      });
+      this.setActivePage('content');
+    } catch (err) {
+      this.log(`Promote to video failed: ${err.message}`, 'error');
+    }
+  },
+
   renderVideoList() {
     const list = document.getElementById('videoList');
     list.innerHTML = '';
@@ -740,7 +937,8 @@ const app = {
       reloadAssets = true,
       reloadCalendar = true,
       reloadAudit = true,
-      keepComplianceReport = false
+      keepComplianceReport = false,
+      reloadOpportunities = false
     } = options;
 
     await this.loadVideos();
@@ -750,6 +948,9 @@ const app = {
     }
     if (reloadAudit) {
       await this.loadGlobalAudit();
+    }
+    if (reloadOpportunities) {
+      await this.loadOpportunities();
     }
     if (this.state.selectedVideoId) {
       await this.selectVideo(this.state.selectedVideoId, {
