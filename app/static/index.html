@@ -22,6 +22,7 @@
         <button class="nav-item" data-page="opportunities">Opportunities</button>
         <button class="nav-item" data-page="agents">Agents</button>
         <button class="nav-item" data-page="producer">Producer</button>
+        <button class="nav-item" data-page="briefs">Briefs</button>
         <button class="nav-item" data-page="content">Content</button>
         <button class="nav-item" data-page="assets">Assets</button>
         <button class="nav-item" data-page="publishing">Publishing</button>
@@ -95,6 +96,15 @@
                   <div class="flow-card-body" id="blockersNextStep">Loading workflow guidance...</div>
                   <div class="video-list" id="commandCenterBlockersList">
                     <div class="empty-state">No blockers loaded.</div>
+                  </div>
+                </div>
+                <div class="flow-card">
+                  <div class="flow-card-title">Production Brief Queue</div>
+                  <div class="video-list" id="commandCenterBriefsReviewList">
+                    <div class="empty-state">No briefs pending review.</div>
+                  </div>
+                  <div class="video-list" id="commandCenterBriefsApprovedList" style="margin-top:0.65rem;">
+                    <div class="empty-state">No approved briefs ready to promote.</div>
                   </div>
                 </div>
               </div>
@@ -234,6 +244,7 @@
                 <div class="header-actions">
                   <button class="btn" onclick="app.runExecutiveProducer()">Run Executive Producer</button>
                   <button class="btn" id="btnProducerViewOpportunity" onclick="app.viewRecommendedOpportunity()" disabled>View Opportunity</button>
+                  <button class="btn" id="btnProducerCreateBrief" onclick="app.createBriefFromProducerRecommendation()" disabled>Create Production Brief</button>
                   <button class="btn success" id="btnProducerPromote" onclick="app.promoteRecommendedOpportunity()" disabled>Promote to Video</button>
                 </div>
               </div>
@@ -271,6 +282,23 @@
                 <div id="producerHistoryList" class="audit-list">
                   <div class="empty-state">No recommendation history yet.</div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-briefs">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Production Briefs</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.loadBriefs()">Refresh</button>
+              </div>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="opportunity-note">Deterministic local brief templates from opportunities and agent profiles.</div>
+              <div id="briefsList" class="agents-grid">
+                <div class="empty-state">Loading production briefs...</div>
               </div>
             </div>
           </div>

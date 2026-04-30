@@ -47,6 +47,13 @@ class ProducerConfidenceLabel(str, Enum):
     high = "high"
 
 
+class ProductionBriefStatus(str, Enum):
+    draft = "draft"
+    needs_revision = "needs_revision"
+    approved = "approved"
+    promoted = "promoted"
+
+
 class Channel(Base):
     __tablename__ = "channels"
 
@@ -235,3 +242,30 @@ class ExecutiveProducerRecommendation(Base):
     selection_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     empty_state_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProductionBrief(Base):
+    __tablename__ = "production_briefs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("video_opportunities.id"), index=True)
+    assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
+    promoted_video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default=ProductionBriefStatus.draft.value, index=True)
+    topic: Mapped[str] = mapped_column(String(240))
+    niche_lane: Mapped[str] = mapped_column(String(240))
+    target_audience: Mapped[str] = mapped_column(String(500))
+    monetization_path: Mapped[str] = mapped_column(String(240))
+    title: Mapped[str] = mapped_column(String(240))
+    thumbnail_angle: Mapped[str] = mapped_column(String(240))
+    hook: Mapped[str] = mapped_column(Text)
+    outline: Mapped[str] = mapped_column(Text)
+    script_plan: Mapped[str] = mapped_column(Text)
+    b_roll_plan: Mapped[str] = mapped_column(Text)
+    voiceover_style: Mapped[str] = mapped_column(Text)
+    cta: Mapped[str] = mapped_column(String(240))
+    compliance_notes: Mapped[str] = mapped_column(Text)
+    claims_to_verify: Mapped[str] = mapped_column(Text)
+    operator_review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.models import AssetType, ContentType, OpportunityReviewStatus, ProducerConfidenceLabel, VideoStatus
+from app.models import AssetType, ContentType, OpportunityReviewStatus, ProducerConfidenceLabel, ProductionBriefStatus, VideoStatus
 
 
 class ChannelCreate(BaseModel):
@@ -377,7 +377,7 @@ class CommandCenterAction(BaseModel):
     key: str
     label: str
     reason: str
-    target_page: Literal["dashboard", "opportunities", "producer", "content", "assets", "publishing", "compliance", "audit"]
+    target_page: Literal["dashboard", "opportunities", "producer", "briefs", "content", "assets", "publishing", "compliance", "audit"]
     cta_label: str
     video_id: int | None = None
     opportunity_id: int | None = None
@@ -403,6 +403,8 @@ class CommandCenterTodayRead(BaseModel):
     needs_compliance_review: list[CommandCenterTaskItem]
     ready_for_packaging: list[CommandCenterTaskItem]
     ready_for_payload: list[CommandCenterTaskItem]
+    briefs_needing_review: list["CommandCenterBriefItem"]
+    approved_briefs_ready_to_promote: list["CommandCenterBriefItem"]
     recent_audit_events: list[AuditEventRead]
     summary_status: Literal["empty", "attention_needed", "on_track"]
     summary_message: str
@@ -428,3 +430,50 @@ class OpportunityIntakeStatusRead(BaseModel):
     channel_id: int | None = None
     todays_count: int
     potential_seed_count: int
+
+
+class ProductionBriefRead(BaseModel):
+    id: int
+    opportunity_id: int
+    assigned_agent_id: int | None = None
+    promoted_video_id: int | None = None
+    status: ProductionBriefStatus = ProductionBriefStatus.draft
+    topic: str
+    niche_lane: str
+    target_audience: str
+    monetization_path: str
+    title: str
+    thumbnail_angle: str
+    hook: str
+    outline: str
+    script_plan: str
+    b_roll_plan: str
+    voiceover_style: str
+    cta: str
+    compliance_notes: str
+    claims_to_verify: str
+    operator_review_notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProductionBriefReviewUpdate(BaseModel):
+    status: Literal["draft", "needs_revision", "approved"]
+    operator_review_notes: str | None = None
+
+
+class CommandCenterBriefItem(BaseModel):
+    brief_id: int
+    opportunity_id: int
+    status: ProductionBriefStatus
+    title: str
+    topic: str
+    agent_name: str | None = None
+    target_page: Literal["briefs"] = "briefs"
+
+
+class ProductionBriefCreateResult(BaseModel):
+    brief: ProductionBriefRead
+    message: str

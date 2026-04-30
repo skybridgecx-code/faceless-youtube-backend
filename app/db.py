@@ -32,6 +32,7 @@ def init_db() -> None:
     _apply_sqlite_video_preview_columns()
     _apply_sqlite_video_opportunity_review_columns()
     _apply_sqlite_agent_system_columns()
+    _apply_sqlite_production_brief_columns()
     _seed_default_agents_for_existing_channels()
 
 
@@ -119,6 +120,38 @@ def _apply_sqlite_agent_system_columns() -> None:
             "production_rules": "ALTER TABLE content_agents ADD COLUMN production_rules TEXT DEFAULT ''",
             "is_active": "ALTER TABLE content_agents ADD COLUMN is_active BOOLEAN DEFAULT 1",
             "updated_at": "ALTER TABLE content_agents ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_production_brief_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "production_briefs",
+        {
+            "opportunity_id": "ALTER TABLE production_briefs ADD COLUMN opportunity_id INTEGER",
+            "assigned_agent_id": "ALTER TABLE production_briefs ADD COLUMN assigned_agent_id INTEGER",
+            "promoted_video_id": "ALTER TABLE production_briefs ADD COLUMN promoted_video_id INTEGER",
+            "status": "ALTER TABLE production_briefs ADD COLUMN status TEXT DEFAULT 'draft'",
+            "topic": "ALTER TABLE production_briefs ADD COLUMN topic TEXT DEFAULT ''",
+            "niche_lane": "ALTER TABLE production_briefs ADD COLUMN niche_lane TEXT DEFAULT ''",
+            "target_audience": "ALTER TABLE production_briefs ADD COLUMN target_audience TEXT DEFAULT ''",
+            "monetization_path": "ALTER TABLE production_briefs ADD COLUMN monetization_path TEXT DEFAULT ''",
+            "title": "ALTER TABLE production_briefs ADD COLUMN title TEXT DEFAULT ''",
+            "thumbnail_angle": "ALTER TABLE production_briefs ADD COLUMN thumbnail_angle TEXT DEFAULT ''",
+            "hook": "ALTER TABLE production_briefs ADD COLUMN hook TEXT DEFAULT ''",
+            "outline": "ALTER TABLE production_briefs ADD COLUMN outline TEXT DEFAULT ''",
+            "script_plan": "ALTER TABLE production_briefs ADD COLUMN script_plan TEXT DEFAULT ''",
+            "b_roll_plan": "ALTER TABLE production_briefs ADD COLUMN b_roll_plan TEXT DEFAULT ''",
+            "voiceover_style": "ALTER TABLE production_briefs ADD COLUMN voiceover_style TEXT DEFAULT ''",
+            "cta": "ALTER TABLE production_briefs ADD COLUMN cta TEXT DEFAULT ''",
+            "compliance_notes": "ALTER TABLE production_briefs ADD COLUMN compliance_notes TEXT DEFAULT ''",
+            "claims_to_verify": "ALTER TABLE production_briefs ADD COLUMN claims_to_verify TEXT DEFAULT ''",
+            "operator_review_notes": "ALTER TABLE production_briefs ADD COLUMN operator_review_notes TEXT",
+            "created_at": "ALTER TABLE production_briefs ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE production_briefs ADD COLUMN updated_at DATETIME",
         },
     )
 

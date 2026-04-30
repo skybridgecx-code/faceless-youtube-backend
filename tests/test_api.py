@@ -573,6 +573,180 @@ def test_command_center_includes_seeded_opportunities_candidates() -> None:
     assert payload["best_opportunity"]["id"] in seed.json()["created_ids"]
 
 
+def test_create_production_brief_from_opportunity() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Brief Create Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Faceless YouTube automation workflow",
+            "niche_lane": "faceless YouTube / creator automation",
+            "audience": "creator operators",
+            "monetization_path": "templates + affiliate software",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "shortlisted"}).status_code == 200
+
+    create_response = client.post(f"/production-briefs/from-opportunity/{opp['id']}")
+    assert create_response.status_code == 200
+    payload = create_response.json()
+    assert payload["brief"]["opportunity_id"] == opp["id"]
+    assert payload["brief"]["status"] == "draft"
+    assert payload["brief"]["title"]
+    assert payload["brief"]["hook"]
+    assert payload["brief"]["outline"]
+    assert payload["brief"]["script_plan"]
+
+    list_response = client.get("/production-briefs")
+    assert list_response.status_code == 200
+    assert any(item["id"] == payload["brief"]["id"] for item in list_response.json())
+
+    read_response = client.get(f"/production-briefs/{payload['brief']['id']}")
+    assert read_response.status_code == 200
+    assert read_response.json()["id"] == payload["brief"]["id"]
+
+
+def test_brief_uses_assigned_agent_profile_when_present() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Brief Agent Profile Channel"}).json()["id"]
+    agents = client.get("/agents").json()
+    target_agent = next(
+        agent for agent in agents if agent["channel_id"] == channel_id and agent["name"] == "Local Business AI Agent"
+    )
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "How to automate customer calls with AI",
+            "niche_lane": "local business AI automation",
+            "audience": "local operators",
+            "monetization_path": "SkybridgeCX leads + audits",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "approved_for_video"}).status_code == 200
+    brief_payload = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    assert brief_payload["assigned_agent_id"] == target_agent["id"]
+    assert "Local Business AI Agent" in (brief_payload["operator_review_notes"] or "")
+
+
+def test_brief_generation_does_not_auto_approve_or_promote() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Brief No Auto Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI business automation SOP for missed calls",
+            "niche_lane": "AI business automation",
+            "audience": "small business owners",
+            "monetization_path": "consulting audits",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "shortlisted"}).status_code == 200
+    brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    assert brief["status"] == "draft"
+    assert brief["promoted_video_id"] is None
+    assert len(client.get("/videos").json()) == 0
+
+
+def test_brief_review_update_and_promote_rules() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Brief Review Promote Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI ecommerce product research workflow",
+            "niche_lane": "ecommerce AI",
+            "audience": "ecommerce founders",
+            "monetization_path": "affiliate tools + templates",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "approved_for_video"}).status_code == 200
+    brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    brief_id = brief["id"]
+
+    blocked_promote = client.post(f"/production-briefs/{brief_id}/promote-to-video")
+    assert blocked_promote.status_code == 400
+
+    review_update = client.patch(
+        f"/production-briefs/{brief_id}/review",
+        json={"status": "needs_revision", "operator_review_notes": "Tighten hook and reduce assumptions."},
+    )
+    assert review_update.status_code == 200
+    assert review_update.json()["status"] == "needs_revision"
+    assert "Tighten hook" in (review_update.json()["operator_review_notes"] or "")
+
+    assert client.patch(
+        f"/production-briefs/{brief_id}/review",
+        json={"status": "approved", "operator_review_notes": "Approved for promotion."},
+    ).status_code == 200
+    promoted_video = client.post(f"/production-briefs/{brief_id}/promote-to-video")
+    assert promoted_video.status_code == 200
+    video_body = promoted_video.json()
+    assert video_body["status"] == "idea"
+    assert video_body["approved"] is False
+    assert video_body["preview_reviewed"] is False
+
+    updated_brief = client.get(f"/production-briefs/{brief_id}").json()
+    assert updated_brief["status"] == "promoted"
+    assert updated_brief["promoted_video_id"] == video_body["id"]
+
+
+def test_brief_audit_events_written_for_create_review_promote() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Brief Audit Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Career productivity AI workflow for weekly execution",
+            "niche_lane": "career/productivity AI",
+            "audience": "knowledge workers",
+            "monetization_path": "templates + affiliates",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "approved_for_video"}).status_code == 200
+    brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    brief_id = brief["id"]
+    assert client.patch(f"/production-briefs/{brief_id}/review", json={"status": "approved"}).status_code == 200
+    assert client.post(f"/production-briefs/{brief_id}/promote-to-video").status_code == 200
+
+    events = client.get("/audit?limit=200").json()
+    event_types = [item["event_type"] for item in events]
+    assert "production_brief_created" in event_types
+    assert "production_brief_review_updated" in event_types
+    assert "production_brief_promoted_to_video" in event_types
+
+
+def test_command_center_includes_briefs_queues() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Command Center Brief Queue Channel"}).json()["id"]
+    opp = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI tool stack for local business intake workflows",
+            "niche_lane": "AI tool breakdowns",
+            "audience": "operators",
+            "monetization_path": "affiliate tools",
+        },
+    ).json()
+    assert client.patch(f"/opportunities/{opp['id']}/review", json={"review_status": "approved_for_video"}).status_code == 200
+    draft_brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    approved_brief = client.post(f"/production-briefs/from-opportunity/{opp['id']}").json()["brief"]
+    assert client.patch(f"/production-briefs/{approved_brief['id']}/review", json={"status": "approved"}).status_code == 200
+
+    summary = client.get("/command-center/today")
+    assert summary.status_code == 200
+    body = summary.json()
+    draft_ids = {item["brief_id"] for item in body["briefs_needing_review"]}
+    approved_ids = {item["brief_id"] for item in body["approved_briefs_ready_to_promote"]}
+    assert draft_brief["id"] in draft_ids
+    assert approved_brief["id"] in approved_ids
+
+
 def test_opportunity_review_status_validation_and_rejection() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Review Validation Channel"}).json()["id"]

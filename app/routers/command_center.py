@@ -8,12 +8,22 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import AuditEvent, ContentAgent, ExecutiveProducerRecommendation, Video, VideoOpportunity, VideoStatus
+from app.models import (
+    AuditEvent,
+    ContentAgent,
+    ExecutiveProducerRecommendation,
+    ProductionBrief,
+    ProductionBriefStatus,
+    Video,
+    VideoOpportunity,
+    VideoStatus,
+)
 from app.routers.executive_producer import serialize_recommendation
 from app.routers.opportunities import serialize_opportunity
 from app.schemas import (
     AuditEventRead,
     CommandCenterAction,
+    CommandCenterBriefItem,
     CommandCenterTaskItem,
     CommandCenterTodayRead,
 )
@@ -54,6 +64,18 @@ def _task(video: Video, reason: str, target_page: str) -> CommandCenterTaskItem:
     )
 
 
+def _brief_task(brief: ProductionBrief, agent_name: str | None) -> CommandCenterBriefItem:
+    return CommandCenterBriefItem(
+        brief_id=brief.id,
+        opportunity_id=brief.opportunity_id,
+        status=ProductionBriefStatus(brief.status),
+        title=brief.title,
+        topic=brief.topic,
+        agent_name=agent_name,
+        target_page="briefs",
+    )
+
+
 @router.get("/today", response_model=CommandCenterTodayRead)
 def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterTodayRead:
     videos = list(db.scalars(select(Video).order_by(Video.created_at.desc())))
@@ -68,12 +90,18 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
     recent_audit_rows = list(
         db.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(12))
     )
+    briefs = list(
+        db.scalars(select(ProductionBrief).order_by(ProductionBrief.updated_at.desc(), ProductionBrief.created_at.desc()))
+    )
+    agent_map = {agent.id: agent for agent in db.scalars(select(ContentAgent))}
 
     blockers: list[CommandCenterTaskItem] = []
     needs_preview_review: list[CommandCenterTaskItem] = []
     needs_compliance_review: list[CommandCenterTaskItem] = []
     ready_for_packaging: list[CommandCenterTaskItem] = []
     ready_for_payload: list[CommandCenterTaskItem] = []
+    briefs_needing_review: list[CommandCenterBriefItem] = []
+    approved_briefs_ready_to_promote: list[CommandCenterBriefItem] = []
 
     for video in videos:
         preview_exists = _preview_exists(video)
@@ -96,6 +124,14 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
         if video.status == VideoStatus.packaged:
             ready_for_payload.append(_task(video, "Packaged and ready for YouTube payload preparation.", "publishing"))
 
+    for brief in briefs:
+        agent = agent_map.get(brief.assigned_agent_id) if brief.assigned_agent_id else None
+        agent_name = agent.name if agent else None
+        if brief.status in (ProductionBriefStatus.draft.value, ProductionBriefStatus.needs_revision.value):
+            briefs_needing_review.append(_brief_task(brief, agent_name))
+        elif brief.status == ProductionBriefStatus.approved.value:
+            approved_briefs_ready_to_promote.append(_brief_task(brief, agent_name))
+
     best_opportunity = serialize_opportunity(best_opportunity_row) if best_opportunity_row else None
     executive_recommendation = (
         serialize_recommendation(latest_recommendation_row, db) if latest_recommendation_row else None
@@ -107,7 +143,7 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
     if assigned_agent is None and best_opportunity_row and best_opportunity_row.assigned_agent_id:
         assigned_agent = db.get(ContentAgent, best_opportunity_row.assigned_agent_id)
 
-    if not videos and best_opportunity is None and executive_recommendation is None:
+    if not videos and best_opportunity is None and executive_recommendation is None and not briefs:
         return CommandCenterTodayRead(
             best_opportunity=None,
             executive_recommendation=None,
@@ -132,6 +168,8 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
             needs_compliance_review=[],
             ready_for_packaging=[],
             ready_for_payload=[],
+            briefs_needing_review=[],
+            approved_briefs_ready_to_promote=[],
             recent_audit_events=[AuditEventRead.model_validate(row) for row in recent_audit_rows],
             summary_status="empty",
             summary_message="No reviewed opportunities are ready yet. Start by creating and reviewing opportunities.",
@@ -147,7 +185,31 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
     summary_status = "on_track"
     summary_message = "Pipeline is stable. Continue with the next scheduled operator action."
 
-    if blockers:
+    if approved_briefs_ready_to_promote:
+        first_brief = approved_briefs_ready_to_promote[0]
+        next_action = CommandCenterAction(
+            key="promote_approved_brief",
+            label=f"Promote approved brief: {first_brief.title}",
+            reason="An approved production brief is ready to become a video idea.",
+            target_page="briefs",
+            cta_label="Open Briefs",
+            opportunity_id=first_brief.opportunity_id,
+        )
+        summary_status = "attention_needed"
+        summary_message = "Approved briefs are waiting for promotion to video ideas."
+    elif briefs_needing_review:
+        first_brief = briefs_needing_review[0]
+        next_action = CommandCenterAction(
+            key="review_production_brief",
+            label=f"Review production brief: {first_brief.title}",
+            reason="Brief requires operator review before approval and promotion.",
+            target_page="briefs",
+            cta_label="Open Briefs",
+            opportunity_id=first_brief.opportunity_id,
+        )
+        summary_status = "attention_needed"
+        summary_message = "Production briefs are waiting for operator review."
+    elif blockers:
         first = blockers[0]
         next_action = CommandCenterAction(
             key="resolve_blocker",
@@ -236,6 +298,16 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
             else "No videos currently ready for packaging."
         ),
         (
+            f"Review production briefs pending approval ({len(briefs_needing_review)})."
+            if briefs_needing_review
+            else "No production briefs pending review."
+        ),
+        (
+            f"Promote approved briefs to video ideas ({len(approved_briefs_ready_to_promote)})."
+            if approved_briefs_ready_to_promote
+            else "No approved briefs waiting for promotion."
+        ),
+        (
             f"Prepare YouTube payloads for packaged videos ({len(ready_for_payload)})."
             if ready_for_payload
             else "No packaged videos waiting for payload."
@@ -253,6 +325,8 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
         needs_compliance_review=needs_compliance_review,
         ready_for_packaging=ready_for_packaging,
         ready_for_payload=ready_for_payload,
+        briefs_needing_review=briefs_needing_review,
+        approved_briefs_ready_to_promote=approved_briefs_ready_to_promote,
         recent_audit_events=[AuditEventRead.model_validate(row) for row in recent_audit_rows],
         summary_status=summary_status,
         summary_message=summary_message,

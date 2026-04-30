@@ -17,6 +17,7 @@ const app = {
     lastComplianceReportByVideoId: {},
     opportunities: [],
     agents: [],
+    briefs: [],
     producerRecommendation: null,
     producerHistory: [],
     commandCenterToday: null,
@@ -40,6 +41,7 @@ const app = {
     await this.loadGlobalAudit();
     await this.loadOpportunities();
     await this.loadAgents();
+    await this.loadBriefs();
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
     await this.loadCommandCenter();
@@ -86,6 +88,7 @@ const app = {
       opportunities: 'Opportunities',
       agents: 'Agents',
       producer: 'Producer',
+      briefs: 'Briefs',
       content: 'Content',
       assets: 'Assets',
       publishing: 'Publishing',
@@ -103,6 +106,9 @@ const app = {
     if (page === 'producer') {
       this.loadExecutiveProducerRecommendation();
       this.loadProducerHistory();
+    }
+    if (page === 'briefs') {
+      this.loadBriefs();
     }
     if (page === 'dashboard') {
       this.loadCommandCenter();
@@ -367,7 +373,7 @@ const app = {
     if (action.video_id) {
       this.selectVideo(action.video_id, { fetchAssets: true, clearCompliance: false });
     }
-    if (action.opportunity_id) {
+    if (action.opportunity_id && targetPage === 'opportunities') {
       this.setActivePage('opportunities');
       this.log(`Focused opportunity #${action.opportunity_id} from command center.`, 'info');
       return;
@@ -384,8 +390,10 @@ const app = {
     const blockersText = document.getElementById('blockersNextStep');
     const checklistEl = document.getElementById('dailyChecklistList');
     const recentActivityEl = document.getElementById('commandCenterRecentActivityList');
+    const briefReviewEl = document.getElementById('commandCenterBriefsReviewList');
+    const briefApprovedEl = document.getElementById('commandCenterBriefsApprovedList');
 
-    if (!nextText || !nextButton || !bestOppEl || !assignedAgentEl || !producerReasonEl || !blockersText || !checklistEl || !recentActivityEl) {
+    if (!nextText || !nextButton || !bestOppEl || !assignedAgentEl || !producerReasonEl || !blockersText || !checklistEl || !recentActivityEl || !briefReviewEl || !briefApprovedEl) {
       return;
     }
 
@@ -403,6 +411,8 @@ const app = {
       this.renderTaskList('needsAttentionQueueList', [], 'No review queue loaded.');
       this.renderTaskList('commandCenterPackagingList', [], 'No packaging queue loaded.');
       this.renderTaskList('commandCenterPayloadList', [], 'No payload queue loaded.', 'publishing');
+      briefReviewEl.innerHTML = '<div class="empty-state">No briefs pending review.</div>';
+      briefApprovedEl.innerHTML = '<div class="empty-state">No approved briefs ready to promote.</div>';
       recentActivityEl.innerHTML = '<div class="empty-state">Unable to load recent activity.</div>';
       return;
     }
@@ -441,6 +451,26 @@ const app = {
     this.renderTaskList('needsAttentionQueueList', [...needsCompliance, ...needsPreview], 'No review items right now.');
     this.renderTaskList('commandCenterPackagingList', data.ready_for_packaging || [], 'No videos ready for packaging.');
     this.renderTaskList('commandCenterPayloadList', data.ready_for_payload || [], 'No videos ready for payload.', 'publishing');
+    const briefsReview = Array.isArray(data.briefs_needing_review) ? data.briefs_needing_review : [];
+    const briefsApproved = Array.isArray(data.approved_briefs_ready_to_promote) ? data.approved_briefs_ready_to_promote : [];
+    briefReviewEl.innerHTML = briefsReview.length > 0
+      ? briefsReview.map(item => `
+        <div class="video-card" style="padding:0.65rem;">
+          <div class="video-title">${this.escapeHtml(item.title || item.topic || `Brief #${item.brief_id}`)}</div>
+          <div class="video-meta-line">${this.escapeHtml(item.agent_name || 'Unassigned')} • ${this.escapeHtml(item.status || 'draft')}</div>
+          <button class="btn warning" style="margin-top:0.45rem;" onclick="app.setActivePage('briefs')">Review Briefs</button>
+        </div>
+      `).join('')
+      : '<div class="empty-state">No briefs pending review.</div>';
+    briefApprovedEl.innerHTML = briefsApproved.length > 0
+      ? briefsApproved.map(item => `
+        <div class="video-card" style="padding:0.65rem;">
+          <div class="video-title">${this.escapeHtml(item.title || item.topic || `Brief #${item.brief_id}`)}</div>
+          <div class="video-meta-line">${this.escapeHtml(item.agent_name || 'Unassigned')} • approved</div>
+          <button class="btn success" style="margin-top:0.45rem;" onclick="app.setActivePage('briefs')">Promote Briefs</button>
+        </div>
+      `).join('')
+      : '<div class="empty-state">No approved briefs ready to promote.</div>';
 
     const recentEvents = Array.isArray(data.recent_audit_events) ? data.recent_audit_events : [];
     if (recentEvents.length === 0) {
@@ -797,6 +827,7 @@ const app = {
             <button class="btn" onclick="app.updateOpportunityReview(${item.id}, 'needs_more_research')">Needs More Research</button>
             <button class="btn danger" onclick="app.updateOpportunityReview(${item.id}, 'rejected')">Reject</button>
             <button class="btn success" onclick="app.updateOpportunityReview(${item.id}, 'approved_for_video')">Approve for Video</button>
+            <button class="btn" ${['shortlisted', 'approved_for_video'].includes(item.review_status) ? '' : 'disabled'} onclick="app.createBriefFromOpportunity(${item.id})">Create Brief</button>
             <button class="btn success" ${item.review_status === 'approved_for_video' ? '' : 'disabled'} onclick="app.promoteOpportunity(${item.id})">Promote to Video</button>
           </div>
           ${item.review_status === 'approved_for_video'
@@ -1039,6 +1070,141 @@ const app = {
     }
   },
 
+  async createBriefFromOpportunity(opportunityId) {
+    try {
+      const res = await fetch(`/production-briefs/from-opportunity/${opportunityId}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create production brief');
+      }
+      this.log(data.message || `Created production brief #${data.brief?.id}.`, 'success');
+      await this.loadBriefs();
+      await this.loadCommandCenter();
+      this.setActivePage('briefs');
+    } catch (err) {
+      this.log(`Create brief failed: ${err.message}`, 'error');
+    }
+  },
+
+  async loadBriefs() {
+    const container = document.getElementById('briefsList');
+    if (!container) return;
+    try {
+      const res = await fetch('/production-briefs');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load production briefs');
+      }
+      this.state.briefs = Array.isArray(data) ? data : [];
+      this.renderBriefs();
+      this.renderExecutiveProducerRecommendation(this.state.producerRecommendation);
+    } catch (err) {
+      this.log(`Error loading briefs: ${err.message}`, 'error');
+      container.innerHTML = '<div class="empty-state">Failed to load production briefs.</div>';
+    }
+  },
+
+  renderBriefs() {
+    const container = document.getElementById('briefsList');
+    if (!container) return;
+    const briefs = this.state.briefs || [];
+    if (briefs.length === 0) {
+      container.innerHTML = '<div class="empty-state">No production briefs yet. Create one from Opportunities or Producer.</div>';
+      return;
+    }
+
+    container.innerHTML = briefs.map(brief => {
+      const agent = this.getAgentById(brief.assigned_agent_id);
+      const agentText = agent ? `${agent.name} (${agent.lane || 'lane n/a'})` : 'Unassigned agent';
+      const status = this.escapeHtml(brief.status || 'draft');
+      const promoteDisabled = brief.status !== 'approved';
+      return `
+        <article class="agent-card">
+          <div class="agent-card-header">
+            <div>
+              <div class="video-title-main">${this.escapeHtml(brief.title || brief.topic || 'Untitled brief')}</div>
+              <div class="video-meta-line">${this.escapeHtml(brief.topic || '-')}</div>
+            </div>
+            <span class="video-status ${status}">${status}</span>
+          </div>
+          <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value">${this.escapeHtml(agentText)}</span></div>
+          <div class="meta-row"><span class="meta-label">Lane</span><span class="meta-value">${this.escapeHtml(brief.niche_lane || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Hook</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.hook || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Outline</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.outline || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Script Plan</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.script_plan || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">B-Roll Plan</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.b_roll_plan || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">CTA</span><span class="meta-value">${this.escapeHtml(brief.cta || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Compliance Notes</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.compliance_notes || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Claims To Verify</span><span class="meta-value pre-wrap">${this.escapeHtml(brief.claims_to_verify || '-')}</span></div>
+          <label class="agent-field" style="margin-top:0.5rem;">
+            <span>Operator Notes</span>
+            <textarea class="opportunity-input agent-textarea" id="briefNotes-${brief.id}" rows="3" placeholder="Operator review notes">${this.escapeHtml(brief.operator_review_notes || '')}</textarea>
+          </label>
+          <div class="row-actions agent-actions">
+            <button class="btn" onclick="app.updateBriefStatus(${brief.id}, 'needs_revision')">Mark Needs Revision</button>
+            <button class="btn success" onclick="app.updateBriefStatus(${brief.id}, 'approved')">Approve Brief</button>
+            <button class="btn" onclick="app.updateBriefStatus(${brief.id}, 'draft')">Set Draft</button>
+            <button class="btn success" ${promoteDisabled ? 'disabled' : ''} onclick="app.promoteBriefToVideo(${brief.id})">Promote to Video</button>
+          </div>
+        </article>
+      `;
+    }).join('');
+  },
+
+  async updateBriefStatus(briefId, status) {
+    const notes = document.getElementById(`briefNotes-${briefId}`)?.value?.trim() || null;
+    try {
+      const res = await fetch(`/production-briefs/${briefId}/review`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, operator_review_notes: notes })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update brief');
+      }
+      this.log(`Updated brief #${briefId} -> ${status}.`, 'success');
+      await this.loadBriefs();
+      await this.loadCommandCenter();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Update brief failed: ${err.message}`, 'error');
+    }
+  },
+
+  async promoteBriefToVideo(briefId) {
+    try {
+      const res = await fetch(`/production-briefs/${briefId}/promote-to-video`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to promote brief');
+      }
+      this.log(`Promoted brief to video idea: ${data.title}`, 'success');
+      this.state.selectedVideoId = data.id;
+      await this.refreshAfterMutation({
+        reloadAssets: false,
+        reloadCalendar: true,
+        reloadAudit: true,
+        keepComplianceReport: false,
+        reloadOpportunities: true
+      });
+      await this.loadBriefs();
+      await this.loadCommandCenter();
+      this.setActivePage('content');
+    } catch (err) {
+      this.log(`Promote brief failed: ${err.message}`, 'error');
+    }
+  },
+
+  async createBriefFromProducerRecommendation() {
+    const recommendation = this.state.producerRecommendation;
+    if (!recommendation || !recommendation.selected_opportunity_id) {
+      this.log('No recommended opportunity available to create a brief.', 'error');
+      return;
+    }
+    await this.createBriefFromOpportunity(recommendation.selected_opportunity_id);
+  },
+
   async loadExecutiveProducerRecommendation() {
     try {
       const res = await fetch('/executive-producer/recommendation');
@@ -1097,9 +1263,10 @@ const app = {
     const producerBrief = document.getElementById('producerBrief');
     const producerEmptyState = document.getElementById('producerEmptyState');
     const viewBtn = document.getElementById('btnProducerViewOpportunity');
+    const createBriefBtn = document.getElementById('btnProducerCreateBrief');
     const promoteBtn = document.getElementById('btnProducerPromote');
 
-    if (!dashboardTopic || !dashboardConfidence || !dashboardAgent || !dashboardMonetization || !producerTopic || !producerWhy || !producerNiche || !producerAgent || !producerAgentLane || !producerAgentFocus || !producerAgentMonetization || !producerAgentCompliance || !producerAgentRules || !producerTitle || !producerThumb || !producerCta || !producerMonetization || !producerConfidence || !producerRisks || !producerChecklist || !producerBrief || !producerEmptyState || !viewBtn || !promoteBtn) {
+    if (!dashboardTopic || !dashboardConfidence || !dashboardAgent || !dashboardMonetization || !producerTopic || !producerWhy || !producerNiche || !producerAgent || !producerAgentLane || !producerAgentFocus || !producerAgentMonetization || !producerAgentCompliance || !producerAgentRules || !producerTitle || !producerThumb || !producerCta || !producerMonetization || !producerConfidence || !producerRisks || !producerChecklist || !producerBrief || !producerEmptyState || !viewBtn || !createBriefBtn || !promoteBtn) {
       return;
     }
 
@@ -1129,6 +1296,7 @@ const app = {
       producerBrief.textContent = '-';
       producerEmptyState.textContent = 'No recommendation loaded.';
       viewBtn.disabled = true;
+      createBriefBtn.disabled = true;
       promoteBtn.disabled = true;
       return;
     }
@@ -1171,6 +1339,7 @@ const app = {
     producerEmptyState.textContent = emptyState || 'Recommendation ready.';
 
     viewBtn.disabled = !hasOpportunity;
+    createBriefBtn.disabled = !hasOpportunity;
     promoteBtn.disabled = !(hasOpportunity && data.selected_review_status === 'approved_for_video');
   },
 
@@ -1524,6 +1693,7 @@ const app = {
       keepComplianceReport = false,
       reloadOpportunities = false,
       reloadProducer = true,
+      reloadBriefs = true,
       reloadCommandCenter = true
     } = options;
 
@@ -1541,6 +1711,9 @@ const app = {
     if (reloadProducer) {
       await this.loadExecutiveProducerRecommendation();
       await this.loadProducerHistory();
+    }
+    if (reloadBriefs) {
+      await this.loadBriefs();
     }
     if (reloadCommandCenter) {
       await this.loadCommandCenter();
