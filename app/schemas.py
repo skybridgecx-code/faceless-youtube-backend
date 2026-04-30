@@ -237,6 +237,9 @@ class PreviewStatus(BaseModel):
     tts_provider: str | None = None
     tts_voice: str | None = None
     tts_model: str | None = None
+    visual_assets_registered: bool = False
+    visual_assets_count: int = 0
+    visual_thumbnail_path: str | None = None
 
 
 class PreviewReviewUpdate(BaseModel):
@@ -661,6 +664,8 @@ class VisualSceneRead(BaseModel):
     b_roll_prompt: str
     dashboard_demo_prompt: str
     safety_notes: str
+    asset_status: str = "planned"
+    generated_asset_path: str | None = None
     created_at: datetime
     updated_at: datetime
     prompts: list[VisualAssetPromptRead] = []
@@ -684,6 +689,11 @@ class VisualAssetPlanRead(BaseModel):
     ready_marked_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    jobs_total: int = 0
+    jobs_queued: int = 0
+    jobs_exported: int = 0
+    jobs_imported: int = 0
+    assets_registered: int = 0
     scenes: list[VisualSceneRead] = []
     prompts: list[VisualAssetPromptRead] = []
 
@@ -750,6 +760,103 @@ class VisualSceneUpdate(BaseModel):
         return text
 
 
+class VisualGenerationJobRead(BaseModel):
+    id: int
+    visual_asset_plan_id: int
+    visual_scene_id: int | None = None
+    prompt_id: int | None = None
+    job_type: str
+    provider: str
+    status: str
+    prompt: str
+    negative_prompt: str | None = None
+    provider_payload_json: str
+    output_path: str | None = None
+    failure_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VisualGeneratedAssetRead(BaseModel):
+    id: int
+    visual_asset_plan_id: int
+    visual_scene_id: int | None = None
+    generation_job_id: int | None = None
+    asset_type: str
+    file_path: str
+    file_exists: bool
+    mime_type: str | None = None
+    duration_seconds: float | None = None
+    width: int | None = None
+    height: int | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VisualGenerationQueueRequest(BaseModel):
+    provider: str = Field(default="manual", max_length=40)
+    negative_prompt: str | None = None
+
+    @field_validator("provider", "negative_prompt", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class VisualGenerationQueueResult(BaseModel):
+    plan_id: int
+    created_jobs: int
+    skipped_jobs: int
+    jobs: list[VisualGenerationJobRead]
+
+
+class VisualGenerationJobUpdate(BaseModel):
+    provider: str | None = Field(default=None, max_length=40)
+    status: str | None = Field(default=None, max_length=40)
+    prompt: str | None = None
+    negative_prompt: str | None = None
+    failure_reason: str | None = None
+
+    @field_validator("provider", "status", "prompt", "negative_prompt", "failure_reason", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class VisualGenerationRegisterOutputRequest(BaseModel):
+    output_path: str
+    notes: str | None = None
+    mime_type: str | None = Field(default=None, max_length=120)
+    duration_seconds: float | None = None
+    width: int | None = None
+    height: int | None = None
+
+    @field_validator("output_path", "notes", "mime_type", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
 class PipelineOpportunityItem(BaseModel):
     id: int
     topic: str
@@ -801,6 +908,8 @@ class PipelineSummaryCounts(BaseModel):
     approved_briefs_ready_to_promote: int
     videos_needing_assets: int
     videos_missing_visual_plans: int
+    videos_visual_jobs_pending: int
+    videos_visual_assets_registered: int
     videos_needing_preview: int
     videos_needing_preview_review: int
     videos_needing_compliance: int
@@ -827,6 +936,8 @@ class DailyPipelineRead(BaseModel):
     approved_briefs_ready_to_promote: list[PipelineBriefItem]
     videos_needing_assets: list[PipelineVideoItem]
     videos_missing_visual_plans: list[PipelineVideoItem]
+    videos_visual_jobs_pending: list[PipelineVideoItem]
+    videos_visual_assets_registered: list[PipelineVideoItem]
     videos_needing_preview: list[PipelineVideoItem]
     videos_needing_preview_review: list[PipelineVideoItem]
     videos_needing_compliance: list[PipelineVideoItem]

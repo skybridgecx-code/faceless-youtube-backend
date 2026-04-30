@@ -17,6 +17,8 @@ from app.models import (
     ProductionBriefStatus,
     ProducerConfidenceLabel,
     Video,
+    VisualGeneratedAsset,
+    VisualGenerationJob,
     VisualAssetPlan,
     VideoOpportunity,
     VideoStatus,
@@ -106,6 +108,30 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         for video_id in db.scalars(select(VisualAssetPlan.video_id).where(VisualAssetPlan.video_id.is_not(None)))
         if video_id is not None
     }
+    visual_jobs_pending_video_ids = {
+        video_id
+        for video_id in db.scalars(
+            select(VisualAssetPlan.video_id)
+            .join(VisualGenerationJob, VisualGenerationJob.visual_asset_plan_id == VisualAssetPlan.id)
+            .where(
+                VisualAssetPlan.video_id.is_not(None),
+                VisualGenerationJob.status.in_(("queued", "exported")),
+            )
+        )
+        if video_id is not None
+    }
+    visual_assets_registered_video_ids = {
+        video_id
+        for video_id in db.scalars(
+            select(VisualAssetPlan.video_id)
+            .join(VisualGeneratedAsset, VisualGeneratedAsset.visual_asset_plan_id == VisualAssetPlan.id)
+            .where(
+                VisualAssetPlan.video_id.is_not(None),
+                VisualGeneratedAsset.file_exists.is_(True),
+            )
+        )
+        if video_id is not None
+    }
 
     opportunities_to_review = [
         PipelineOpportunityItem(
@@ -161,6 +187,8 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
 
     videos_needing_assets: list[PipelineVideoItem] = []
     videos_missing_visual_plans: list[PipelineVideoItem] = []
+    videos_visual_jobs_pending: list[PipelineVideoItem] = []
+    videos_visual_assets_registered: list[PipelineVideoItem] = []
     videos_needing_preview: list[PipelineVideoItem] = []
     videos_needing_preview_review: list[PipelineVideoItem] = []
     videos_needing_compliance: list[PipelineVideoItem] = []
@@ -174,6 +202,13 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         assets_generated = len(video.assets) > 0
         has_compliance_run = video.id in compliance_run_video_ids
         has_visual_plan = video.id in visual_plan_video_ids
+        has_visual_jobs_pending = video.id in visual_jobs_pending_video_ids
+        has_visual_assets_registered = video.id in visual_assets_registered_video_ids
+
+        if video.approved and has_visual_assets_registered:
+            videos_visual_assets_registered.append(
+                _video_item(video, preview_rendered, "Registered visual assets are available for preview/render inputs.")
+            )
 
         # Assign each video to exactly one active stage using strict priority order.
         if not assets_generated and video.status != VideoStatus.published:
@@ -185,6 +220,12 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         if video.approved and not has_visual_plan:
             videos_missing_visual_plans.append(
                 _video_item(video, preview_rendered, "Visual plan missing. Create visual plan before preview render.")
+            )
+            continue
+
+        if video.approved and has_visual_jobs_pending and not has_visual_assets_registered:
+            videos_visual_jobs_pending.append(
+                _video_item(video, preview_rendered, "Visual generation jobs are queued/exported; register outputs before preview render.")
             )
             continue
 
@@ -298,6 +339,15 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
             target_page="assets",
             video_id=top.video_id,
         )
+    elif videos_visual_jobs_pending:
+        top = videos_visual_jobs_pending[0]
+        next_step = PipelineNextStep(
+            key="register_visual_outputs",
+            label=f"Register visual outputs: {top.title}",
+            reason=top.reason or "Visual jobs are pending output registration.",
+            target_page="assets",
+            video_id=top.video_id,
+        )
     elif videos_needing_preview:
         top = videos_needing_preview[0]
         next_step = PipelineNextStep(
@@ -360,6 +410,8 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         approved_briefs_ready_to_promote=len(approved_briefs_ready_to_promote),
         videos_needing_assets=len(videos_needing_assets),
         videos_missing_visual_plans=len(videos_missing_visual_plans),
+        videos_visual_jobs_pending=len(videos_visual_jobs_pending),
+        videos_visual_assets_registered=len(videos_visual_assets_registered),
         videos_needing_preview=len(videos_needing_preview),
         videos_needing_preview_review=len(videos_needing_preview_review),
         videos_needing_compliance=len(videos_needing_compliance),
@@ -376,6 +428,8 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         approved_briefs_ready_to_promote=approved_briefs_ready_to_promote,
         videos_needing_assets=videos_needing_assets,
         videos_missing_visual_plans=videos_missing_visual_plans,
+        videos_visual_jobs_pending=videos_visual_jobs_pending,
+        videos_visual_assets_registered=videos_visual_assets_registered,
         videos_needing_preview=videos_needing_preview,
         videos_needing_preview_review=videos_needing_preview_review,
         videos_needing_compliance=videos_needing_compliance,

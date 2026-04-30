@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db, init_db
-from app.models import AuditEvent, PublishRecord, Video, VideoStatus, VisualAssetPlan
+from app.models import AuditEvent, PublishRecord, Video, VideoStatus, VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
 from app.routers import (
     agents,
     channels,
@@ -26,6 +26,7 @@ from app.routers import (
     publish,
     research,
     videos,
+    visual_generation,
     visual_assets,
 )
 from app.security import InMemoryRateLimiter, auth_error_payload, check_internal_api_key, client_ip, is_ai_cost_route, is_public_path, needs_auth
@@ -109,6 +110,7 @@ app.include_router(production_briefs.router)
 app.include_router(pipeline.router)
 app.include_router(research.router)
 app.include_router(visual_assets.router)
+app.include_router(visual_generation.router)
 
 
 def has_preview_file(video: Video) -> bool:
@@ -171,6 +173,30 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
         for video_id in db.scalars(select(VisualAssetPlan.video_id).where(VisualAssetPlan.video_id.is_not(None)))
         if video_id is not None
     }
+    visual_jobs_pending_video_ids = {
+        video_id
+        for video_id in db.scalars(
+            select(VisualAssetPlan.video_id)
+            .join(VisualGenerationJob, VisualGenerationJob.visual_asset_plan_id == VisualAssetPlan.id)
+            .where(
+                VisualAssetPlan.video_id.is_not(None),
+                VisualGenerationJob.status.in_(("queued", "exported")),
+            )
+        )
+        if video_id is not None
+    }
+    visual_assets_registered_video_ids = {
+        video_id
+        for video_id in db.scalars(
+            select(VisualAssetPlan.video_id)
+            .join(VisualGeneratedAsset, VisualGeneratedAsset.visual_asset_plan_id == VisualAssetPlan.id)
+            .where(
+                VisualAssetPlan.video_id.is_not(None),
+                VisualGeneratedAsset.file_exists.is_(True),
+            )
+        )
+        if video_id is not None
+    }
 
     status_counts: dict[str, int] = {}
     publish_status_counts: dict[str, int] = {}
@@ -223,6 +249,8 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
 
         preview_exists = has_preview_file(video)
         has_visual_plan = video.id in visual_plan_video_ids
+        has_visual_jobs_pending = video.id in visual_jobs_pending_video_ids
+        has_visual_assets_registered = video.id in visual_assets_registered_video_ids
 
         if video.approved and not has_visual_plan:
             action_queue.append(
@@ -233,6 +261,19 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
                     publish_status=video.publish_status,
                     reason="Visual plan missing",
                     suggested_next_action="Create visual plan",
+                )
+            )
+            continue
+
+        if video.approved and has_visual_jobs_pending and not has_visual_assets_registered:
+            action_queue.append(
+                PipelineActionItem(
+                    video_id=video.id,
+                    title=video.title,
+                    workflow_status=video.status.value,
+                    publish_status=video.publish_status,
+                    reason="Visual outputs pending",
+                    suggested_next_action="Register generated visual files",
                 )
             )
             continue
@@ -316,6 +357,7 @@ def get_pipeline_summary(db: Session = Depends(get_db)) -> PipelineSummary:
         "Assets generated but need review": 1,
         "Generated but not approved": 1,
         "Visual plan missing": 2,
+        "Visual outputs pending": 2,
         "Preview not available yet": 2,
         "Preview ready but not reviewed": 2,
         "Approved but not packaged": 3,

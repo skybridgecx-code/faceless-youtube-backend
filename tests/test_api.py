@@ -47,6 +47,14 @@ def _write_real_preview_file(video_id: int) -> Path:
     return preview_path
 
 
+def _write_real_visual_asset_file(name: str = "visual_asset.png") -> Path:
+    output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
+    asset_path = output_dir / "generated" / name
+    asset_path.parent.mkdir(parents=True, exist_ok=True)
+    asset_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    return asset_path
+
+
 @pytest.mark.usefixtures("monkeypatch")
 def test_render_draft_preview_creates_non_empty_mp4_when_ffmpeg_available(monkeypatch: pytest.MonkeyPatch) -> None:
     client = TestClient(app)
@@ -970,6 +978,136 @@ def test_visual_asset_write_routes_require_internal_api_key_when_configured(monk
     assert allowed.status_code == 200
 
 
+def test_visual_generation_queue_from_plan_and_no_duplicate_active_jobs() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Queue Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Queue Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+
+    first = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"})
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["created_jobs"] > 0
+    assert first_body["skipped_jobs"] == 0
+
+    jobs = client.get(f"/visual-generation/jobs?plan_id={plan['id']}").json()
+    assert len(jobs) == first_body["created_jobs"]
+    assert any(job["job_type"] == "thumbnail" for job in jobs)
+    assert all(job["status"] == "queued" for job in jobs)
+
+    second = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"})
+    assert second.status_code == 200
+    second_body = second.json()
+    assert second_body["created_jobs"] == 0
+    assert second_body["skipped_jobs"] >= first_body["created_jobs"]
+    jobs_after = client.get(f"/visual-generation/jobs?plan_id={plan['id']}").json()
+    assert len(jobs_after) == len(jobs)
+
+
+def test_visual_generation_export_payload_marks_exported_without_external_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Export Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Export Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    job_id = queue["jobs"][0]["id"]
+
+    def fail_if_called(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("No external network call should be made when exporting payload")
+
+    monkeypatch.setattr(videos_router.urllib.request, "urlopen", fail_if_called)
+
+    exported = client.post(f"/visual-generation/jobs/{job_id}/export-payload")
+    assert exported.status_code == 200
+    body = exported.json()
+    assert body["provider_payload"]["prompt"]
+    assert body["provider_payload"]["safety_notes"]
+    assert body["job"]["status"] == "exported"
+
+
+def test_visual_generation_register_output_rejects_missing_file() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Missing File Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Missing File Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    job_id = queue["jobs"][0]["id"]
+
+    response = client.post(
+        f"/visual-generation/jobs/{job_id}/register-output",
+        json={"output_path": "/tmp/does-not-exist.visual"},
+    )
+    assert response.status_code == 400
+    assert "existing local file" in response.json()["detail"]
+
+
+def test_visual_generation_register_output_creates_asset_and_marks_imported_without_approval_side_effects() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Register Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Register Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    job = queue["jobs"][0]
+    file_path = _write_real_visual_asset_file("registered_visual.png")
+
+    response = client.post(
+        f"/visual-generation/jobs/{job['id']}/register-output",
+        json={
+            "output_path": str(file_path),
+            "mime_type": "image/png",
+            "width": 1920,
+            "height": 1080,
+            "notes": "local render output",
+        },
+    )
+    assert response.status_code == 200
+    asset = response.json()
+    assert asset["file_exists"] is True
+    assert asset["file_path"] == str(file_path)
+    assert asset["asset_type"] == job["job_type"]
+
+    refreshed_job = client.get(f"/visual-generation/jobs/{job['id']}").json()
+    assert refreshed_job["status"] == "imported"
+    assert refreshed_job["output_path"] == str(file_path)
+
+    assets = client.get(f"/visual-generation/assets?plan_id={plan['id']}").json()
+    assert any(row["id"] == asset["id"] for row in assets)
+
+    refreshed_video = client.get(f"/videos/{video['id']}").json()
+    assert refreshed_video["approved"] is False
+    assert refreshed_video["preview_reviewed"] is False
+
+
+def test_visual_generation_write_routes_require_internal_api_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    channel_id = client.post(
+        "/channels",
+        json={"name": "Visual Queue Key Channel"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()["id"]
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Visual Queue Key Video"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()
+    plan = client.post(
+        f"/visual-assets/from-video/{video['id']}",
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()
+
+    denied = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"})
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        f"/visual-generation/plans/{plan['id']}/queue",
+        json={"provider": "manual"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
 def test_command_center_includes_briefs_queues() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Command Center Brief Queue Channel"}).json()["id"]
@@ -1623,6 +1761,8 @@ def test_pipeline_daily_empty_state() -> None:
     assert body["approved_briefs_ready_to_promote"] == []
     assert body["videos_needing_assets"] == []
     assert body["videos_missing_visual_plans"] == []
+    assert body["videos_visual_jobs_pending"] == []
+    assert body["videos_visual_assets_registered"] == []
     assert body["videos_needing_preview"] == []
     assert body["videos_needing_preview_review"] == []
     assert body["videos_needing_compliance"] == []
@@ -1670,6 +1810,36 @@ def test_pipeline_daily_surfaces_missing_visual_plan_before_preview() -> None:
     missing_ids = {item["video_id"] for item in body["videos_missing_visual_plans"]}
     assert video_id in missing_ids
     assert video_id not in {item["video_id"] for item in body["videos_needing_preview"]}
+
+
+def test_pipeline_daily_surfaces_visual_jobs_pending_and_registered_assets() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Pipeline Visual Queue Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Queue Pipeline Video"}).json()
+    video_id = video["id"]
+
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    plan = client.post(f"/visual-assets/from-video/{video_id}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    first_job_id = queue["jobs"][0]["id"]
+
+    first = client.get("/pipeline/daily")
+    assert first.status_code == 200
+    first_body = first.json()
+    assert video_id in {item["video_id"] for item in first_body["videos_visual_jobs_pending"]}
+
+    file_path = _write_real_visual_asset_file("pipeline_registered_visual.png")
+    register = client.post(
+        f"/visual-generation/jobs/{first_job_id}/register-output",
+        json={"output_path": str(file_path)},
+    )
+    assert register.status_code == 200
+
+    second = client.get("/pipeline/daily")
+    assert second.status_code == 200
+    second_body = second.json()
+    assert video_id in {item["video_id"] for item in second_body["videos_visual_assets_registered"]}
 
 
 def test_pipeline_daily_includes_briefs_review_and_approved_buckets() -> None:

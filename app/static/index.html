@@ -207,6 +207,10 @@
                   <div class="meta-row"><span class="meta-label">Plans Created</span><span class="meta-value" id="visualPlansCreatedCount">0</span></div>
                   <div class="meta-row"><span class="meta-label">Plans Ready for Generation</span><span class="meta-value" id="visualPlansReadyCount">0</span></div>
                   <div class="meta-row"><span class="meta-label">Videos Missing Visual Plans</span><span class="meta-value" id="videosMissingVisualPlanCount">0</span></div>
+                  <div class="meta-row"><span class="meta-label">Jobs Queued</span><span class="meta-value" id="visualJobsQueuedCount">0</span></div>
+                  <div class="meta-row"><span class="meta-label">Jobs Exported</span><span class="meta-value" id="visualJobsExportedCount">0</span></div>
+                  <div class="meta-row"><span class="meta-label">Jobs Imported</span><span class="meta-value" id="visualJobsImportedCount">0</span></div>
+                  <div class="meta-row"><span class="meta-label">Assets Registered</span><span class="meta-value" id="visualAssetsRegisteredCount">0</span></div>
                   <div class="opportunity-note" style="margin-top:0.5rem;">Prompts only. No image/video files are auto-generated in this phase.</div>
                 </div>
               </div>
@@ -632,6 +636,14 @@
                     <span class="meta-label">Expected Path</span>
                     <span class="meta-value"><code id="previewExpectedPath">out/previews/{video_id}/draft.mp4</code></span>
                   </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Visual Assets</span>
+                    <span class="meta-value" id="previewVisualAssetsStatus">No registered visual assets.</span>
+                  </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Thumbnail Asset Path</span>
+                    <span class="meta-value" id="previewVisualThumbnailPath">-</span>
+                  </div>
                   <div class="meta-row" id="previewReviewedRow">
                     <span class="meta-label">Review</span>
                     <span class="meta-value" id="previewReviewedText">Not reviewed</span>
@@ -665,10 +677,12 @@
                   <div class="header-actions">
                     <button class="btn" onclick="app.createVisualPlanFromSelectedVideo()">Create Visual Plan</button>
                     <button class="btn success" onclick="app.markSelectedVisualPlanReady()">Mark Plan Ready For Generation</button>
+                    <button class="btn" onclick="app.queueVisualGenerationJobs()">Queue Generation Jobs</button>
                     <button class="btn" onclick="app.refreshVisualPlanSection()">Refresh</button>
                   </div>
                 </div>
                 <div class="panel-body compact-body">
+                  <div class="opportunity-note">Local-first queue only. Payload export and output registration are manual. No paid provider API is called automatically.</div>
                   <div class="meta-row">
                     <span class="meta-label">Select Plan</span>
                     <span class="meta-value">
@@ -695,6 +709,22 @@
                   </label>
                   <div class="settings-actions">
                     <button class="btn" onclick="app.saveSelectedVisualPlan()">Save Plan Notes</button>
+                  </div>
+                  <div class="flow-card" style="margin-top:0.65rem;">
+                    <div class="flow-card-title">Provider Payload (Manual Export)</div>
+                    <pre id="visualProviderPayloadPreview" class="json-preview">No payload exported yet.</pre>
+                  </div>
+                  <div class="flow-card" style="margin-top:0.65rem;">
+                    <div class="flow-card-title">Generation Jobs</div>
+                    <div id="visualGenerationJobsList" class="video-list">
+                      <div class="empty-state">No generation jobs queued yet.</div>
+                    </div>
+                  </div>
+                  <div class="flow-card" style="margin-top:0.65rem;">
+                    <div class="flow-card-title">Registered Visual Assets</div>
+                    <div id="visualGeneratedAssetsList" class="video-list">
+                      <div class="empty-state">No registered visual assets yet.</div>
+                    </div>
                   </div>
                   <div id="visualPlanBody" style="margin-top:0.65rem;">
                     <div class="empty-state">Select a video to view visual plans.</div>

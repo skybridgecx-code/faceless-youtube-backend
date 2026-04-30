@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -296,6 +296,8 @@ class VisualAssetPlan(Base):
     brief: Mapped[ProductionBrief | None] = relationship(back_populates="visual_plans")
     scenes: Mapped[list["VisualScene"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
     prompts: Mapped[list["VisualAssetPrompt"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+    generation_jobs: Mapped[list["VisualGenerationJob"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+    generated_assets: Mapped[list["VisualGeneratedAsset"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
 
 
 class VisualScene(Base):
@@ -312,11 +314,15 @@ class VisualScene(Base):
     b_roll_prompt: Mapped[str] = mapped_column(Text)
     dashboard_demo_prompt: Mapped[str] = mapped_column(Text)
     safety_notes: Mapped[str] = mapped_column(Text)
+    asset_status: Mapped[str] = mapped_column(String(40), default="planned", index=True)
+    generated_asset_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     plan: Mapped[VisualAssetPlan] = relationship(back_populates="scenes")
     prompts: Mapped[list["VisualAssetPrompt"]] = relationship(back_populates="scene", cascade="all, delete-orphan")
+    generation_jobs: Mapped[list["VisualGenerationJob"]] = relationship(back_populates="scene", cascade="all, delete-orphan")
+    generated_assets: Mapped[list["VisualGeneratedAsset"]] = relationship(back_populates="scene", cascade="all, delete-orphan")
 
 
 class VisualAssetPrompt(Base):
@@ -333,6 +339,57 @@ class VisualAssetPrompt(Base):
 
     plan: Mapped[VisualAssetPlan] = relationship(back_populates="prompts")
     scene: Mapped[VisualScene | None] = relationship(back_populates="prompts")
+    generation_jobs: Mapped[list["VisualGenerationJob"]] = relationship(
+        back_populates="prompt_ref",
+        cascade="all, delete-orphan",
+    )
+
+
+class VisualGenerationJob(Base):
+    __tablename__ = "visual_generation_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    visual_asset_plan_id: Mapped[int] = mapped_column(ForeignKey("visual_asset_plans.id"), index=True)
+    visual_scene_id: Mapped[int | None] = mapped_column(ForeignKey("visual_scenes.id"), nullable=True, index=True)
+    prompt_id: Mapped[int | None] = mapped_column(ForeignKey("visual_asset_prompts.id"), nullable=True, index=True)
+    job_type: Mapped[str] = mapped_column(String(40), index=True)
+    provider: Mapped[str] = mapped_column(String(40), default="manual", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="queued", index=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    negative_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    output_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plan: Mapped[VisualAssetPlan] = relationship(back_populates="generation_jobs")
+    scene: Mapped[VisualScene | None] = relationship(back_populates="generation_jobs")
+    prompt_ref: Mapped[VisualAssetPrompt | None] = relationship(back_populates="generation_jobs")
+    generated_assets: Mapped[list["VisualGeneratedAsset"]] = relationship(back_populates="generation_job", cascade="all, delete-orphan")
+
+
+class VisualGeneratedAsset(Base):
+    __tablename__ = "visual_generated_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    visual_asset_plan_id: Mapped[int] = mapped_column(ForeignKey("visual_asset_plans.id"), index=True)
+    visual_scene_id: Mapped[int | None] = mapped_column(ForeignKey("visual_scenes.id"), nullable=True, index=True)
+    generation_job_id: Mapped[int | None] = mapped_column(ForeignKey("visual_generation_jobs.id"), nullable=True, index=True)
+    asset_type: Mapped[str] = mapped_column(String(40), index=True)
+    file_path: Mapped[str] = mapped_column(Text)
+    file_exists: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plan: Mapped[VisualAssetPlan] = relationship(back_populates="generated_assets")
+    scene: Mapped[VisualScene | None] = relationship(back_populates="generated_assets")
+    generation_job: Mapped[VisualGenerationJob | None] = relationship(back_populates="generated_assets")
 
 
 class ResearchRun(Base):

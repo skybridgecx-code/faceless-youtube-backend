@@ -7,9 +7,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
-from app.models import ProductionBrief, Video, VisualAssetPlan, VisualAssetPrompt, VisualScene
+from app.models import (
+    ProductionBrief,
+    Video,
+    VisualAssetPlan,
+    VisualAssetPrompt,
+    VisualScene,
+)
 from app.schemas import VisualAssetPlanRead, VisualAssetPlanUpdate, VisualSceneUpdate
 from app.services.audit import log_audit_event
+from app.services.visual_generation import recompute_plan_generation_status, summarize_plan_generation
 from app.services.visual_assets import build_visual_plan_for_brief, build_visual_plan_for_video
 
 router = APIRouter(prefix="/visual-assets", tags=["visual-assets"])
@@ -22,6 +29,8 @@ def get_plan_or_404(db: Session, plan_id: int) -> VisualAssetPlan:
         .options(
             selectinload(VisualAssetPlan.scenes).selectinload(VisualScene.prompts),
             selectinload(VisualAssetPlan.prompts),
+            selectinload(VisualAssetPlan.generation_jobs),
+            selectinload(VisualAssetPlan.generated_assets),
         )
         .limit(1)
     )
@@ -36,6 +45,15 @@ def get_scene_or_404(db: Session, scene_id: int) -> VisualScene:
     if not scene:
         raise HTTPException(status_code=404, detail="Visual scene not found")
     return scene
+
+
+def serialize_plan(plan: VisualAssetPlan) -> VisualAssetPlanRead:
+    counts = summarize_plan_generation(plan)
+    payload = {
+        **VisualAssetPlanRead.model_validate(plan).model_dump(),
+        **counts,
+    }
+    return VisualAssetPlanRead.model_validate(payload)
 
 
 def _create_plan_with_prompts(
@@ -184,7 +202,7 @@ def create_visual_plan_from_brief(brief_id: int, db: Session = Depends(get_db)) 
         video_id=brief.promoted_video_id,
         metadata={"plan_id": plan.id, "brief_id": brief.id, "scene_count": len(plan.scenes)},
     )
-    return VisualAssetPlanRead.model_validate(plan)
+    return serialize_plan(plan)
 
 
 @router.post("/from-video/{video_id}", response_model=VisualAssetPlanRead)
@@ -216,7 +234,7 @@ def create_visual_plan_from_video(video_id: int, db: Session = Depends(get_db)) 
         video_id=video.id,
         metadata={"plan_id": plan.id, "video_id": video.id, "scene_count": len(plan.scenes)},
     )
-    return VisualAssetPlanRead.model_validate(plan)
+    return serialize_plan(plan)
 
 
 @router.get("/plans", response_model=list[VisualAssetPlanRead])
@@ -232,6 +250,8 @@ def list_visual_asset_plans(
         .options(
             selectinload(VisualAssetPlan.scenes).selectinload(VisualScene.prompts),
             selectinload(VisualAssetPlan.prompts),
+            selectinload(VisualAssetPlan.generation_jobs),
+            selectinload(VisualAssetPlan.generated_assets),
         )
         .order_by(VisualAssetPlan.created_at.desc())
         .limit(limit)
@@ -244,13 +264,13 @@ def list_visual_asset_plans(
         stmt = stmt.where(VisualAssetPlan.status == status)
 
     rows = list(db.scalars(stmt))
-    return [VisualAssetPlanRead.model_validate(row) for row in rows]
+    return [serialize_plan(row) for row in rows]
 
 
 @router.get("/plans/{plan_id}", response_model=VisualAssetPlanRead)
 def get_visual_asset_plan(plan_id: int, db: Session = Depends(get_db)) -> VisualAssetPlanRead:
     plan = get_plan_or_404(db, plan_id)
-    return VisualAssetPlanRead.model_validate(plan)
+    return serialize_plan(plan)
 
 
 @router.patch("/plans/{plan_id}", response_model=VisualAssetPlanRead)
@@ -297,7 +317,7 @@ def update_visual_asset_plan(
         video_id=plan.video_id,
         metadata={"plan_id": plan.id, "updated_fields": sorted(update_data.keys())},
     )
-    return VisualAssetPlanRead.model_validate(refreshed)
+    return serialize_plan(refreshed)
 
 
 @router.patch("/scenes/{scene_id}", response_model=VisualAssetPlanRead)
@@ -322,7 +342,7 @@ def update_visual_scene(
         video_id=plan.video_id,
         metadata={"plan_id": plan.id, "scene_id": scene.id, "updated_fields": sorted(update_data.keys())},
     )
-    return VisualAssetPlanRead.model_validate(plan)
+    return serialize_plan(plan)
 
 
 @router.post("/plans/{plan_id}/mark-ready", response_model=VisualAssetPlanRead)
@@ -330,6 +350,7 @@ def mark_visual_plan_ready(plan_id: int, db: Session = Depends(get_db)) -> Visua
     plan = get_plan_or_404(db, plan_id)
     plan.status = "ready_for_generation"
     plan.ready_marked_at = datetime.utcnow()
+    recompute_plan_generation_status(plan)
     db.commit()
 
     refreshed = get_plan_or_404(db, plan.id)
@@ -340,4 +361,4 @@ def mark_visual_plan_ready(plan_id: int, db: Session = Depends(get_db)) -> Visua
         video_id=plan.video_id,
         metadata={"plan_id": plan.id, "status": plan.status},
     )
-    return VisualAssetPlanRead.model_validate(refreshed)
+    return serialize_plan(refreshed)

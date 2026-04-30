@@ -31,6 +31,8 @@ from app.models import (
     Video,
     VideoStatus,
     VisualAssetPlan,
+    VisualGeneratedAsset,
+    VisualGenerationJob,
 )
 from app.schemas import (
     AssetPreview,
@@ -537,7 +539,19 @@ def clear_preview_state(video: Video) -> None:
             continue
 
 
-def build_preview_status(video: Video, preview_path: Path | None) -> PreviewStatus:
+def visual_asset_summary_for_video(db: Session, video_id: int) -> tuple[int, str | None]:
+    assets = list(
+        db.scalars(
+            select(VisualGeneratedAsset)
+            .join(VisualAssetPlan, VisualAssetPlan.id == VisualGeneratedAsset.visual_asset_plan_id)
+            .where(VisualAssetPlan.video_id == video_id, VisualGeneratedAsset.file_exists.is_(True))
+        )
+    )
+    thumbnail_asset = next((row for row in assets if row.asset_type == "thumbnail"), None)
+    return len(assets), (thumbnail_asset.file_path if thumbnail_asset else None)
+
+
+def build_preview_status(video: Video, preview_path: Path | None, db: Session) -> PreviewStatus:
     expected_path = expected_preview_path(video.id).resolve()
     voiceover_path = preview_voiceover_path(video.id).resolve()
     voiceover_exists = voiceover_path.is_file() and voiceover_path.stat().st_size > 0
@@ -549,6 +563,7 @@ def build_preview_status(video: Video, preview_path: Path | None) -> PreviewStat
     provider = str(meta.get("provider")) if meta.get("provider") else None
     voice = str(meta.get("voice")) if meta.get("voice") else None
     model = str(meta.get("model")) if meta.get("model") else None
+    visual_assets_count, visual_thumbnail_path = visual_asset_summary_for_video(db, video.id)
     return PreviewStatus(
         video_id=video.id,
         title=video.title,
@@ -566,6 +581,9 @@ def build_preview_status(video: Video, preview_path: Path | None) -> PreviewStat
         tts_provider=provider,
         tts_voice=voice,
         tts_model=model,
+        visual_assets_registered=visual_assets_count > 0,
+        visual_assets_count=visual_assets_count,
+        visual_thumbnail_path=visual_thumbnail_path,
     )
 
 
@@ -574,6 +592,18 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
     assets_generated = len(video.assets) > 0
     has_visual_plan = (
         db.scalar(select(VisualAssetPlan.id).where(VisualAssetPlan.video_id == video.id).limit(1)) is not None
+    )
+    has_visual_jobs_pending = (
+        db.scalar(
+            select(VisualGenerationJob.id)
+            .join(VisualAssetPlan, VisualAssetPlan.id == VisualGenerationJob.visual_asset_plan_id)
+            .where(
+                VisualAssetPlan.video_id == video.id,
+                VisualGenerationJob.status.in_(("queued", "exported")),
+            )
+            .limit(1)
+        )
+        is not None
     )
     preview_rendered = preview_path is not None
     preview_reviewed = bool(video.preview_reviewed) and preview_rendered
@@ -594,6 +624,8 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
         blocking_reasons.append("Assets must be generated first")
     if not has_visual_plan:
         blocking_reasons.append("Visual asset plan should be created before preview render")
+    if has_visual_jobs_pending:
+        blocking_reasons.append("Visual generation outputs should be registered before preview render")
     if not preview_rendered:
         blocking_reasons.append("Draft preview must be rendered before packaging")
     if preview_rendered and not preview_reviewed:
@@ -930,7 +962,7 @@ def get_preview_status(video_id: int, db: Session = Depends(get_db)) -> PreviewS
     preview_path = sync_preview_state(video)
     db.commit()
     db.refresh(video)
-    return build_preview_status(video, preview_path)
+    return build_preview_status(video, preview_path, db)
 
 
 @router.get("/{video_id}/preview")
@@ -967,7 +999,7 @@ def mark_preview_reviewed(video_id: int, payload: PreviewReviewUpdate, db: Sessi
         video_id=video.id,
         metadata={"preview_path": str(preview_path), "reviewed": payload.reviewed},
     )
-    return build_preview_status(video, preview_path)
+    return build_preview_status(video, preview_path, db)
 
 
 @router.post("/{video_id}/preview/render-draft", response_model=PreviewStatus)
@@ -1153,7 +1185,7 @@ def render_draft_preview(video_id: int, db: Session = Depends(get_db)) -> Previe
             "error_message": voiceover_result.error_message,
         },
     )
-    return build_preview_status(video, expected_path)
+    return build_preview_status(video, expected_path, db)
 
 
 @router.get("/{video_id}/assets", response_model=list[AssetRead])

@@ -34,6 +34,7 @@ def init_db() -> None:
     _apply_sqlite_agent_system_columns()
     _apply_sqlite_production_brief_columns()
     _apply_sqlite_visual_asset_factory_columns()
+    _apply_sqlite_visual_generation_queue_columns()
     _apply_sqlite_research_columns()
     _seed_default_agents_for_existing_channels()
 
@@ -285,6 +286,8 @@ def _apply_sqlite_visual_asset_factory_columns() -> None:
             "b_roll_prompt": "ALTER TABLE visual_scenes ADD COLUMN b_roll_prompt TEXT DEFAULT ''",
             "dashboard_demo_prompt": "ALTER TABLE visual_scenes ADD COLUMN dashboard_demo_prompt TEXT DEFAULT ''",
             "safety_notes": "ALTER TABLE visual_scenes ADD COLUMN safety_notes TEXT DEFAULT ''",
+            "asset_status": "ALTER TABLE visual_scenes ADD COLUMN asset_status TEXT DEFAULT 'planned'",
+            "generated_asset_path": "ALTER TABLE visual_scenes ADD COLUMN generated_asset_path TEXT",
             "created_at": "ALTER TABLE visual_scenes ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE visual_scenes ADD COLUMN updated_at DATETIME",
         },
@@ -299,6 +302,49 @@ def _apply_sqlite_visual_asset_factory_columns() -> None:
             "prompt_text": "ALTER TABLE visual_asset_prompts ADD COLUMN prompt_text TEXT DEFAULT ''",
             "created_at": "ALTER TABLE visual_asset_prompts ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE visual_asset_prompts ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_visual_generation_queue_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "visual_generation_jobs",
+        {
+            "visual_asset_plan_id": "ALTER TABLE visual_generation_jobs ADD COLUMN visual_asset_plan_id INTEGER",
+            "visual_scene_id": "ALTER TABLE visual_generation_jobs ADD COLUMN visual_scene_id INTEGER",
+            "prompt_id": "ALTER TABLE visual_generation_jobs ADD COLUMN prompt_id INTEGER",
+            "job_type": "ALTER TABLE visual_generation_jobs ADD COLUMN job_type TEXT DEFAULT ''",
+            "provider": "ALTER TABLE visual_generation_jobs ADD COLUMN provider TEXT DEFAULT 'manual'",
+            "status": "ALTER TABLE visual_generation_jobs ADD COLUMN status TEXT DEFAULT 'queued'",
+            "prompt": "ALTER TABLE visual_generation_jobs ADD COLUMN prompt TEXT DEFAULT ''",
+            "negative_prompt": "ALTER TABLE visual_generation_jobs ADD COLUMN negative_prompt TEXT",
+            "provider_payload_json": "ALTER TABLE visual_generation_jobs ADD COLUMN provider_payload_json TEXT DEFAULT '{}'",
+            "output_path": "ALTER TABLE visual_generation_jobs ADD COLUMN output_path TEXT",
+            "failure_reason": "ALTER TABLE visual_generation_jobs ADD COLUMN failure_reason TEXT",
+            "created_at": "ALTER TABLE visual_generation_jobs ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE visual_generation_jobs ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+    _apply_sqlite_additive_columns(
+        "visual_generated_assets",
+        {
+            "visual_asset_plan_id": "ALTER TABLE visual_generated_assets ADD COLUMN visual_asset_plan_id INTEGER",
+            "visual_scene_id": "ALTER TABLE visual_generated_assets ADD COLUMN visual_scene_id INTEGER",
+            "generation_job_id": "ALTER TABLE visual_generated_assets ADD COLUMN generation_job_id INTEGER",
+            "asset_type": "ALTER TABLE visual_generated_assets ADD COLUMN asset_type TEXT DEFAULT ''",
+            "file_path": "ALTER TABLE visual_generated_assets ADD COLUMN file_path TEXT DEFAULT ''",
+            "file_exists": "ALTER TABLE visual_generated_assets ADD COLUMN file_exists BOOLEAN DEFAULT 0",
+            "mime_type": "ALTER TABLE visual_generated_assets ADD COLUMN mime_type TEXT",
+            "duration_seconds": "ALTER TABLE visual_generated_assets ADD COLUMN duration_seconds FLOAT",
+            "width": "ALTER TABLE visual_generated_assets ADD COLUMN width INTEGER",
+            "height": "ALTER TABLE visual_generated_assets ADD COLUMN height INTEGER",
+            "notes": "ALTER TABLE visual_generated_assets ADD COLUMN notes TEXT",
+            "created_at": "ALTER TABLE visual_generated_assets ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE visual_generated_assets ADD COLUMN updated_at DATETIME",
         },
     )
 

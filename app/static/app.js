@@ -20,6 +20,9 @@ const app = {
     briefs: [],
     visualPlans: [],
     selectedVisualPlanId: null,
+    visualGenerationJobs: [],
+    visualGeneratedAssets: [],
+    visualProviderPayload: null,
     producerRecommendation: null,
     producerHistory: [],
     researchRuns: [],
@@ -50,6 +53,7 @@ const app = {
     await this.loadAgents();
     await this.loadBriefs();
     await this.loadVisualPlans();
+    await this.loadVisualGenerationData();
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
     await this.loadResearchData();
@@ -126,17 +130,21 @@ const app = {
     if (page === 'briefs') {
       this.loadBriefs();
       this.loadVisualPlans();
+      this.loadVisualGenerationData();
     }
     if (page === 'pipeline') {
       this.loadPipelineDaily();
+      this.loadVisualGenerationData();
     }
     if (page === 'dashboard') {
       this.loadCommandCenter();
       this.loadPipelineDaily();
       this.loadVisualPlans();
+      this.loadVisualGenerationData();
     }
     if (page === 'assets') {
       this.loadVisualPlans();
+      this.loadVisualGenerationData();
     }
   },
 
@@ -415,6 +423,8 @@ const app = {
       `Briefs to review: ${counts.briefs_to_review || 0}`,
       `Approved briefs ready to promote: ${counts.approved_briefs_ready_to_promote || 0}`,
       `Videos missing visual plans: ${counts.videos_missing_visual_plans || 0}`,
+      `Videos with visual jobs pending: ${counts.videos_visual_jobs_pending || 0}`,
+      `Videos with visual assets registered: ${counts.videos_visual_assets_registered || 0}`,
       `Videos needing preview review: ${counts.videos_needing_preview_review || 0}`,
       `Videos needing compliance/manual approval: ${(counts.videos_needing_compliance || 0) + (counts.videos_needing_manual_approval || 0)}`,
       `Ready to package/payload: ${(counts.videos_ready_to_package || 0) + (counts.videos_ready_for_payload || 0)}`
@@ -426,7 +436,11 @@ const app = {
     const plansCreatedEl = document.getElementById('visualPlansCreatedCount');
     const plansReadyEl = document.getElementById('visualPlansReadyCount');
     const videosMissingEl = document.getElementById('videosMissingVisualPlanCount');
-    if (!plansCreatedEl || !plansReadyEl || !videosMissingEl) return;
+    const jobsQueuedEl = document.getElementById('visualJobsQueuedCount');
+    const jobsExportedEl = document.getElementById('visualJobsExportedCount');
+    const jobsImportedEl = document.getElementById('visualJobsImportedCount');
+    const assetsRegisteredEl = document.getElementById('visualAssetsRegisteredCount');
+    if (!plansCreatedEl || !plansReadyEl || !videosMissingEl || !jobsQueuedEl || !jobsExportedEl || !jobsImportedEl || !assetsRegisteredEl) return;
 
     const plans = Array.isArray(this.state.visualPlans) ? this.state.visualPlans : [];
     const plansCreated = plans.length;
@@ -439,10 +453,20 @@ const app = {
     );
     const videos = Array.isArray(this.state.videos) ? this.state.videos : [];
     const missingCount = videos.filter(video => video.status !== 'published' && !videoIdsWithPlans.has(Number(video.id))).length;
+    const jobs = Array.isArray(this.state.visualGenerationJobs) ? this.state.visualGenerationJobs : [];
+    const assets = Array.isArray(this.state.visualGeneratedAssets) ? this.state.visualGeneratedAssets : [];
+    const jobsQueued = jobs.filter(job => job.status === 'queued').length;
+    const jobsExported = jobs.filter(job => job.status === 'exported').length;
+    const jobsImported = jobs.filter(job => job.status === 'imported').length;
+    const assetsRegistered = assets.filter(asset => asset.file_exists).length;
 
     plansCreatedEl.textContent = String(plansCreated);
     plansReadyEl.textContent = String(plansReady);
     videosMissingEl.textContent = String(missingCount);
+    jobsQueuedEl.textContent = String(jobsQueued);
+    jobsExportedEl.textContent = String(jobsExported);
+    jobsImportedEl.textContent = String(jobsImported);
+    assetsRegisteredEl.textContent = String(assetsRegistered);
   },
 
   renderPipelineDaily(data) {
@@ -504,44 +528,56 @@ const app = {
         buttonLabel: 'Create Visual Plan'
       },
       {
+        key: 'videos_visual_jobs_pending',
+        title: '7. Videos With Visual Jobs Pending',
+        targetPage: 'assets',
+        buttonLabel: 'Register Outputs'
+      },
+      {
+        key: 'videos_visual_assets_registered',
+        title: '8. Videos With Visual Assets Registered',
+        targetPage: 'assets',
+        buttonLabel: 'Open Visual Assets'
+      },
+      {
         key: 'videos_needing_preview',
-        title: '7. Videos Needing Preview Render',
+        title: '9. Videos Needing Preview Render',
         targetPage: 'assets',
         buttonLabel: 'Render Preview'
       },
       {
         key: 'videos_needing_preview_review',
-        title: '8. Videos Needing Preview Review',
+        title: '10. Videos Needing Preview Review',
         targetPage: 'assets',
         buttonLabel: 'Review Preview'
       },
       {
         key: 'videos_needing_compliance',
-        title: '9. Videos Needing Compliance',
+        title: '11. Videos Needing Compliance',
         targetPage: 'compliance',
         buttonLabel: 'Run Compliance'
       },
       {
         key: 'videos_needing_manual_approval',
-        title: '10. Videos Needing Manual Approval',
+        title: '12. Videos Needing Manual Approval',
         targetPage: 'compliance',
         buttonLabel: 'Manual Review'
       },
       {
         key: 'videos_ready_to_package',
-        title: '11. Videos Ready to Package',
+        title: '13. Videos Ready to Package',
         targetPage: 'assets',
         buttonLabel: 'Package Video'
       },
       {
         key: 'videos_ready_for_payload',
-        title: '12. Videos Ready for Payload',
+        title: '14. Videos Ready for Payload',
         targetPage: 'publishing',
         buttonLabel: 'Prepare Payload'
       },
       {
         key: 'completed_payloads',
-        title: '13. Completed Payloads',
+        title: '15. Completed Payloads',
         targetPage: 'audit',
         buttonLabel: 'Open Audit'
       }
@@ -1412,9 +1448,50 @@ const app = {
     }
   },
 
+  async loadVisualGenerationData() {
+    try {
+      const [jobsRes, assetsRes] = await Promise.all([
+        fetch('/visual-generation/jobs?limit=400'),
+        fetch('/visual-generation/assets?limit=400')
+      ]);
+
+      const jobsData = await jobsRes.json().catch(() => ([]));
+      const assetsData = await assetsRes.json().catch(() => ([]));
+      if (!jobsRes.ok) {
+        throw new Error(jobsData.detail || 'Failed to load visual generation jobs');
+      }
+      if (!assetsRes.ok) {
+        throw new Error(assetsData.detail || 'Failed to load visual generated assets');
+      }
+
+      this.state.visualGenerationJobs = Array.isArray(jobsData) ? jobsData : [];
+      this.state.visualGeneratedAssets = Array.isArray(assetsData) ? assetsData : [];
+
+      this.renderDashboardVisualAssetStatus();
+      this.renderVisualPlanSection();
+      this.renderPipelineDaily(this.state.pipelineDaily);
+    } catch (err) {
+      this.log(`Error loading visual generation data: ${err.message}`, 'error');
+      this.state.visualGenerationJobs = [];
+      this.state.visualGeneratedAssets = [];
+      this.renderDashboardVisualAssetStatus();
+      this.renderVisualPlanSection();
+    }
+  },
+
   getVisualPlansForVideo(videoId) {
     if (!videoId) return [];
     return (this.state.visualPlans || []).filter(plan => Number(plan.video_id) === Number(videoId));
+  },
+
+  getVisualJobsForPlan(planId) {
+    if (!planId) return [];
+    return (this.state.visualGenerationJobs || []).filter(job => Number(job.visual_asset_plan_id) === Number(planId));
+  },
+
+  getVisualAssetsForPlan(planId) {
+    if (!planId) return [];
+    return (this.state.visualGeneratedAssets || []).filter(asset => Number(asset.visual_asset_plan_id) === Number(planId));
   },
 
   getVisualPlansForBrief(briefId) {
@@ -2369,6 +2446,7 @@ const app = {
       reloadProducer = true,
       reloadBriefs = true,
       reloadVisualPlans = true,
+      reloadVisualGeneration = true,
       reloadCommandCenter = true,
       reloadPipelineDaily = true
     } = options;
@@ -2393,6 +2471,9 @@ const app = {
     }
     if (reloadVisualPlans) {
       await this.loadVisualPlans();
+    }
+    if (reloadVisualGeneration) {
+      await this.loadVisualGenerationData();
     }
     if (reloadCommandCenter) {
       await this.loadCommandCenter();
@@ -2618,8 +2699,151 @@ const app = {
     }
   },
 
+  async queueVisualGenerationJobs() {
+    const plan = this.getSelectedVisualPlan();
+    if (!plan) {
+      this.log('No visual plan selected to queue.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch(`/visual-generation/plans/${plan.id}/queue`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ provider: 'manual' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to queue visual generation jobs');
+      }
+      this.log(`Queued ${data.created_jobs || 0} jobs (skipped ${data.skipped_jobs || 0}).`, 'success');
+      await this.loadVisualPlans();
+      await this.loadVisualGenerationData();
+      await this.loadPipelineDaily();
+    } catch (err) {
+      this.log(`Queue visual jobs failed: ${err.message}`, 'error');
+    }
+  },
+
+  async exportVisualJobPayload(jobId) {
+    try {
+      const res = await fetch(`/visual-generation/jobs/${jobId}/export-payload`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to export visual provider payload');
+      }
+      this.state.visualProviderPayload = data.provider_payload || null;
+      this.log(`Exported provider payload for job #${jobId}.`, 'success');
+      await this.loadVisualGenerationData();
+      this.renderVisualPlanSection();
+    } catch (err) {
+      this.log(`Export payload failed: ${err.message}`, 'error');
+    }
+  },
+
+  async registerVisualJobOutput(jobId) {
+    const outputPath = document.getElementById(`visualJobOutputPath-${jobId}`)?.value?.trim() || '';
+    const notes = document.getElementById(`visualJobOutputNotes-${jobId}`)?.value?.trim() || '';
+    const mimeType = document.getElementById(`visualJobMimeType-${jobId}`)?.value?.trim() || '';
+    const widthRaw = document.getElementById(`visualJobWidth-${jobId}`)?.value?.trim() || '';
+    const heightRaw = document.getElementById(`visualJobHeight-${jobId}`)?.value?.trim() || '';
+    const durationRaw = document.getElementById(`visualJobDuration-${jobId}`)?.value?.trim() || '';
+
+    if (!outputPath) {
+      this.log('Output path is required to register generated asset.', 'error');
+      return;
+    }
+
+    const payload = {
+      output_path: outputPath,
+      notes: notes || null,
+      mime_type: mimeType || null,
+      width: widthRaw ? Number(widthRaw) : null,
+      height: heightRaw ? Number(heightRaw) : null,
+      duration_seconds: durationRaw ? Number(durationRaw) : null
+    };
+    try {
+      const res = await fetch(`/visual-generation/jobs/${jobId}/register-output`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to register visual output path');
+      }
+      this.log(`Registered local output for job #${jobId}.`, 'success');
+      await this.loadVisualPlans();
+      await this.loadVisualGenerationData();
+      await this.loadReadiness();
+      await this.loadPreviewStatus();
+      await this.loadPipelineDaily();
+    } catch (err) {
+      this.log(`Register output failed: ${err.message}`, 'error');
+    }
+  },
+
+  renderVisualGenerationJobs(plan) {
+    const jobsContainer = document.getElementById('visualGenerationJobsList');
+    if (!jobsContainer) return;
+    const jobs = this.getVisualJobsForPlan(plan?.id).sort((a, b) => Number(b.id) - Number(a.id));
+    if (jobs.length === 0) {
+      jobsContainer.innerHTML = '<div class="empty-state">No generation jobs queued yet.</div>';
+      return;
+    }
+    jobsContainer.innerHTML = jobs.map(job => `
+      <article class="video-card" style="padding:0.75rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(`Job #${job.id} • ${job.job_type}`)}</div>
+          <div class="video-status ${this.escapeHtml(job.status || 'queued')}">${this.escapeHtml(job.status || 'queued')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Provider</span><span class="meta-value">${this.escapeHtml(job.provider || 'manual')}</span></div>
+        <div class="meta-row"><span class="meta-label">Prompt</span><span class="meta-value pre-wrap">${this.escapeHtml(job.prompt || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Output Path</span><span class="meta-value">${this.escapeHtml(job.output_path || '-')}</span></div>
+        <div class="row-actions" style="margin-top:0.45rem;">
+          <button class="btn" onclick="app.exportVisualJobPayload(${Number(job.id)})">Export Provider Payload</button>
+        </div>
+        <div class="agent-edit-grid" style="margin-top:0.55rem;">
+          <label class="agent-field"><span>Output Path</span><input id="visualJobOutputPath-${Number(job.id)}" type="text" placeholder="/absolute/path/to/file.png" /></label>
+          <label class="agent-field"><span>MIME Type</span><input id="visualJobMimeType-${Number(job.id)}" type="text" placeholder="image/png" /></label>
+          <label class="agent-field"><span>Width</span><input id="visualJobWidth-${Number(job.id)}" type="number" min="1" placeholder="1920" /></label>
+          <label class="agent-field"><span>Height</span><input id="visualJobHeight-${Number(job.id)}" type="number" min="1" placeholder="1080" /></label>
+          <label class="agent-field"><span>Duration (sec)</span><input id="visualJobDuration-${Number(job.id)}" type="number" step="0.1" min="0" placeholder="12.5" /></label>
+          <label class="agent-field"><span>Notes</span><input id="visualJobOutputNotes-${Number(job.id)}" type="text" placeholder="local render notes" /></label>
+        </div>
+        <button class="btn success" style="margin-top:0.5rem;" onclick="app.registerVisualJobOutput(${Number(job.id)})">Register Output Path</button>
+      </article>
+    `).join('');
+  },
+
+  renderVisualGeneratedAssets(plan) {
+    const assetsContainer = document.getElementById('visualGeneratedAssetsList');
+    if (!assetsContainer) return;
+    const assets = this.getVisualAssetsForPlan(plan?.id).sort((a, b) => Number(b.id) - Number(a.id));
+    if (assets.length === 0) {
+      assetsContainer.innerHTML = '<div class="empty-state">No registered visual assets yet.</div>';
+      return;
+    }
+    assetsContainer.innerHTML = assets.map(asset => `
+      <article class="video-card" style="padding:0.7rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(`Asset #${asset.id} • ${asset.asset_type}`)}</div>
+          <div class="video-status ${asset.file_exists ? 'approved' : 'blocked'}">${asset.file_exists ? 'registered' : 'missing'}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Path</span><span class="meta-value">${this.escapeHtml(asset.file_path || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">MIME</span><span class="meta-value">${this.escapeHtml(asset.mime_type || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Size</span><span class="meta-value">${this.escapeHtml(asset.width ? `${asset.width}x${asset.height || '?'}` : '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Duration</span><span class="meta-value">${this.escapeHtml(asset.duration_seconds ? `${asset.duration_seconds}s` : '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Notes</span><span class="meta-value">${this.escapeHtml(asset.notes || '-')}</span></div>
+      </article>
+    `).join('');
+  },
+
   async refreshVisualPlanSection() {
     await this.loadVisualPlans();
+    await this.loadVisualGenerationData();
     this.renderVisualPlanSection();
   },
 
@@ -2635,7 +2859,8 @@ const app = {
     const notesEl = document.getElementById('visualPlanNotesInput');
     const thumbPromptEl = document.getElementById('visualPlanThumbPromptInput');
     const thumbTextEl = document.getElementById('visualPlanThumbTextInput');
-    if (!selectEl || !statusEl || !bodyEl || !notesEl || !thumbPromptEl || !thumbTextEl) return;
+    const payloadEl = document.getElementById('visualProviderPayloadPreview');
+    if (!selectEl || !statusEl || !bodyEl || !notesEl || !thumbPromptEl || !thumbTextEl || !payloadEl) return;
 
     const selected = this.getSelectedVideo();
     if (!selected) {
@@ -2645,6 +2870,9 @@ const app = {
       notesEl.value = '';
       thumbPromptEl.value = '';
       thumbTextEl.value = '';
+      payloadEl.textContent = 'No payload exported yet.';
+      this.renderVisualGenerationJobs(null);
+      this.renderVisualGeneratedAssets(null);
       return;
     }
 
@@ -2656,6 +2884,9 @@ const app = {
       notesEl.value = '';
       thumbPromptEl.value = '';
       thumbTextEl.value = '';
+      payloadEl.textContent = 'No payload exported yet.';
+      this.renderVisualGenerationJobs(null);
+      this.renderVisualGeneratedAssets(null);
       return;
     }
 
@@ -2672,6 +2903,12 @@ const app = {
     notesEl.value = selectedPlan.plan_notes || '';
     thumbPromptEl.value = selectedPlan.thumbnail_prompt || '';
     thumbTextEl.value = selectedPlan.thumbnail_text || '';
+    payloadEl.textContent = this.state.visualProviderPayload
+      ? JSON.stringify(this.state.visualProviderPayload, null, 2)
+      : 'No payload exported yet.';
+
+    this.renderVisualGenerationJobs(selectedPlan);
+    this.renderVisualGeneratedAssets(selectedPlan);
 
     const scenes = Array.isArray(selectedPlan.scenes) ? [...selectedPlan.scenes].sort((a, b) => (a.scene_number || 0) - (b.scene_number || 0)) : [];
     bodyEl.innerHTML = `
@@ -2679,6 +2916,8 @@ const app = {
         <div class=\"meta-row\"><span class=\"meta-label\">Motion Style</span><span class=\"meta-value\">${this.escapeHtml(selectedPlan.motion_style || '-')}</span></div>
         <div class=\"meta-row\"><span class=\"meta-label\">Color Direction</span><span class=\"meta-value\">${this.escapeHtml(selectedPlan.color_direction || '-')}</span></div>
         <div class=\"meta-row\"><span class=\"meta-label\">Safety Notes</span><span class=\"meta-value pre-wrap\">${this.escapeHtml(selectedPlan.safety_notes || '-')}</span></div>
+        <div class=\"meta-row\"><span class=\"meta-label\">Jobs</span><span class=\"meta-value\">${this.escapeHtml(String(selectedPlan.jobs_total || 0))} total • ${this.escapeHtml(String(selectedPlan.jobs_queued || 0))} queued • ${this.escapeHtml(String(selectedPlan.jobs_exported || 0))} exported • ${this.escapeHtml(String(selectedPlan.jobs_imported || 0))} imported</span></div>
+        <div class=\"meta-row\"><span class=\"meta-label\">Registered Assets</span><span class=\"meta-value\">${this.escapeHtml(String(selectedPlan.assets_registered || 0))}</span></div>
       </div>
       <div class=\"visual-scene-list\">
         ${scenes.map(scene => `
@@ -2688,6 +2927,8 @@ const app = {
               <button class=\"btn\" onclick=\"app.saveVisualScene(${Number(scene.id)})\">Save Scene</button>
             </div>
             <div class=\"meta-row\"><span class=\"meta-label\">Narrative Beat</span><span class=\"meta-value pre-wrap\">${this.escapeHtml(scene.narrative_beat || '-')}</span></div>
+            <div class=\"meta-row\"><span class=\"meta-label\">Asset Status</span><span class=\"meta-value\">${this.escapeHtml(scene.asset_status || 'planned')}</span></div>
+            <div class=\"meta-row\"><span class=\"meta-label\">Generated Asset Path</span><span class=\"meta-value\">${this.escapeHtml(scene.generated_asset_path || '-')}</span></div>
             <label class=\"agent-field\"><span>Scene Title</span><input id=\"visualSceneTitle-${Number(scene.id)}\" value=\"${this.escapeHtml(scene.scene_title || '')}\" /></label>
             <label class=\"agent-field\"><span>On-Screen Text</span><textarea id=\"visualSceneText-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"2\">${this.escapeHtml(scene.on_screen_text || '')}</textarea></label>
             <label class=\"agent-field\"><span>Image Prompt</span><textarea id=\"visualSceneImage-${Number(scene.id)}\" class=\"opportunity-input agent-textarea\" rows=\"4\">${this.escapeHtml(scene.image_prompt || '')}</textarea></label>
@@ -2918,10 +3159,12 @@ const app = {
     const ttsProviderText = document.getElementById('previewTtsProviderText');
     const ttsVoiceModelText = document.getElementById('previewTtsVoiceModelText');
     const ttsSetupHintText = document.getElementById('previewTtsSetupHintText');
+    const visualAssetsStatusText = document.getElementById('previewVisualAssetsStatus');
+    const visualThumbnailPathText = document.getElementById('previewVisualThumbnailPath');
     const previewPlayer = document.getElementById('previewPlayer');
     const missingMessage = document.getElementById('previewMissingMessage');
     const markReviewedBtn = document.getElementById('btnMarkPreviewReviewed');
-    if (!statusText || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
+    if (!statusText || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !visualAssetsStatusText || !visualThumbnailPathText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
 
     if (!status) {
       statusText.textContent = 'No rendered video preview yet.';
@@ -2939,8 +3182,15 @@ const app = {
       ttsProviderText.textContent = 'Not rendered';
       ttsVoiceModelText.textContent = 'Not rendered';
       ttsSetupHintText.textContent = 'Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for premium voiceover.';
+      visualAssetsStatusText.textContent = 'No registered visual assets.';
+      visualThumbnailPathText.textContent = '-';
       return;
     }
+
+    visualAssetsStatusText.textContent = status.visual_assets_registered
+      ? `${status.visual_assets_count || 0} registered visual asset(s) found.`
+      : 'No registered visual assets.';
+    visualThumbnailPathText.textContent = status.visual_thumbnail_path || '-';
 
     expectedPath.textContent = status.expected_path || 'out/previews/{video_id}/draft.mp4';
     if (status.preview_exists && status.preview_url) {
