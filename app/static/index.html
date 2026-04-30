@@ -20,6 +20,7 @@
       <nav class="sidebar-nav" id="sidebarNav">
         <button class="nav-item active" data-page="dashboard">Dashboard</button>
         <button class="nav-item" data-page="opportunities">Opportunities</button>
+        <button class="nav-item" data-page="agents">Agents</button>
         <button class="nav-item" data-page="producer">Producer</button>
         <button class="nav-item" data-page="content">Content</button>
         <button class="nav-item" data-page="assets">Assets</button>
@@ -117,6 +118,7 @@
                   <div class="flow-card-title">Best Video To Make Today</div>
                   <div class="flow-card-body" id="producerDashboardTopic">Run Executive Producer to generate a daily recommendation.</div>
                   <div class="meta-row"><span class="meta-label">Confidence</span><span class="meta-value"><span class="video-status" id="producerDashboardConfidence">n/a</span></span></div>
+                  <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="producerDashboardAgent">-</span></div>
                   <div class="meta-row"><span class="meta-label">Monetization</span><span class="meta-value" id="producerDashboardMonetization">-</span></div>
                 </div>
               </div>
@@ -224,6 +226,11 @@
                 <div class="meta-row"><span class="meta-label">Why Today</span><span class="meta-value" id="producerWhy">-</span></div>
                 <div class="meta-row"><span class="meta-label">Niche Lane</span><span class="meta-value" id="producerNiche">-</span></div>
                 <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="producerAgent">-</span></div>
+                <div class="meta-row"><span class="meta-label">Matched Agent Lane</span><span class="meta-value" id="producerAgentLane">-</span></div>
+                <div class="meta-row"><span class="meta-label">Agent Focus</span><span class="meta-value" id="producerAgentFocus">-</span></div>
+                <div class="meta-row"><span class="meta-label">Agent Monetization Focus</span><span class="meta-value" id="producerAgentMonetization">-</span></div>
+                <div class="meta-row"><span class="meta-label">Agent Compliance Notes</span><span class="meta-value pre-wrap" id="producerAgentCompliance">-</span></div>
+                <div class="meta-row"><span class="meta-label">Agent Production Rules</span><span class="meta-value pre-wrap" id="producerAgentRules">-</span></div>
                 <div class="meta-row"><span class="meta-label">Suggested Title</span><span class="meta-value" id="producerTitle">-</span></div>
                 <div class="meta-row"><span class="meta-label">Thumbnail Angle</span><span class="meta-value" id="producerThumb">-</span></div>
                 <div class="meta-row"><span class="meta-label">CTA</span><span class="meta-value" id="producerCta">-</span></div>
@@ -247,6 +254,23 @@
                 <div id="producerHistoryList" class="audit-list">
                   <div class="empty-state">No recommendation history yet.</div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-agents">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Content Agents</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.loadAgents()">Refresh</button>
+              </div>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="opportunity-note">Local deterministic agent-channel system. These are operator-managed profiles, not external analytics.</div>
+              <div id="agentsList" class="agents-grid">
+                <div class="empty-state">Loading agents...</div>
               </div>
             </div>
           </div>
@@ -314,7 +338,7 @@
             </div>
             <div class="panel-body compact-body">
               <div class="table-wrap">
-                <table class="content-table">
+                <table class="content-table opportunity-table">
                   <thead>
                     <tr>
                       <th>Topic</th>

@@ -47,6 +47,7 @@ class VideoUpdate(BaseModel):
 class VideoRead(BaseModel):
     id: int
     channel_id: int
+    assigned_agent_id: int | None = None
     title: str
     content_type: ContentType
     pillar: str
@@ -283,6 +284,7 @@ class OpportunityScoreBreakdown(BaseModel):
 class OpportunityRead(BaseModel):
     id: int
     channel_id: int
+    assigned_agent_id: int | None = None
     topic: str
     niche_lane: str
     audience: str
@@ -317,9 +319,40 @@ class OpportunityReviewUpdate(BaseModel):
     decision_summary: str | None = None
 
 
+class ContentAgentRead(BaseModel):
+    id: int
+    channel_id: int
+    name: str
+    lane: str
+    focus: str
+    monetization_focus: str
+    compliance_notes: str
+    production_rules: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ContentAgentUpdate(BaseModel):
+    focus: str | None = None
+    monetization_focus: str | None = None
+    compliance_notes: str | None = None
+    production_rules: str | None = None
+    is_active: bool | None = None
+
+
 class ExecutiveProducerRecommendationRead(BaseModel):
     id: int
     selected_opportunity_id: int | None = None
+    matched_agent_id: int | None = None
+    matched_agent_name: str | None = None
+    matched_agent_lane: str | None = None
+    matched_agent_focus: str | None = None
+    matched_agent_monetization_focus: str | None = None
+    matched_agent_compliance_notes: str | None = None
+    matched_agent_production_rules: str | None = None
     selected_review_status: OpportunityReviewStatus | None = None
     recommended_topic: str | None = None
     niche_lane: str | None = None

@@ -548,6 +548,40 @@ body {
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 13px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.content-toolbar input:focus,
+.content-toolbar select:focus,
+.form-group input:focus,
+.form-group textarea:focus,
+.form-select:focus,
+.opportunity-input:focus {
+  outline: none;
+  border-color: #3a73a8;
+  box-shadow: 0 0 0 1px rgba(62, 166, 255, 0.2);
+}
+
+.content-toolbar input::placeholder,
+.content-toolbar select::placeholder,
+.form-group input::placeholder,
+.form-group textarea::placeholder,
+.form-select::placeholder,
+.opportunity-input::placeholder {
+  color: #767676;
+}
+
+.content-toolbar input:-webkit-autofill,
+.content-toolbar select:-webkit-autofill,
+.form-group input:-webkit-autofill,
+.form-group textarea:-webkit-autofill,
+.form-select:-webkit-autofill,
+.opportunity-input:-webkit-autofill {
+  -webkit-text-fill-color: var(--studio-text);
+  box-shadow: 0 0 0 1000px #121212 inset;
+  transition: background-color 5000s ease-in-out 0s;
 }
 
 .content-toolbar input {
@@ -617,6 +651,13 @@ body {
   width: 100%;
   margin-bottom: 6px;
   min-height: 56px;
+  border: 1px solid #333;
+  border-radius: 10px;
+  background: #101214;
+  color: var(--studio-text);
+  padding: 9px 11px;
+  line-height: 1.35;
+  resize: vertical;
 }
 
 .opportunity-help-text {
@@ -668,6 +709,78 @@ body {
   color: var(--studio-muted);
   text-align: center;
   padding: 18px 12px;
+}
+
+.agents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.agent-card {
+  border: 1px solid var(--studio-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(26, 26, 26, 0.95) 0%, rgba(20, 20, 20, 0.95) 100%);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-field span {
+  font-size: 11px;
+  color: var(--studio-dim);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.agent-textarea {
+  margin-bottom: 0;
+}
+
+.agent-actions {
+  justify-content: flex-start;
+}
+
+.opportunity-table td {
+  padding: 12px 10px;
+}
+
+.opportunity-agent-line {
+  margin-top: 4px;
+}
+
+.opportunity-decision-cell {
+  min-width: 220px;
+}
+
+.opportunity-actions {
+  justify-content: flex-start;
+  gap: 7px;
+}
+
+.opportunity-actions .btn {
+  font-size: 11px;
+  padding: 6px 9px;
 }
 
 .selected-video-panel {
@@ -1280,6 +1393,10 @@ body {
   .topnav-tools input {
     width: 180px;
   }
+
+  .agent-edit-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 920px) {
@@ -1320,5 +1437,17 @@ body {
   .content-toolbar input,
   .content-toolbar select {
     width: 100%;
+  }
+
+  .agents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-card {
+    padding: 10px;
+  }
+
+  .opportunity-table {
+    min-width: 900px;
   }
 }

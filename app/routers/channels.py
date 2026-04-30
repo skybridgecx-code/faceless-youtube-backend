@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Channel
 from app.schemas import ChannelCreate, ChannelRead
+from app.services.agents import seed_default_agents_if_empty
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -20,6 +21,7 @@ def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)) -> Cha
         db.rollback()
         raise HTTPException(status_code=409, detail="Channel already exists") from exc
     db.refresh(channel)
+    seed_default_agents_if_empty(db, channel.id)
     return channel
 
 

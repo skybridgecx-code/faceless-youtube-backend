@@ -16,6 +16,7 @@ const app = {
     packageDirsByVideoId: {},
     lastComplianceReportByVideoId: {},
     opportunities: [],
+    agents: [],
     producerRecommendation: null,
     producerHistory: [],
     stats: {
@@ -37,6 +38,7 @@ const app = {
     await this.loadCalendar();
     await this.loadGlobalAudit();
     await this.loadOpportunities();
+    await this.loadAgents();
     await this.loadExecutiveProducerRecommendation();
     await this.loadProducerHistory();
   },
@@ -80,6 +82,7 @@ const app = {
     const titleMap = {
       dashboard: 'Dashboard',
       opportunities: 'Opportunities',
+      agents: 'Agents',
       producer: 'Producer',
       content: 'Content',
       assets: 'Assets',
@@ -91,6 +94,9 @@ const app = {
     if (topNavTitle) topNavTitle.textContent = titleMap[page] || 'Dashboard';
     if (page === 'opportunities') {
       this.loadOpportunities();
+    }
+    if (page === 'agents') {
+      this.loadAgents();
     }
     if (page === 'producer') {
       this.loadExecutiveProducerRecommendation();
@@ -467,6 +473,122 @@ const app = {
     document.getElementById('kpiPackagesCreated').textContent = packages;
   },
 
+  getAgentById(agentId) {
+    if (!agentId) return null;
+    return (this.state.agents || []).find(agent => agent.id === agentId) || null;
+  },
+
+  async loadAgents() {
+    const container = document.getElementById('agentsList');
+    if (!container) return;
+    try {
+      const res = await fetch('/agents');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load agents');
+      }
+      this.state.agents = Array.isArray(data) ? data : [];
+      this.renderAgents();
+      this.renderOpportunities();
+      this.renderExecutiveProducerRecommendation(this.state.producerRecommendation);
+    } catch (err) {
+      this.log(`Error loading agents: ${err.message}`, 'error');
+      container.innerHTML = '<div class="empty-state">Failed to load agents.</div>';
+    }
+  },
+
+  renderAgents() {
+    const container = document.getElementById('agentsList');
+    if (!container) return;
+    const agents = this.state.agents || [];
+    if (agents.length === 0) {
+      container.innerHTML = '<div class="empty-state">No agents found.</div>';
+      return;
+    }
+
+    container.innerHTML = agents.map(agent => `
+      <article class="agent-card">
+        <div class="agent-card-header">
+          <div>
+            <div class="video-title-main">${this.escapeHtml(agent.name || '-')}</div>
+            <div class="video-meta-line">${this.escapeHtml(agent.lane || '-')}</div>
+          </div>
+          <span class="video-status ${agent.is_active ? 'approved' : 'blocked'}">${agent.is_active ? 'Active' : 'Inactive'}</span>
+        </div>
+        <div class="agent-edit-grid">
+          <label class="agent-field">
+            <span>Focus</span>
+            <textarea class="opportunity-input agent-textarea" id="agentFocus-${agent.id}" rows="3" placeholder="Agent focus">${this.escapeHtml(agent.focus || '')}</textarea>
+          </label>
+          <label class="agent-field">
+            <span>Monetization Focus</span>
+            <textarea class="opportunity-input agent-textarea" id="agentMonetization-${agent.id}" rows="3" placeholder="Monetization focus">${this.escapeHtml(agent.monetization_focus || '')}</textarea>
+          </label>
+          <label class="agent-field">
+            <span>Compliance Notes</span>
+            <textarea class="opportunity-input agent-textarea" id="agentCompliance-${agent.id}" rows="4" placeholder="Compliance notes">${this.escapeHtml(agent.compliance_notes || '')}</textarea>
+          </label>
+          <label class="agent-field">
+            <span>Production Rules</span>
+            <textarea class="opportunity-input agent-textarea" id="agentRules-${agent.id}" rows="4" placeholder="Production rules">${this.escapeHtml(agent.production_rules || '')}</textarea>
+          </label>
+        </div>
+        <div class="row-actions agent-actions">
+          <button class="btn success" onclick="app.saveAgent(${agent.id})">Save</button>
+          <button class="btn" onclick="app.toggleAgent(${agent.id}, ${agent.is_active ? 'false' : 'true'})">${agent.is_active ? 'Set Inactive' : 'Set Active'}</button>
+        </div>
+      </article>
+    `).join('');
+  },
+
+  async saveAgent(agentId) {
+    const focus = document.getElementById(`agentFocus-${agentId}`)?.value?.trim();
+    const monetizationFocus = document.getElementById(`agentMonetization-${agentId}`)?.value?.trim();
+    const complianceNotes = document.getElementById(`agentCompliance-${agentId}`)?.value?.trim();
+    const productionRules = document.getElementById(`agentRules-${agentId}`)?.value?.trim();
+    try {
+      const res = await fetch(`/agents/${agentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          focus: focus ?? null,
+          monetization_focus: monetizationFocus ?? null,
+          compliance_notes: complianceNotes ?? null,
+          production_rules: productionRules ?? null
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update agent');
+      }
+      this.log(`Updated agent profile: ${data.name}`, 'success');
+      await this.loadAgents();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Agent update failed: ${err.message}`, 'error');
+    }
+  },
+
+  async toggleAgent(agentId, isActive) {
+    try {
+      const res = await fetch(`/agents/${agentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: !!isActive })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update agent status');
+      }
+      this.log(`Agent ${data.name} is now ${data.is_active ? 'active' : 'inactive'}.`, 'success');
+      await this.loadAgents();
+      await this.loadOpportunities();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Agent status update failed: ${err.message}`, 'error');
+    }
+  },
+
   async loadOpportunities() {
     const tableBody = document.getElementById('opportunityList');
     if (!tableBody) return;
@@ -496,11 +618,16 @@ const app = {
       return;
     }
 
-    tableBody.innerHTML = items.map(item => `
+    tableBody.innerHTML = items.map(item => {
+      const matchedAgent = this.getAgentById(item.assigned_agent_id);
+      const agentName = matchedAgent?.name || item.assigned_agent || 'Unassigned';
+      const agentLane = matchedAgent?.lane || 'Lane not matched';
+      return `
       <tr>
         <td>
           <div class="video-title-main">${this.escapeHtml(item.topic)}</div>
           <div class="video-meta-line">${this.escapeHtml(item.niche_lane || '—')} • ${this.escapeHtml(item.audience || '—')}</div>
+          <div class="video-meta-line opportunity-agent-line">Agent: ${this.escapeHtml(agentName)}${item.assigned_agent_id ? ` (#${item.assigned_agent_id})` : ''}</div>
         </td>
         <td>
           <span class="video-status ${this.escapeHtml(item.review_status || 'unreviewed')}">${this.escapeHtml(this.formatReviewStatus(item.review_status))}</span>
@@ -508,16 +635,16 @@ const app = {
         <td><strong>${this.escapeHtml(String(item.score?.total_score ?? '-'))}</strong></td>
         <td>
           <div>${this.escapeHtml(item.expected_monetization_path || item.monetization_path || '—')}</div>
-          <div class="video-meta-line">${this.escapeHtml(item.assigned_agent || '—')}</div>
+          <div class="video-meta-line">${this.escapeHtml(agentLane)}</div>
         </td>
-        <td>
+        <td class="opportunity-decision-cell">
           <textarea class="opportunity-input" id="oppOperatorNotes-${item.id}" rows="2" placeholder="Operator notes">${this.escapeHtml(item.operator_notes || '')}</textarea>
           <textarea class="opportunity-input" id="oppDecisionSummary-${item.id}" rows="2" placeholder="Decision summary">${this.escapeHtml(item.decision_summary || '')}</textarea>
           <textarea class="opportunity-input ${item.review_status === 'rejected' ? '' : 'hidden'}" id="oppRejectionReason-${item.id}" rows="2" placeholder="Rejection reason">${this.escapeHtml(item.rejection_reason || '')}</textarea>
         </td>
         <td>${item.promoted_video_id ? `#${item.promoted_video_id}` : '—'}</td>
         <td>
-          <div class="row-actions">
+          <div class="row-actions opportunity-actions">
             <button class="btn" onclick="app.scoreOpportunity(${item.id})">Score Opportunity</button>
             <button class="btn" onclick="app.updateOpportunityReview(${item.id}, 'shortlisted')">Shortlist</button>
             <button class="btn" onclick="app.updateOpportunityReview(${item.id}, 'needs_more_research')">Needs More Research</button>
@@ -530,7 +657,8 @@ const app = {
             : '<div class="opportunity-help-text">Promotion blocked: approve for video first.</div>'}
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   },
 
   formatReviewStatus(status) {
@@ -574,7 +702,10 @@ const app = {
     titleEl.textContent = item.recommended_title || '-';
     thumbEl.textContent = item.thumbnail_angle || '-';
     ctaEl.textContent = item.recommended_cta || '-';
-    agentEl.textContent = item.assigned_agent || '-';
+    const matchedAgent = this.getAgentById(item.assigned_agent_id);
+    agentEl.textContent = matchedAgent
+      ? `${matchedAgent.name} (${matchedAgent.lane || 'lane n/a'})`
+      : (item.assigned_agent || '-');
     complianceEl.textContent = item.compliance_risk_note || '-';
     reviewStatusEl.textContent = this.formatReviewStatus(item.review_status);
     reviewStatusEl.className = `video-status ${this.escapeHtml(item.review_status || 'unreviewed')}`;
@@ -765,11 +896,17 @@ const app = {
   renderExecutiveProducerRecommendation(data) {
     const dashboardTopic = document.getElementById('producerDashboardTopic');
     const dashboardConfidence = document.getElementById('producerDashboardConfidence');
+    const dashboardAgent = document.getElementById('producerDashboardAgent');
     const dashboardMonetization = document.getElementById('producerDashboardMonetization');
     const producerTopic = document.getElementById('producerTopic');
     const producerWhy = document.getElementById('producerWhy');
     const producerNiche = document.getElementById('producerNiche');
     const producerAgent = document.getElementById('producerAgent');
+    const producerAgentLane = document.getElementById('producerAgentLane');
+    const producerAgentFocus = document.getElementById('producerAgentFocus');
+    const producerAgentMonetization = document.getElementById('producerAgentMonetization');
+    const producerAgentCompliance = document.getElementById('producerAgentCompliance');
+    const producerAgentRules = document.getElementById('producerAgentRules');
     const producerTitle = document.getElementById('producerTitle');
     const producerThumb = document.getElementById('producerThumb');
     const producerCta = document.getElementById('producerCta');
@@ -782,7 +919,7 @@ const app = {
     const viewBtn = document.getElementById('btnProducerViewOpportunity');
     const promoteBtn = document.getElementById('btnProducerPromote');
 
-    if (!dashboardTopic || !dashboardConfidence || !dashboardMonetization || !producerTopic || !producerWhy || !producerNiche || !producerAgent || !producerTitle || !producerThumb || !producerCta || !producerMonetization || !producerConfidence || !producerRisks || !producerChecklist || !producerBrief || !producerEmptyState || !viewBtn || !promoteBtn) {
+    if (!dashboardTopic || !dashboardConfidence || !dashboardAgent || !dashboardMonetization || !producerTopic || !producerWhy || !producerNiche || !producerAgent || !producerAgentLane || !producerAgentFocus || !producerAgentMonetization || !producerAgentCompliance || !producerAgentRules || !producerTitle || !producerThumb || !producerCta || !producerMonetization || !producerConfidence || !producerRisks || !producerChecklist || !producerBrief || !producerEmptyState || !viewBtn || !promoteBtn) {
       return;
     }
 
@@ -790,11 +927,17 @@ const app = {
       dashboardTopic.textContent = 'Run Executive Producer to generate a daily recommendation.';
       dashboardConfidence.textContent = 'n/a';
       dashboardConfidence.className = 'video-status';
+      dashboardAgent.textContent = '-';
       dashboardMonetization.textContent = '-';
       producerTopic.textContent = 'Run Executive Producer to generate a recommendation.';
       producerWhy.textContent = '-';
       producerNiche.textContent = '-';
       producerAgent.textContent = '-';
+      producerAgentLane.textContent = '-';
+      producerAgentFocus.textContent = '-';
+      producerAgentMonetization.textContent = '-';
+      producerAgentCompliance.textContent = '-';
+      producerAgentRules.textContent = '-';
       producerTitle.textContent = '-';
       producerThumb.textContent = '-';
       producerCta.textContent = '-';
@@ -814,12 +957,15 @@ const app = {
     const hasOpportunity = !!data.selected_opportunity_id;
     const confidence = data.confidence_label || 'low';
     const confidenceLabel = confidence.charAt(0).toUpperCase() + confidence.slice(1);
+    const matchedAgentName = data.matched_agent_name || data.assigned_agent || '-';
+    const matchedAgentLane = data.matched_agent_lane || '-';
 
     dashboardTopic.textContent = hasOpportunity
       ? (data.recommended_topic || data.recommended_title || 'Best pick generated.')
       : emptyState || 'No recommendation available.';
     dashboardConfidence.textContent = confidenceLabel;
     dashboardConfidence.className = `video-status ${this.escapeHtml(confidence)}`;
+    dashboardAgent.textContent = matchedAgentName === '-' ? '-' : `${matchedAgentName} (${matchedAgentLane})`;
     dashboardMonetization.textContent = data.monetization_path || '-';
 
     producerTopic.textContent = hasOpportunity
@@ -827,7 +973,12 @@ const app = {
       : (emptyState || 'No recommendation available.');
     producerWhy.textContent = data.why_make_today || '-';
     producerNiche.textContent = data.niche_lane || '-';
-    producerAgent.textContent = data.assigned_agent || '-';
+    producerAgent.textContent = matchedAgentName;
+    producerAgentLane.textContent = matchedAgentLane;
+    producerAgentFocus.textContent = data.matched_agent_focus || '-';
+    producerAgentMonetization.textContent = data.matched_agent_monetization_focus || '-';
+    producerAgentCompliance.textContent = data.matched_agent_compliance_notes || '-';
+    producerAgentRules.textContent = data.matched_agent_production_rules || '-';
     producerTitle.textContent = data.recommended_title || '-';
     producerThumb.textContent = data.thumbnail_angle || '-';
     producerCta.textContent = data.recommended_cta || '-';

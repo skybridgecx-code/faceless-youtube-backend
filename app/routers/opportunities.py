@@ -16,6 +16,7 @@ from app.schemas import (
     OpportunityScoreBreakdown,
     VideoRead,
 )
+from app.services.agents import ensure_channel_agents, first_active_agent_name, maybe_assign_agent_to_opportunity
 from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
@@ -120,7 +121,6 @@ def score_opportunity_fields(topic: str, audience: str, monetization_path: str, 
         "recommended_title": recommended_title or "Untitled Opportunity",
         "thumbnail_angle": f"{clean_text(topic)}: show problem-to-outcome for {clean_text(audience) or 'operators'}",
         "recommended_cta": cta,
-        "assigned_agent": "Opportunity Research Agent (Local Deterministic)",
         "compliance_risk_note": risk_note,
     }
 
@@ -147,7 +147,6 @@ def apply_scores(opportunity: VideoOpportunity) -> None:
     opportunity.recommended_title = str(score_data["recommended_title"])
     opportunity.thumbnail_angle = str(score_data["thumbnail_angle"])
     opportunity.recommended_cta = str(score_data["recommended_cta"])
-    opportunity.assigned_agent = str(score_data["assigned_agent"])
     opportunity.compliance_risk_note = str(score_data["compliance_risk_note"])
     opportunity.scored_at = datetime.utcnow()
 
@@ -167,6 +166,7 @@ def serialize_opportunity(opportunity: VideoOpportunity) -> OpportunityRead:
     return OpportunityRead(
         id=opportunity.id,
         channel_id=opportunity.channel_id,
+        assigned_agent_id=opportunity.assigned_agent_id,
         topic=opportunity.topic,
         niche_lane=opportunity.niche_lane,
         audience=opportunity.audience,
@@ -249,6 +249,7 @@ def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)
         channel = db.scalar(select(Channel).order_by(Channel.created_at.asc()).limit(1))
     if not channel:
         raise HTTPException(status_code=404, detail="No channel found. Create a channel before adding opportunities.")
+    agents = ensure_channel_agents(db, channel.id)
 
     opportunity = VideoOpportunity(
         channel_id=channel.id,
@@ -257,10 +258,14 @@ def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)
         audience=payload.audience,
         monetization_path=payload.monetization_path,
         notes=payload.notes,
+        assigned_agent=first_active_agent_name(agents),
         review_status=OpportunityReviewStatus.unreviewed.value,
     )
     apply_scores(opportunity)
     db.add(opportunity)
+    db.commit()
+    db.refresh(opportunity)
+    maybe_assign_agent_to_opportunity(db, opportunity, reason="opportunity_created")
     db.commit()
     db.refresh(opportunity)
 
@@ -300,6 +305,7 @@ def review_opportunity(
         previous_status == OpportunityReviewStatus.unreviewed.value or opportunity.reviewed_at is None
     ):
         opportunity.reviewed_at = datetime.utcnow()
+    maybe_assign_agent_to_opportunity(db, opportunity, reason="opportunity_review_updated")
 
     db.commit()
     db.refresh(opportunity)
@@ -323,7 +329,9 @@ def review_opportunity(
 @router.post("/{opportunity_id}/score", response_model=OpportunityRead)
 def score_opportunity(opportunity_id: int, db: Session = Depends(get_db)) -> OpportunityRead:
     opportunity = get_opportunity_or_404(db, opportunity_id)
+    ensure_channel_agents(db, opportunity.channel_id)
     apply_scores(opportunity)
+    maybe_assign_agent_to_opportunity(db, opportunity, reason="opportunity_scored")
     db.commit()
     db.refresh(opportunity)
 
@@ -358,9 +366,12 @@ def promote_opportunity_to_video(opportunity_id: int, db: Session = Depends(get_
     ]
     if opportunity.notes:
         notes.append(f"Operator notes: {opportunity.notes}")
+    if opportunity.assigned_agent:
+        notes.append(f"Assigned content agent: {opportunity.assigned_agent}")
 
     video = Video(
         channel_id=opportunity.channel_id,
+        assigned_agent_id=opportunity.assigned_agent_id,
         title=opportunity.recommended_title,
         niche=opportunity.niche_lane,
         target_audience=opportunity.audience,

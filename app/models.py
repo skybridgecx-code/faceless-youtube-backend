@@ -59,6 +59,25 @@ class Channel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     videos: Mapped[list["Video"]] = relationship(back_populates="channel", cascade="all, delete-orphan")
+    agents: Mapped[list["ContentAgent"]] = relationship(back_populates="channel", cascade="all, delete-orphan")
+
+
+class ContentAgent(Base):
+    __tablename__ = "content_agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    lane: Mapped[str] = mapped_column(String(240))
+    focus: Mapped[str] = mapped_column(Text)
+    monetization_focus: Mapped[str] = mapped_column(Text)
+    compliance_notes: Mapped[str] = mapped_column(Text)
+    production_rules: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    channel: Mapped[Channel] = relationship(back_populates="agents")
 
 
 class Video(Base):
@@ -66,6 +85,7 @@ class Video(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(240), index=True)
     content_type: Mapped[ContentType] = mapped_column(SAEnum(ContentType), default=ContentType.long)
     pillar: Mapped[str] = mapped_column(String(120), default="AI call handling")
@@ -154,6 +174,7 @@ class VideoOpportunity(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
     topic: Mapped[str] = mapped_column(String(240), index=True)
     niche_lane: Mapped[str] = mapped_column(String(240))
     audience: Mapped[str] = mapped_column(String(500))
@@ -195,6 +216,9 @@ class ExecutiveProducerRecommendation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     selected_opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("video_opportunities.id"), nullable=True, index=True)
+    matched_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
+    matched_agent_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    matched_agent_lane: Mapped[str | None] = mapped_column(String(240), nullable=True)
     selected_review_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
     recommended_topic: Mapped[str | None] = mapped_column(String(240), nullable=True)
     niche_lane: Mapped[str | None] = mapped_column(String(240), nullable=True)

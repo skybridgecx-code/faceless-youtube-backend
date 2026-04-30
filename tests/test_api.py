@@ -2,9 +2,11 @@ import os
 import shutil
 import tempfile
 import urllib.error
+import json
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_content_factory.db"
 os.environ["OUTPUT_DIR"] = tempfile.mkdtemp(prefix="yt_factory_test_")
@@ -12,9 +14,10 @@ os.environ["OUTPUT_DIR"] = tempfile.mkdtemp(prefix="yt_factory_test_")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app.routers.videos as videos_router  # noqa: E402
-from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import VideoOpportunity  # noqa: E402
+from app.models import AuditEvent, ContentAgent, VideoOpportunity  # noqa: E402
+from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 
 
 def setup_function() -> None:
@@ -411,7 +414,8 @@ def test_opportunity_routes_and_promotion_workflow() -> None:
     created = create_response.json()
     assert created["topic"] == "Best AI tools for small business owners"
     assert created["score"]["total_score"] >= 8
-    assert created["assigned_agent"] == "Opportunity Research Agent (Local Deterministic)"
+    assert created["assigned_agent"]
+    assert created["assigned_agent_id"] is not None
 
     list_response = client.get("/opportunities")
     assert list_response.status_code == 200
@@ -454,6 +458,7 @@ def test_opportunity_routes_and_promotion_workflow() -> None:
     assert promoted_video["approved"] is False
     assert promoted_video["status"] == "idea"
     assert promoted_video["preview_reviewed"] is False
+    assert promoted_video["assigned_agent_id"] == created["assigned_agent_id"]
 
     updated_opp = client.get("/opportunities").json()[0]
     assert updated_opp["promoted_video_id"] == promoted_video["id"]
@@ -699,3 +704,244 @@ def test_executive_producer_history_and_audit_event_written() -> None:
     assert audit_response.status_code == 200
     event_types = [event["event_type"] for event in audit_response.json()]
     assert "executive_producer_recommendation_created" in event_types
+
+
+def test_default_agents_seeded_and_listed() -> None:
+    client = TestClient(app)
+    channel_response = client.post("/channels", json={"name": "Agent Seed Channel"})
+    assert channel_response.status_code == 200
+
+    agents_response = client.get("/agents")
+    assert agents_response.status_code == 200
+    agents = agents_response.json()
+    assert len(agents) >= 7
+    names = {agent["name"] for agent in agents}
+    assert "AI Tools Agent" in names
+    assert "Local Business AI Agent" in names
+
+
+def test_default_agent_seeding_twice_does_not_create_duplicates() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Agent Idempotent Seed Channel"}).json()["id"]
+
+    db = SessionLocal()
+    try:
+        seed_default_agents_if_empty(db, channel_id)
+        seed_default_agents_if_empty(db, channel_id)
+
+        channel_agents = list(
+            db.scalars(
+                select(ContentAgent).where(ContentAgent.channel_id == channel_id).order_by(ContentAgent.id.asc())
+            )
+        )
+        assert len(channel_agents) == len(seed_default_agents_if_empty(db, channel_id))
+        assert len(channel_agents) == 7
+
+        normalized_pairs = {(
+            " ".join(agent.name.lower().split()),
+            " ".join(agent.lane.lower().split()),
+        ) for agent in channel_agents}
+        assert len(normalized_pairs) == len(channel_agents)
+
+        seed_events = list(
+            db.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.event_type == "agent_created_seed")
+                .order_by(AuditEvent.id.asc())
+            )
+        )
+        channel_seed_events = [
+            event
+            for event in seed_events
+            if (json.loads(event.metadata_json) if event.metadata_json else {}).get("channel_id") == channel_id
+        ]
+        assert len(channel_seed_events) == 7
+    finally:
+        db.close()
+
+
+def test_init_db_seed_flow_twice_does_not_create_duplicates() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Agent InitDb Idempotent Channel"}).json()["id"]
+
+    init_db()
+    init_db()
+
+    db = SessionLocal()
+    try:
+        channel_agents = list(
+            db.scalars(
+                select(ContentAgent).where(ContentAgent.channel_id == channel_id).order_by(ContentAgent.id.asc())
+            )
+        )
+        assert len(channel_agents) == 7
+
+        normalized_pairs = {(
+            " ".join(agent.name.lower().split()),
+            " ".join(agent.lane.lower().split()),
+        ) for agent in channel_agents}
+        assert len(normalized_pairs) == len(channel_agents)
+    finally:
+        db.close()
+
+
+def test_patch_agent_updates_editable_fields() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Agent Update Channel"}).json()["id"]
+    agents = client.get("/agents").json()
+    target = next(agent for agent in agents if agent["channel_id"] == channel_id and agent["name"] == "AI Tools Agent")
+
+    patch_response = client.patch(
+        f"/agents/{target['id']}",
+        json={
+            "focus": "Tool comparisons with operator walkthroughs.",
+            "monetization_focus": "Affiliate software and templates.",
+            "compliance_notes": "No unsupported vendor claims.",
+            "production_rules": "Use practical setup demos.",
+            "is_active": False,
+        },
+    )
+    assert patch_response.status_code == 200
+    body = patch_response.json()
+    assert body["focus"] == "Tool comparisons with operator walkthroughs."
+    assert body["monetization_focus"] == "Affiliate software and templates."
+    assert body["compliance_notes"] == "No unsupported vendor claims."
+    assert body["production_rules"] == "Use practical setup demos."
+    assert body["is_active"] is False
+
+
+def test_agent_opportunities_and_videos_routes_and_promotion_carry_agent() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Agent Mapping Channel"}).json()["id"]
+
+    agents = client.get("/agents").json()
+    local_agent = next(agent for agent in agents if agent["channel_id"] == channel_id and agent["name"] == "Local Business AI Agent")
+
+    opportunity = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "How to automate customer calls with AI",
+            "niche_lane": "local business AI automation",
+            "audience": "Service business owners",
+            "monetization_path": "SkybridgeCX leads + audits",
+        },
+    ).json()
+    assert opportunity["assigned_agent_id"] == local_agent["id"]
+
+    opp_list_response = client.get(f"/agents/{local_agent['id']}/opportunities")
+    assert opp_list_response.status_code == 200
+    opp_rows = opp_list_response.json()
+    assert any(item["id"] == opportunity["id"] for item in opp_rows)
+
+    assert client.patch(
+        f"/opportunities/{opportunity['id']}/review",
+        json={"review_status": "approved_for_video"},
+    ).status_code == 200
+
+    promoted_video = client.post(f"/opportunities/{opportunity['id']}/promote-to-video").json()
+    assert promoted_video["assigned_agent_id"] == local_agent["id"]
+    assert promoted_video["approved"] is False
+    assert promoted_video["preview_reviewed"] is False
+    assert promoted_video["status"] == "idea"
+
+    agent_videos_response = client.get(f"/agents/{local_agent['id']}/videos")
+    assert agent_videos_response.status_code == 200
+    video_rows = agent_videos_response.json()
+    assert any(item["id"] == promoted_video["id"] for item in video_rows)
+
+
+def test_lane_alias_matching_for_ecommerce_and_local_business_agents() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Lane Alias Match Channel"}).json()["id"]
+
+    ecommerce = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI ecommerce product research workflow",
+            "niche_lane": "AI ecommerce ops",
+            "audience": "ecommerce founders",
+            "monetization_path": "affiliate tools + templates",
+        },
+    ).json()
+    local_business = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "How to automate customer calls with AI",
+            "niche_lane": "local business AI operations",
+            "audience": "local business owners",
+            "monetization_path": "SkybridgeCX leads + audits",
+        },
+    ).json()
+
+    assert ecommerce["assigned_agent"] == "Ecommerce AI Agent"
+    assert ecommerce["assigned_agent_id"] is not None
+    assert local_business["assigned_agent"] == "Local Business AI Agent"
+    assert local_business["assigned_agent_id"] is not None
+
+
+def test_executive_producer_includes_matched_agent_profile() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Producer Agent Profile Channel"}).json()["id"]
+
+    opportunity = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Faceless YouTube automation workflow",
+            "niche_lane": "faceless YouTube / creator automation",
+            "audience": "Creator operators",
+            "monetization_path": "Templates + affiliate software",
+        },
+    ).json()
+
+    assert client.patch(
+        f"/opportunities/{opportunity['id']}/review",
+        json={"review_status": "approved_for_video"},
+    ).status_code == 200
+
+    run_response = client.post("/executive-producer/recommendation/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["selected_opportunity_id"] == opportunity["id"]
+    assert payload["matched_agent_id"] is not None
+    assert payload["matched_agent_name"] == "Faceless Creator Agent"
+    assert payload["matched_agent_lane"] == "faceless YouTube / creator automation"
+    assert payload["matched_agent_focus"]
+    assert payload["matched_agent_monetization_focus"]
+    assert payload["matched_agent_compliance_notes"]
+    assert payload["matched_agent_production_rules"]
+
+
+def test_executive_producer_alias_lane_includes_matched_agent_profile_fields() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Producer Alias Agent Profile Channel"}).json()["id"]
+
+    opportunity = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI ecommerce automation for store operations",
+            "niche_lane": "ecommerce founders",
+            "audience": "ecommerce operators",
+            "monetization_path": "Affiliate + consulting audit",
+        },
+    ).json()
+
+    assert client.patch(
+        f"/opportunities/{opportunity['id']}/review",
+        json={"review_status": "approved_for_video"},
+    ).status_code == 200
+
+    run_response = client.post("/executive-producer/recommendation/run")
+    assert run_response.status_code == 200
+    payload = run_response.json()
+    assert payload["selected_opportunity_id"] == opportunity["id"]
+    assert payload["matched_agent_name"] == "Ecommerce AI Agent"
+    assert payload["matched_agent_lane"] == "ecommerce AI"
+    assert payload["matched_agent_focus"]
+    assert payload["matched_agent_monetization_focus"]
+    assert payload["matched_agent_compliance_notes"]
+    assert payload["matched_agent_production_rules"]

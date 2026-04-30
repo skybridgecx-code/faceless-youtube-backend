@@ -8,21 +8,31 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import (
+    ContentAgent,
     ExecutiveProducerRecommendation,
     OpportunityReviewStatus,
     ProducerConfidenceLabel,
     VideoOpportunity,
 )
 from app.schemas import ExecutiveProducerRecommendationRead
+from app.services.agents import ensure_channel_agents, resolve_agent_for_opportunity
 from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/executive-producer", tags=["executive-producer"])
 
 
-def serialize_recommendation(item: ExecutiveProducerRecommendation) -> ExecutiveProducerRecommendationRead:
+def serialize_recommendation(item: ExecutiveProducerRecommendation, db: Session) -> ExecutiveProducerRecommendationRead:
+    matched_agent = db.get(ContentAgent, item.matched_agent_id) if item.matched_agent_id else None
     return ExecutiveProducerRecommendationRead(
         id=item.id,
         selected_opportunity_id=item.selected_opportunity_id,
+        matched_agent_id=item.matched_agent_id,
+        matched_agent_name=(matched_agent.name if matched_agent else item.matched_agent_name),
+        matched_agent_lane=(matched_agent.lane if matched_agent else item.matched_agent_lane),
+        matched_agent_focus=(matched_agent.focus if matched_agent else None),
+        matched_agent_monetization_focus=(matched_agent.monetization_focus if matched_agent else None),
+        matched_agent_compliance_notes=(matched_agent.compliance_notes if matched_agent else None),
+        matched_agent_production_rules=(matched_agent.production_rules if matched_agent else None),
         selected_review_status=OpportunityReviewStatus(item.selected_review_status) if item.selected_review_status else None,
         recommended_topic=item.recommended_topic,
         niche_lane=item.niche_lane,
@@ -76,6 +86,9 @@ def confidence_from_score(score: int, status: str) -> ProducerConfidenceLabel:
 def build_empty_recommendation() -> ExecutiveProducerRecommendation:
     return ExecutiveProducerRecommendation(
         selected_opportunity_id=None,
+        matched_agent_id=None,
+        matched_agent_name=None,
+        matched_agent_lane=None,
         selected_review_status=None,
         recommended_topic=None,
         niche_lane=None,
@@ -98,6 +111,13 @@ def build_empty_recommendation_read() -> ExecutiveProducerRecommendationRead:
     return ExecutiveProducerRecommendationRead(
         id=0,
         selected_opportunity_id=None,
+        matched_agent_id=None,
+        matched_agent_name=None,
+        matched_agent_lane=None,
+        matched_agent_focus=None,
+        matched_agent_monetization_focus=None,
+        matched_agent_compliance_notes=None,
+        matched_agent_production_rules=None,
         selected_review_status=None,
         recommended_topic=None,
         niche_lane=None,
@@ -137,7 +157,8 @@ def choose_best_opportunity(opportunities: list[VideoOpportunity]) -> VideoOppor
     return None
 
 
-def create_recommendation_from_opportunity(opportunity: VideoOpportunity) -> ExecutiveProducerRecommendation:
+def create_recommendation_from_opportunity(db: Session, opportunity: VideoOpportunity) -> ExecutiveProducerRecommendation:
+    matched_agent = resolve_agent_for_opportunity(db, opportunity)
     selection_score = compute_selection_score(opportunity)
     confidence = confidence_from_score(selection_score, opportunity.review_status)
     risk_lines: list[str] = []
@@ -175,10 +196,13 @@ def create_recommendation_from_opportunity(opportunity: VideoOpportunity) -> Exe
     )
     return ExecutiveProducerRecommendation(
         selected_opportunity_id=opportunity.id,
+        matched_agent_id=matched_agent.id if matched_agent else None,
+        matched_agent_name=matched_agent.name if matched_agent else None,
+        matched_agent_lane=matched_agent.lane if matched_agent else None,
         selected_review_status=opportunity.review_status,
         recommended_topic=opportunity.topic,
         niche_lane=opportunity.niche_lane,
-        assigned_agent="Executive Producer Agent (Deterministic Local)",
+        assigned_agent=(matched_agent.name if matched_agent else opportunity.assigned_agent or "Executive Producer Agent (Deterministic Local)"),
         recommended_title=opportunity.recommended_title,
         thumbnail_angle=opportunity.thumbnail_angle,
         recommended_cta=opportunity.recommended_cta,
@@ -202,7 +226,7 @@ def get_current_recommendation(db: Session = Depends(get_db)) -> ExecutiveProduc
     )
     if latest is None:
         return build_empty_recommendation_read()
-    return serialize_recommendation(latest)
+    return serialize_recommendation(latest, db)
 
 
 @router.post("/recommendation/run", response_model=ExecutiveProducerRecommendationRead)
@@ -220,8 +244,11 @@ def run_recommendation(db: Session = Depends(get_db)) -> ExecutiveProducerRecomm
             )
         )
     )
+    channel_ids = {item.channel_id for item in opportunities}
+    for channel_id in channel_ids:
+        ensure_channel_agents(db, channel_id)
     best = choose_best_opportunity(opportunities)
-    recommendation = create_recommendation_from_opportunity(best) if best else build_empty_recommendation()
+    recommendation = create_recommendation_from_opportunity(db, best) if best else build_empty_recommendation()
 
     db.add(recommendation)
     db.commit()
@@ -238,7 +265,7 @@ def run_recommendation(db: Session = Depends(get_db)) -> ExecutiveProducerRecomm
             "has_empty_state": recommendation.empty_state_message is not None,
         },
     )
-    return serialize_recommendation(recommendation)
+    return serialize_recommendation(recommendation, db)
 
 
 @router.get("/history", response_model=list[ExecutiveProducerRecommendationRead])
@@ -253,4 +280,4 @@ def get_recommendation_history(
             .limit(limit)
         )
     )
-    return [serialize_recommendation(row) for row in rows]
+    return [serialize_recommendation(row, db) for row in rows]
