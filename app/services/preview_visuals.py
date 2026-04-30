@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Video, VisualAssetPlan, VisualGeneratedAsset, VisualScene
+from app.services.visual_asset_review import asset_review_fields
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -102,6 +103,10 @@ def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
         if safe_path is None:
             warnings.append(f"Skipped asset {asset.id}: {warning}")
             continue
+        review_fields = asset_review_fields(db, asset)
+        review_status = str(review_fields.get("review_status") or "pending")
+        if review_status != "approved":
+            warnings.append(f"Asset {asset.id} is {review_status}; manual approval is still required.")
         if asset.visual_scene_id is not None:
             used_scene_ids.add(asset.visual_scene_id)
         included_assets.append(
@@ -116,6 +121,9 @@ def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
                 "width": asset.width,
                 "height": asset.height,
                 "notes": asset.notes,
+                "review_status": review_status,
+                "review_notes": review_fields.get("review_notes"),
+                "reviewed_at": review_fields.get("reviewed_at"),
             }
         )
 
@@ -132,6 +140,7 @@ def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
                 "asset_status": scene.asset_status,
                 "generated_asset_path": scene.generated_asset_path,
                 "registered_asset_paths": [asset["file_path"] for asset in scene_assets],
+                "registered_asset_review_statuses": [asset["review_status"] for asset in scene_assets],
             }
         )
 
