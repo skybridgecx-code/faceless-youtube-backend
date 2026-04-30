@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,5 +26,16 @@ def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)) -> Cha
 
 
 @router.get("", response_model=list[ChannelRead])
-def list_channels(db: Session = Depends(get_db)) -> list[Channel]:
-    return list(db.scalars(select(Channel).order_by(Channel.created_at.desc())))
+def list_channels(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[Channel]:
+    return list(
+        db.scalars(
+            select(Channel)
+            .order_by(Channel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    )

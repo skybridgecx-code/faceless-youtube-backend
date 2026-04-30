@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_content_factory.db"
@@ -17,15 +19,18 @@ from fastapi.testclient import TestClient  # noqa: E402
 import app.routers.videos as videos_router  # noqa: E402
 import app.routers.research as research_router  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
+import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import AuditEvent, ContentAgent, Video, VideoOpportunity  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
+from app.security import InMemoryRateLimiter  # noqa: E402
 
 
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    main_module.rate_limiter = InMemoryRateLimiter()
     output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -186,6 +191,72 @@ def test_health() -> None:
     assert response.json()["ok"] is True
 
 
+def test_health_remains_public_with_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+def test_protected_write_rejects_without_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+    response = client.post("/channels", json={"name": "Denied Channel"})
+    assert response.status_code == 401
+    assert "invalid" in response.json()["detail"].lower()
+
+
+def test_protected_write_accepts_with_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+    response = client.post(
+        "/channels",
+        json={"name": "Allowed Channel"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "Allowed Channel"
+
+
+def test_cors_blocks_arbitrary_origin_when_production_origins_configured() -> None:
+    settings = main_module.get_settings().__class__(
+        app_env="production",
+        allowed_origins="https://safe.example",
+    )
+    cors_app = FastAPI()
+    cors_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @cors_app.get("/health")
+    def _health() -> dict[str, bool]:
+        return {"ok": True}
+
+    client = TestClient(cors_app)
+    blocked = client.options(
+        "/health",
+        headers={
+            "Origin": "https://evil.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert blocked.headers.get("access-control-allow-origin") is None
+
+    allowed = client.options(
+        "/health",
+        headers={
+            "Origin": "https://safe.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert allowed.headers.get("access-control-allow-origin") == "https://safe.example"
+
+
 def test_content_workflow() -> None:
     client = TestClient(app)
 
@@ -264,6 +335,90 @@ def test_content_workflow() -> None:
     payload_response = client.post(f"/publish/{video_id}/prepare-youtube-payload")
     assert payload_response.status_code == 200
     assert payload_response.json()["privacy_status"] == "private"
+
+
+def test_long_title_validation_returns_422() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Length Guard Channel"}).json()["id"]
+    title = "A" * 201
+    response = client.post(
+        "/videos",
+        json={
+            "channel_id": channel_id,
+            "title": title,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_script_payload_in_title_returns_422() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Script Guard Channel"}).json()["id"]
+    response = client.post(
+        "/videos",
+        json={
+            "channel_id": channel_id,
+            "title": "<script>alert('xss')</script>",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_ai_generation_failure_returns_non_200(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Generation Failure Channel"}).json()["id"]
+    video_id = client.post("/videos", json={"channel_id": channel_id, "title": "Failing Generation"}).json()["id"]
+
+    def fake_build_all_assets(_video):  # noqa: ANN001
+        raise RuntimeError("simulated model failure")
+
+    monkeypatch.setattr(videos_router, "build_all_assets", fake_build_all_assets)
+    response = client.post(f"/videos/{video_id}/generate", json={"stage": "all"})
+    assert response.status_code == 502
+    assert "failed" in response.json()["detail"].lower()
+
+
+def test_videos_list_respects_limit_and_offset() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Videos Pagination Channel"}).json()["id"]
+    for idx in range(5):
+        response = client.post("/videos", json={"channel_id": channel_id, "title": f"Video {idx}"})
+        assert response.status_code == 200
+
+    limited = client.get("/videos?limit=2")
+    assert limited.status_code == 200
+    assert len(limited.json()) == 2
+
+    offset = client.get("/videos?limit=2&offset=2")
+    assert offset.status_code == 200
+    assert len(offset.json()) == 2
+
+
+def test_videos_list_over_limit_rejected() -> None:
+    client = TestClient(app)
+    response = client.get("/videos?limit=101")
+    assert response.status_code == 422
+
+
+def test_ai_route_rate_limit_returns_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "rate_limit_ai_per_minute", 2)
+    monkeypatch.setattr(main_module, "rate_limiter", InMemoryRateLimiter())
+
+    channel_id = client.post("/channels", json={"name": "Rate Limit Channel"}).json()["id"]
+    assert channel_id > 0
+
+    payload = {
+        "niche_lane": "AI tool breakdowns",
+        "query": "best ai tools",
+        "max_results": 5,
+    }
+    first = client.post("/research/youtube/run", json=payload)
+    second = client.post("/research/youtube/run", json=payload)
+    third = client.post("/research/youtube/run", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
 
 
 def test_pipeline_and_batch() -> None:

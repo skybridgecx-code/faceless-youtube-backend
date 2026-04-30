@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
@@ -15,13 +16,16 @@ from app.config import get_settings
 from app.db import get_db, init_db
 from app.models import AuditEvent, PublishRecord, Video, VideoStatus
 from app.routers import agents, channels, command_center, executive_producer, opportunities, pipeline, production_briefs, publish, research, videos
+from app.security import InMemoryRateLimiter, auth_error_payload, check_internal_api_key, client_ip, is_ai_cost_route, is_public_path, needs_auth
 from app.schemas import AuditEventRead, PipelineActionItem, PipelineSummary, VideoRead
 
 settings = get_settings()
+rate_limiter = InMemoryRateLimiter()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    settings.validate_startup()
     init_db()
     yield
 
@@ -35,11 +39,41 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    path = request.url.path
+    method = request.method.upper()
+
+    if is_public_path(path):
+        return await call_next(request)
+
+    if needs_auth(path, method) and not check_internal_api_key(settings, request):
+        return JSONResponse(status_code=401, content=auth_error_payload())
+
+    limit: int | None = None
+    if is_ai_cost_route(path, method):
+        limit = settings.rate_limit_ai_per_minute
+    elif method in {"POST", "PATCH", "DELETE"}:
+        limit = settings.rate_limit_write_per_minute
+
+    if limit is not None and limit > 0:
+        rate_scope = path if method in {"POST", "PATCH", "DELETE"} else "read"
+        rate_key = f"{client_ip(request)}:{method}:{rate_scope}"
+        allowed = rate_limiter.allow(rate_key, limit=limit)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please retry shortly."},
+            )
+
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -87,8 +121,17 @@ def has_preview_file(video: Video) -> bool:
 
 
 @app.get("/calendar", response_model=list[VideoRead])
-def get_calendar(db: Session = Depends(get_db)) -> list[Video]:
-    stmt = select(Video).order_by(Video.publish_date.asc().nulls_last(), Video.created_at.desc())
+def get_calendar(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[Video]:
+    stmt = (
+        select(Video)
+        .order_by(Video.publish_date.asc().nulls_last(), Video.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     return list(db.scalars(stmt))
 
 

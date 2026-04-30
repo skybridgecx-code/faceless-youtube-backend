@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Literal
+import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models import AssetType, ContentType, OpportunityReviewStatus, ProducerConfidenceLabel, ProductionBriefStatus, VideoStatus
 
@@ -23,24 +24,44 @@ class ChannelRead(ChannelCreate):
 
 class VideoCreate(BaseModel):
     channel_id: int
-    title: str
+    title: str = Field(max_length=200)
     content_type: ContentType = ContentType.long
     pillar: str = "AI call handling"
     target_viewer: str = "Local service business owner"
     pain_point: str = "Missed calls, slow lead follow-up, and scattered customer details"
     demo_idea: str = "AI receptionist and dashboard walkthrough"
     thumbnail_text: str = Field(default="AI BUSINESS SYSTEM", max_length=80)
-    niche: str | None = None
-    target_audience: str | None = None
-    angle: str | None = None
-    notes: str | None = None
+    niche: str | None = Field(default=None, max_length=100)
+    target_audience: str | None = Field(default=None, max_length=200)
+    angle: str | None = Field(default=None, max_length=150)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("title", "niche", "target_audience", "angle", "notes", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
 
 class VideoUpdate(BaseModel):
-    title: str | None = None
-    niche: str | None = None
-    target_audience: str | None = None
-    angle: str | None = None
-    notes: str | None = None
+    title: str | None = Field(default=None, max_length=200)
+    niche: str | None = Field(default=None, max_length=100)
+    target_audience: str | None = Field(default=None, max_length=200)
+    angle: str | None = Field(default=None, max_length=150)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("title", "niche", "target_audience", "angle", "notes", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
 
 
 
@@ -103,11 +124,21 @@ class BulkIdeaRequest(BaseModel):
 
 
 class VideoBatchItem(BaseModel):
-    title: str
-    niche: str | None = None
-    target_audience: str | None = None
-    angle: str | None = None
-    notes: str | None = None
+    title: str = Field(max_length=200)
+    niche: str | None = Field(default=None, max_length=100)
+    target_audience: str | None = Field(default=None, max_length=200)
+    angle: str | None = Field(default=None, max_length=150)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("title", "niche", "target_audience", "angle", "notes", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
 
 
 class VideoBatchCreate(BaseModel):

@@ -692,6 +692,8 @@ def list_videos(
     publish_status: str | None = None,
     approved: bool | None = None,
     search: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[Video]:
     stmt = select(Video).order_by(Video.created_at.desc())
@@ -714,6 +716,7 @@ def list_videos(
                 Video.notes.ilike(search_term),
             )
         )
+    stmt = stmt.offset(offset).limit(limit)
     videos = list(db.scalars(stmt))
     for video in videos:
         sync_preview_state(video)
@@ -1157,22 +1160,28 @@ def list_assets(video_id: int, db: Session = Depends(get_db)) -> list[ContentAss
 @router.post("/{video_id}/generate", response_model=list[AssetRead])
 def generate_assets(video_id: int, payload: GenerateRequest = GenerateRequest(), db: Session = Depends(get_db)) -> list[ContentAsset]:
     video = get_video_or_404(db, video_id)
-    generated = []
+    generated: list[tuple[str, str] | object] = []
 
-    if payload.stage == "all":
-        generated = build_all_assets(video)
-    elif payload.stage == "brief":
-        generated = [("brief", build_brief(video))]
-    elif payload.stage == "script":
-        generated = [("script", build_script(video))]
-    elif payload.stage == "shorts":
-        generated = [("shorts", build_shorts(video))]
-    elif payload.stage == "description":
-        generated = [("description", build_description(video))]
-    elif payload.stage == "thumbnail_prompt":
-        generated = [("thumbnail_prompt", build_thumbnail_prompt(video))]
-    elif payload.stage == "metadata":
-        generated = [("youtube_metadata", build_youtube_metadata(video))]
+    try:
+        if payload.stage == "all":
+            generated = build_all_assets(video)
+        elif payload.stage == "brief":
+            generated = [("brief", build_brief(video))]
+        elif payload.stage == "script":
+            generated = [("script", build_script(video))]
+        elif payload.stage == "shorts":
+            generated = [("shorts", build_shorts(video))]
+        elif payload.stage == "description":
+            generated = [("description", build_description(video))]
+        elif payload.stage == "thumbnail_prompt":
+            generated = [("thumbnail_prompt", build_thumbnail_prompt(video))]
+        elif payload.stage == "metadata":
+            generated = [("youtube_metadata", build_youtube_metadata(video))]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Asset generation failed: {exc}") from exc
+
+    if not generated:
+        raise HTTPException(status_code=502, detail="Asset generation returned no content.")
 
     assets: list[ContentAsset] = []
     for item in generated:
@@ -1180,6 +1189,8 @@ def generate_assets(video_id: int, payload: GenerateRequest = GenerateRequest(),
             asset_type, body = item
         else:
             asset_type, body = item.asset_type, item.body
+        if not str(body or "").strip():
+            raise HTTPException(status_code=502, detail=f"Generated {asset_type} content is empty.")
         asset = ContentAsset(video_id=video.id, asset_type=AssetType(asset_type), body=body)
         db.add(asset)
         assets.append(asset)
