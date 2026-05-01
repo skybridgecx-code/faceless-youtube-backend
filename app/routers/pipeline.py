@@ -32,6 +32,7 @@ from app.schemas import (
     PipelineSummaryCounts,
     PipelineVideoItem,
 )
+from app.services.preview_visuals import build_visual_asset_review_summary
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -58,7 +59,14 @@ def _preview_exists(video: Video) -> bool:
     return False
 
 
-def _video_item(video: Video, preview_rendered: bool, reason: str) -> PipelineVideoItem:
+def _video_item(
+    video: Video,
+    preview_rendered: bool,
+    reason: str,
+    visual_summary: dict[str, object] | None = None,
+    next_required_action: str | None = None,
+) -> PipelineVideoItem:
+    summary = visual_summary or {}
     return PipelineVideoItem(
         video_id=video.id,
         title=video.title,
@@ -67,6 +75,12 @@ def _video_item(video: Video, preview_rendered: bool, reason: str) -> PipelineVi
         approved=video.approved,
         preview_rendered=preview_rendered,
         preview_reviewed=video.preview_reviewed,
+        visual_assets_registered_count=int(summary.get("visual_assets_registered_count", 0)),
+        visual_assets_approved_count=int(summary.get("visual_assets_approved_count", 0)),
+        visual_assets_pending_count=int(summary.get("visual_assets_pending_count", 0)),
+        visual_assets_rejected_count=int(summary.get("visual_assets_rejected_count", 0)),
+        preview_has_unapproved_visual_assets=bool(summary.get("has_unapproved_visual_assets")),
+        next_required_action=next_required_action,
         updated_at=video.updated_at,
         reason=reason,
     )
@@ -189,6 +203,7 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
     videos_missing_visual_plans: list[PipelineVideoItem] = []
     videos_visual_jobs_pending: list[PipelineVideoItem] = []
     videos_visual_assets_registered: list[PipelineVideoItem] = []
+    videos_visual_assets_needing_review: list[PipelineVideoItem] = []
     videos_needing_preview: list[PipelineVideoItem] = []
     videos_needing_preview_review: list[PipelineVideoItem] = []
     videos_needing_compliance: list[PipelineVideoItem] = []
@@ -204,52 +219,118 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         has_visual_plan = video.id in visual_plan_video_ids
         has_visual_jobs_pending = video.id in visual_jobs_pending_video_ids
         has_visual_assets_registered = video.id in visual_assets_registered_video_ids
+        visual_summary = build_visual_asset_review_summary(db, video)
+        approved_assets_count = int(visual_summary.get("visual_assets_approved_count", 0))
+        has_unapproved_assets = bool(visual_summary.get("has_unapproved_visual_assets"))
 
         if video.approved and has_visual_assets_registered:
             videos_visual_assets_registered.append(
-                _video_item(video, preview_rendered, "Registered visual assets are available for preview/render inputs.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Registered visual assets are available for preview/render inputs.",
+                    visual_summary=visual_summary,
+                    next_required_action="Resolve visual review states and render/review preview.",
+                )
             )
-
+        if video.approved and has_visual_assets_registered and has_unapproved_assets:
+            videos_visual_assets_needing_review.append(
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Registered visual assets include pending/rejected items that need operator review.",
+                    visual_summary=visual_summary,
+                    next_required_action="Approve/reject pending visual assets.",
+                )
+            )
         # Assign each video to exactly one active stage using strict priority order.
         if not assets_generated and video.status != VideoStatus.published:
             videos_needing_assets.append(
-                _video_item(video, preview_rendered, "Assets are missing. Generate assets first.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Assets are missing. Generate assets first.",
+                    visual_summary=visual_summary,
+                    next_required_action="Generate core assets.",
+                )
             )
             continue
 
         if video.approved and not has_visual_plan:
             videos_missing_visual_plans.append(
-                _video_item(video, preview_rendered, "Visual plan missing. Create visual plan before preview render.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Visual plan missing. Create visual plan before preview render.",
+                    visual_summary=visual_summary,
+                    next_required_action="Create visual asset plan.",
+                )
             )
             continue
 
         if video.approved and has_visual_jobs_pending and not has_visual_assets_registered:
             videos_visual_jobs_pending.append(
-                _video_item(video, preview_rendered, "Visual generation jobs are queued/exported; register outputs before preview render.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Visual generation jobs are queued/exported; register outputs before preview render.",
+                    visual_summary=visual_summary,
+                    next_required_action="Register local outputs for queued/exported visual jobs.",
+                )
             )
             continue
 
         if video.approved and not preview_rendered:
+            reason = "Approved video is missing draft preview render."
+            if approved_assets_count > 0:
+                reason = "Approved visual assets are ready; render draft preview."
             videos_needing_preview.append(
-                _video_item(video, preview_rendered, "Approved video is missing draft preview render.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    reason,
+                    visual_summary=visual_summary,
+                    next_required_action="Render draft preview.",
+                )
             )
             continue
 
         if video.approved and preview_rendered and not video.preview_reviewed:
+            reason = "Draft preview exists but manual preview review is pending."
+            if has_unapproved_assets:
+                reason = "Draft preview exists, and visual assets still include pending/rejected reviews."
             videos_needing_preview_review.append(
-                _video_item(video, preview_rendered, "Draft preview exists but manual preview review is pending.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    reason,
+                    visual_summary=visual_summary,
+                    next_required_action="Complete preview review after resolving visual asset review states.",
+                )
             )
             continue
 
         if assets_generated and not video.approved:
             if not has_compliance_run:
                 videos_needing_compliance.append(
-                    _video_item(video, preview_rendered, "Run compliance checks before manual approval.")
+                    _video_item(
+                        video,
+                        preview_rendered,
+                        "Run compliance checks before manual approval.",
+                        visual_summary=visual_summary,
+                        next_required_action="Run compliance checks.",
+                    )
                 )
                 continue
 
             videos_needing_manual_approval.append(
-                _video_item(video, preview_rendered, "Compliance has been run; manual approval/rejection is pending.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Compliance has been run; manual approval/rejection is pending.",
+                    visual_summary=visual_summary,
+                    next_required_action="Complete manual video approval/rejection.",
+                )
             )
             continue
 
@@ -260,13 +341,25 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
             and video.status == VideoStatus.approved
         ):
             videos_ready_to_package.append(
-                _video_item(video, preview_rendered, "Approved and preview-reviewed. Ready for packaging.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Approved and preview-reviewed. Ready for packaging.",
+                    visual_summary=visual_summary,
+                    next_required_action="Package video assets.",
+                )
             )
             continue
 
         if video.status == VideoStatus.packaged:
             videos_ready_for_payload.append(
-                _video_item(video, preview_rendered, "Packaged and ready for payload preparation.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Packaged and ready for payload preparation.",
+                    visual_summary=visual_summary,
+                    next_required_action="Prepare YouTube payload.",
+                )
             )
             continue
 
@@ -276,7 +369,13 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
             "published_manual",
         }:
             completed_payloads.append(
-                _video_item(video, preview_rendered, "Payload prepared or publishing state advanced.")
+                _video_item(
+                    video,
+                    preview_rendered,
+                    "Payload prepared or publishing state advanced.",
+                    visual_summary=visual_summary,
+                    next_required_action="Manual upload/release flow in progress.",
+                )
             )
 
     next_step = PipelineNextStep(
@@ -412,6 +511,7 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         videos_missing_visual_plans=len(videos_missing_visual_plans),
         videos_visual_jobs_pending=len(videos_visual_jobs_pending),
         videos_visual_assets_registered=len(videos_visual_assets_registered),
+        videos_visual_assets_needing_review=len(videos_visual_assets_needing_review),
         videos_needing_preview=len(videos_needing_preview),
         videos_needing_preview_review=len(videos_needing_preview_review),
         videos_needing_compliance=len(videos_needing_compliance),
@@ -430,6 +530,7 @@ def get_daily_pipeline(db: Session = Depends(get_db)) -> DailyPipelineRead:
         videos_missing_visual_plans=videos_missing_visual_plans,
         videos_visual_jobs_pending=videos_visual_jobs_pending,
         videos_visual_assets_registered=videos_visual_assets_registered,
+        videos_visual_assets_needing_review=videos_visual_assets_needing_review,
         videos_needing_preview=videos_needing_preview,
         videos_needing_preview_review=videos_needing_preview_review,
         videos_needing_compliance=videos_needing_compliance,

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.db import get_db
 from app.models import Video, VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
 from app.schemas import (
+    VisualGeneratedAssetReviewQueueItem,
     VisualGeneratedAssetRead,
     VisualGenerationJobRead,
     VisualGenerationJobUpdate,
@@ -22,7 +23,7 @@ from app.schemas import (
 )
 from app.services.audit import log_audit_event
 from app.services.preview_visuals import build_preview_visual_manifest
-from app.services.visual_asset_review import update_visual_asset_review, visual_generated_asset_payload
+from app.services.visual_asset_review import asset_review_fields, update_visual_asset_review, visual_generated_asset_payload
 from app.services.visual_generation import (
     build_provider_payload,
     build_scene_context,
@@ -382,6 +383,58 @@ def list_visual_generated_assets(
 
     rows = list(db.scalars(stmt))
     return [visual_generated_asset_payload(db, row) for row in rows]
+
+
+@router.get("/assets/review-queue", response_model=list[VisualGeneratedAssetReviewQueueItem])
+def list_visual_generated_asset_review_queue(
+    review_status: Literal["pending", "approved", "rejected", "all"] = "pending",
+    video_id: int | None = None,
+    plan_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[VisualGeneratedAssetReviewQueueItem]:
+    stmt = (
+        select(VisualGeneratedAsset)
+        .options(
+            selectinload(VisualGeneratedAsset.plan).selectinload(VisualAssetPlan.video),
+            selectinload(VisualGeneratedAsset.scene),
+        )
+        .order_by(VisualGeneratedAsset.created_at.desc())
+    )
+    if plan_id is not None:
+        stmt = stmt.where(VisualGeneratedAsset.visual_asset_plan_id == plan_id)
+    if video_id is not None:
+        stmt = stmt.join(VisualAssetPlan, VisualAssetPlan.id == VisualGeneratedAsset.visual_asset_plan_id).where(
+            VisualAssetPlan.video_id == video_id
+        )
+
+    rows = list(db.scalars(stmt))
+    items: list[VisualGeneratedAssetReviewQueueItem] = []
+    for row in rows:
+        review_fields = asset_review_fields(db, row)
+        status = str(review_fields.get("review_status") or "pending")
+        if review_status != "all" and status != review_status:
+            continue
+        items.append(
+            VisualGeneratedAssetReviewQueueItem(
+                id=row.id,
+                video_id=row.plan.video_id if row.plan is not None else None,
+                video_title=row.plan.video.title if row.plan is not None and row.plan.video is not None else None,
+                plan_id=row.visual_asset_plan_id,
+                scene_id=row.visual_scene_id,
+                scene_number=row.scene.scene_number if row.scene is not None else None,
+                asset_type=row.asset_type,
+                file_path=row.file_path,
+                file_exists=bool(row.file_exists),
+                review_status=status,
+                review_notes=review_fields.get("review_notes"),
+                reviewed_at=review_fields.get("reviewed_at"),
+                created_at=row.created_at,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
 
 
 @router.get("/assets/{asset_id}", response_model=VisualGeneratedAssetRead)

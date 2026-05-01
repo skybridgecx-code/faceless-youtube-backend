@@ -606,6 +606,100 @@ def test_audit_trail_and_operator_export_are_safe() -> None:
     assert "youtube_payload_readiness" in export_payload
 
 
+def test_operator_export_generates_local_file_with_blockers_and_visual_statuses() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Operator Export Local Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Operator Export Local Video"}).json()
+    video_id = video["id"]
+
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    plan = client.post(f"/visual-assets/from-video/{video_id}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    jobs = queue["jobs"][:3]
+    path_pending = _write_real_visual_asset_file("operator_export_pending.png")
+    path_approved = _write_real_visual_asset_file("operator_export_approved.png")
+    path_rejected = _write_real_visual_asset_file("operator_export_rejected.png")
+
+    pending_asset = client.post(
+        f"/visual-generation/jobs/{jobs[0]['id']}/register-output",
+        json={"output_path": str(path_pending)},
+    ).json()
+    approved_asset = client.post(
+        f"/visual-generation/jobs/{jobs[1]['id']}/register-output",
+        json={"output_path": str(path_approved)},
+    ).json()
+    rejected_asset = client.post(
+        f"/visual-generation/jobs/{jobs[2]['id']}/register-output",
+        json={"output_path": str(path_rejected)},
+    ).json()
+    assert client.post(f"/visual-generation/assets/{approved_asset['id']}/approve").status_code == 200
+    assert client.post(
+        f"/visual-generation/assets/{rejected_asset['id']}/reject",
+        json={"review_notes": "Need different composition."},
+    ).status_code == 200
+
+    fake_asset_path = (Path(os.environ["OUTPUT_DIR"]).resolve() / "generated" / "operator_export_missing_fake.png").resolve()
+    db = SessionLocal()
+    try:
+        first_scene = db.scalar(
+            select(VisualScene)
+            .where(VisualScene.plan_id == plan["id"])
+            .order_by(VisualScene.scene_number.asc())
+            .limit(1)
+        )
+        assert first_scene is not None
+        db.add(
+            VisualGeneratedAsset(
+                visual_asset_plan_id=plan["id"],
+                visual_scene_id=first_scene.id,
+                generation_job_id=None,
+                asset_type="image",
+                file_path=str(fake_asset_path),
+                file_exists=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    before_video = client.get(f"/videos/{video_id}").json()
+    export_response = client.get(f"/videos/{video_id}/operator-export")
+    assert export_response.status_code == 200
+    payload = export_response.json()
+
+    assert payload["ready_for_manual_upload"] is False
+    assert payload["blockers"]
+    assert payload["video"]["preview_reviewed"] is False
+    assert payload["video"]["approved"] is False
+    assert payload["export_path"]
+    export_path = Path(payload["export_path"])
+    assert export_path.exists()
+    assert export_path.name == "operator_export.json"
+    assert str(export_path).startswith(str(Path(os.environ["OUTPUT_DIR"]).resolve()))
+
+    visual_rows = payload["visual_assets"]
+    status_set = {row["review_status"] for row in visual_rows}
+    assert "pending" in status_set
+    assert "approved" in status_set
+    assert "rejected" in status_set
+    returned_paths = {row["file_path"] for row in visual_rows}
+    assert str(path_pending) in returned_paths
+    assert str(path_approved) in returned_paths
+    assert str(path_rejected) in returned_paths
+    assert str(fake_asset_path) not in returned_paths
+    assert all(Path(path).exists() for path in returned_paths)
+
+    written = json.loads(export_path.read_text(encoding="utf-8"))
+    assert written["video"]["id"] == video_id
+    assert written["ready_for_manual_upload"] is False
+    assert written["export_path"] == str(export_path)
+
+    after_video = client.get(f"/videos/{video_id}").json()
+    assert after_video["preview_reviewed"] == before_video["preview_reviewed"]
+    assert after_video["approved"] == before_video["approved"]
+    assert pending_asset["id"] in {row["asset_id"] for row in visual_rows}
+
+
 def test_opportunity_routes_and_promotion_workflow() -> None:
     client = TestClient(app)
 
@@ -1154,6 +1248,80 @@ def test_visual_generation_write_routes_require_internal_api_key_when_configured
         headers={"X-Internal-API-Key": "test-internal-key"},
     )
     assert allowed.status_code == 200
+
+
+def test_visual_generation_asset_review_queue_defaults_to_pending_and_includes_context() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Queue Review Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Queue Review Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    scene_job = next((job for job in queue["jobs"] if job.get("visual_scene_id") is not None), queue["jobs"][0])
+    job_id = scene_job["id"]
+
+    file_path = _write_real_visual_asset_file("review_queue_pending.png")
+    register = client.post(
+        f"/visual-generation/jobs/{job_id}/register-output",
+        json={"output_path": str(file_path)},
+    )
+    assert register.status_code == 200
+    asset_id = register.json()["id"]
+
+    response = client.get("/visual-generation/assets/review-queue")
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows
+    statuses = {row["review_status"] for row in rows}
+    assert statuses == {"pending"}
+    row = next(item for item in rows if item["id"] == asset_id)
+    assert row["video_id"] == video["id"]
+    assert row["video_title"] == video["title"]
+    assert row["plan_id"] == plan["id"]
+    if scene_job.get("visual_scene_id") is not None:
+        assert row["scene_number"] is not None
+
+
+def test_visual_generation_asset_review_queue_filters_and_is_read_only() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Visual Queue Filter Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Visual Queue Filter Video"}).json()
+    plan = client.post(f"/visual-assets/from-video/{video['id']}").json()
+    queue = client.post(f"/visual-generation/plans/{plan['id']}/queue", json={"provider": "manual"}).json()
+    jobs = queue["jobs"][:2]
+    first_path = _write_real_visual_asset_file("review_queue_first.png")
+    second_path = _write_real_visual_asset_file("review_queue_second.png")
+
+    first = client.post(
+        f"/visual-generation/jobs/{jobs[0]['id']}/register-output",
+        json={"output_path": str(first_path)},
+    ).json()
+    second = client.post(
+        f"/visual-generation/jobs/{jobs[1]['id']}/register-output",
+        json={"output_path": str(second_path)},
+    ).json()
+
+    assert client.post(f"/visual-generation/assets/{first['id']}/approve").status_code == 200
+    assert client.post(
+        f"/visual-generation/assets/{second['id']}/reject",
+        json={"review_notes": "Reject for framing."},
+    ).status_code == 200
+
+    approved = client.get("/visual-generation/assets/review-queue?review_status=approved")
+    rejected = client.get("/visual-generation/assets/review-queue?review_status=rejected")
+    assert approved.status_code == 200
+    assert rejected.status_code == 200
+    approved_rows = approved.json()
+    rejected_rows = rejected.json()
+    assert approved_rows and all(row["review_status"] == "approved" for row in approved_rows)
+    assert rejected_rows and all(row["review_status"] == "rejected" for row in rejected_rows)
+    assert any(row["id"] == first["id"] for row in approved_rows)
+    assert any(row["id"] == second["id"] for row in rejected_rows)
+
+    before_all = client.get("/visual-generation/assets/review-queue?review_status=all").json()
+    after_all = client.get("/visual-generation/assets/review-queue?review_status=all").json()
+    before_map = {item["id"]: item["review_status"] for item in before_all}
+    after_map = {item["id"]: item["review_status"] for item in after_all}
+    assert before_map == after_map
 
 
 def test_preview_status_fallback_only_when_no_visual_plan_or_assets() -> None:

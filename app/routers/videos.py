@@ -43,6 +43,7 @@ from app.schemas import (
     ComplianceReport,
     GenerateRequest,
     OperatorExport,
+    OperatorExportVisualAsset,
     PackageResponse,
     PreviewReviewUpdate,
     PreviewStatus,
@@ -68,7 +69,7 @@ from app.services.content_engine import (
     generate_video_ideas,
 )
 from app.services.package_builder import build_video_package, slugify
-from app.services.preview_visuals import build_preview_visual_manifest
+from app.services.preview_visuals import build_preview_visual_manifest, build_visual_asset_review_summary
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 PREVIEW_FILENAME = "draft.mp4"
@@ -552,6 +553,64 @@ def visual_asset_summary_for_video(db: Session, video_id: int) -> tuple[int, str
     return len(assets), (thumbnail_asset.file_path if thumbnail_asset else None)
 
 
+def _dedupe_messages(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        message = str(value).strip()
+        if not message or message in seen:
+            continue
+        seen.add(message)
+        deduped.append(message)
+    return deduped
+
+
+def _next_required_action(
+    *,
+    assets_generated: bool,
+    has_visual_plan: bool,
+    has_visual_jobs_pending: bool,
+    preview_rendered: bool,
+    preview_reviewed: bool,
+    review_approved: bool,
+    package_created: bool,
+    youtube_metadata_prepared: bool,
+    publish_status_ready_or_scheduled: bool,
+    publish_date_set: bool,
+    compliance_status: str,
+    visual_assets_registered_count: int,
+    visual_assets_approved_count: int,
+    has_unapproved_visual_assets: bool,
+) -> str:
+    if not assets_generated:
+        return "Generate core assets first."
+    if not has_visual_plan:
+        return "Create a visual asset plan before rendering preview."
+    if has_visual_jobs_pending:
+        return "Register visual generation outputs before rendering preview."
+    if not preview_rendered:
+        if visual_assets_approved_count > 0:
+            return "Render draft preview using approved visual assets."
+        if visual_assets_registered_count > 0 and has_unapproved_visual_assets:
+            return "Review pending/rejected visual assets, then render draft preview."
+        return "Render draft preview."
+    if has_unapproved_visual_assets:
+        return "Resolve pending/rejected visual assets and confirm preview review."
+    if not preview_reviewed:
+        return "Manually review the draft preview."
+    if compliance_status == "blocked":
+        return "Resolve compliance blockers before approval."
+    if not review_approved:
+        return "Complete manual approval/rejection."
+    if not package_created:
+        return "Package video assets."
+    if not youtube_metadata_prepared:
+        return "Prepare the YouTube payload."
+    if publish_status_ready_or_scheduled and not publish_date_set:
+        return "Set a publish date for ready/scheduled status."
+    return "Ready for manual local upload review."
+
+
 def build_preview_status(video: Video, preview_path: Path | None, db: Session) -> PreviewStatus:
     expected_path = expected_preview_path(video.id).resolve()
     voiceover_path = preview_voiceover_path(video.id).resolve()
@@ -564,17 +623,14 @@ def build_preview_status(video: Video, preview_path: Path | None, db: Session) -
     provider = str(meta.get("provider")) if meta.get("provider") else None
     voice = str(meta.get("voice")) if meta.get("voice") else None
     model = str(meta.get("model")) if meta.get("model") else None
-    visual_manifest = build_preview_visual_manifest(db, video)
+    visual_summary = build_visual_asset_review_summary(db, video)
+    visual_manifest = visual_summary.get("manifest", {})
     included_asset_paths = [
         str(path_value)
         for path_value in visual_manifest.get("included_asset_paths", [])
         if isinstance(path_value, str)
     ]
-    visual_asset_warnings = [
-        str(warning)
-        for warning in visual_manifest.get("visual_asset_warnings", visual_manifest.get("warnings", []))
-        if isinstance(warning, str)
-    ]
+    visual_asset_warnings = [str(warning) for warning in visual_summary.get("warnings", []) if isinstance(warning, str)]
     try:
         visual_assets_used_count = int(visual_manifest.get("visual_assets_used_count", len(included_asset_paths)))
     except (TypeError, ValueError):
@@ -594,16 +650,41 @@ def build_preview_status(video: Video, preview_path: Path | None, db: Session) -
         ),
         None,
     )
+    preview_rendered = preview_path is not None
+    preview_reviewed = bool(video.preview_reviewed) and preview_rendered
+    has_unapproved_visual_assets = bool(visual_summary.get("has_unapproved_visual_assets"))
+    next_required_action = _next_required_action(
+        assets_generated=len(video.assets) > 0,
+        has_visual_plan=visual_manifest.get("plan_id") is not None,
+        has_visual_jobs_pending=False,
+        preview_rendered=preview_rendered,
+        preview_reviewed=preview_reviewed,
+        review_approved=bool(video.approved),
+        package_created=latest_asset(video, AssetType.package_manifest) is not None,
+        youtube_metadata_prepared=bool(
+            db.scalar(
+                select(PublishRecord.id)
+                .where(PublishRecord.video_id == video.id, PublishRecord.platform == "youtube")
+                .limit(1)
+            )
+        ),
+        publish_status_ready_or_scheduled=video.publish_status in ("ready", "scheduled"),
+        publish_date_set=video.publish_date is not None,
+        compliance_status=run_compliance_checks(video).overall_status,
+        visual_assets_registered_count=int(visual_summary.get("visual_assets_registered_count", 0)),
+        visual_assets_approved_count=int(visual_summary.get("visual_assets_approved_count", 0)),
+        has_unapproved_visual_assets=has_unapproved_visual_assets,
+    )
 
     return PreviewStatus(
         video_id=video.id,
         title=video.title,
-        preview_exists=preview_path is not None,
-        preview_url=f"/videos/{video.id}/preview" if preview_path is not None else None,
-        preview_path=str(preview_path) if preview_path is not None else None,
+        preview_exists=preview_rendered,
+        preview_url=f"/videos/{video.id}/preview" if preview_rendered else None,
+        preview_path=str(preview_path) if preview_rendered else None,
         expected_path=str(expected_path),
         preview_rendered_at=video.preview_rendered_at,
-        preview_reviewed=bool(video.preview_reviewed),
+        preview_reviewed=preview_reviewed,
         preview_reviewed_at=video.preview_reviewed_at,
         audio_generated=audio_generated,
         voiceover_path=str(voiceover_path) if voiceover_exists else None,
@@ -620,6 +701,12 @@ def build_preview_status(video: Video, preview_path: Path | None, db: Session) -
         visual_assets_registered=visual_assets_used_count > 0,
         visual_assets_count=visual_assets_used_count,
         visual_thumbnail_path=visual_thumbnail_path,
+        visual_assets_registered_count=int(visual_summary.get("visual_assets_registered_count", 0)),
+        visual_assets_approved_count=int(visual_summary.get("visual_assets_approved_count", 0)),
+        visual_assets_pending_count=int(visual_summary.get("visual_assets_pending_count", 0)),
+        visual_assets_rejected_count=int(visual_summary.get("visual_assets_rejected_count", 0)),
+        preview_has_unapproved_visual_assets=has_unapproved_visual_assets,
+        next_required_action=next_required_action,
     )
 
 
@@ -654,6 +741,8 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
     youtube_metadata_prepared = youtube_record is not None
     publish_date_set = video.publish_date is not None
     publish_status_ready_or_scheduled = video.publish_status in ("ready", "scheduled")
+    visual_summary = build_visual_asset_review_summary(db, video)
+    has_unapproved_visual_assets = bool(visual_summary.get("has_unapproved_visual_assets"))
 
     blocking_reasons: list[str] = []
     if not assets_generated:
@@ -678,6 +767,25 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
     report = run_compliance_checks(video)
     if report.overall_status == "blocked":
         blocking_reasons.append("Compliance checks are blocked")
+    warnings = [str(item) for item in visual_summary.get("warnings", []) if isinstance(item, str)]
+    if has_unapproved_visual_assets:
+        warnings.append("Registered visual assets include pending/rejected items awaiting operator review.")
+    next_required_action = _next_required_action(
+        assets_generated=assets_generated,
+        has_visual_plan=has_visual_plan,
+        has_visual_jobs_pending=has_visual_jobs_pending,
+        preview_rendered=preview_rendered,
+        preview_reviewed=preview_reviewed,
+        review_approved=review_approved,
+        package_created=package_created,
+        youtube_metadata_prepared=youtube_metadata_prepared,
+        publish_status_ready_or_scheduled=publish_status_ready_or_scheduled,
+        publish_date_set=publish_date_set,
+        compliance_status=report.overall_status,
+        visual_assets_registered_count=int(visual_summary.get("visual_assets_registered_count", 0)),
+        visual_assets_approved_count=int(visual_summary.get("visual_assets_approved_count", 0)),
+        has_unapproved_visual_assets=has_unapproved_visual_assets,
+    )
 
     return VideoReadiness(
         assets_generated=assets_generated,
@@ -688,7 +796,14 @@ def build_readiness(video: Video, db: Session) -> VideoReadiness:
         youtube_metadata_prepared=youtube_metadata_prepared,
         publish_date_set=publish_date_set,
         publish_status_ready_or_scheduled=publish_status_ready_or_scheduled,
-        blocking_reasons=blocking_reasons,
+        blocking_reasons=_dedupe_messages(blocking_reasons),
+        warnings=_dedupe_messages(warnings),
+        visual_assets_registered_count=int(visual_summary.get("visual_assets_registered_count", 0)),
+        visual_assets_approved_count=int(visual_summary.get("visual_assets_approved_count", 0)),
+        visual_assets_pending_count=int(visual_summary.get("visual_assets_pending_count", 0)),
+        visual_assets_rejected_count=int(visual_summary.get("visual_assets_rejected_count", 0)),
+        preview_has_unapproved_visual_assets=has_unapproved_visual_assets,
+        next_required_action=next_required_action,
         compliance_status=report.overall_status,
         compliance_blockers_count=sum(1 for check in report.checks if check.status == "blocked"),
         compliance_warnings_count=sum(1 for check in report.checks if check.status == "warning"),
@@ -716,6 +831,20 @@ def asset_previews(video: Video) -> list[AssetPreview]:
             )
         )
     return previews
+
+
+def _latest_asset_reference(video: Video, asset_type: AssetType, preview_chars: int = 220) -> dict[str, object]:
+    asset = latest_asset(video, asset_type)
+    if asset is None:
+        return {"exists": False}
+    return {
+        "exists": True,
+        "asset_id": asset.id,
+        "version": asset.version,
+        "created_at": asset.created_at,
+        "body_length": len(asset.body),
+        "body_preview": " ".join(asset.body.split())[:preview_chars],
+    }
 
 
 @router.post("", response_model=VideoRead)
@@ -858,6 +987,9 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
     preview_path = sync_preview_state(video)
     readiness = build_readiness(video, db)
     report = run_compliance_checks(video)
+    visual_summary = build_visual_asset_review_summary(db, video)
+    visual_manifest = visual_summary.get("manifest", {})
+    manifest_assets = visual_manifest.get("assets", [])
     audit_events = list(
         db.scalars(
             select(AuditEvent)
@@ -876,7 +1008,69 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
     )
     youtube_payload_ready = youtube_record is not None
 
-    return OperatorExport(
+    scene_number_by_scene_id: dict[int, int] = {}
+    for row in visual_manifest.get("scenes", []):
+        if not isinstance(row, dict):
+            continue
+        scene_id = row.get("scene_id")
+        scene_number = row.get("scene_number")
+        if isinstance(scene_id, int) and isinstance(scene_number, int):
+            scene_number_by_scene_id[scene_id] = scene_number
+
+    visual_assets: list[OperatorExportVisualAsset] = []
+    for row in manifest_assets:
+        if not isinstance(row, dict):
+            continue
+        file_path = row.get("file_path")
+        if not isinstance(file_path, str) or not file_path.strip():
+            continue
+        scene_id = row.get("visual_scene_id") if isinstance(row.get("visual_scene_id"), int) else None
+        visual_assets.append(
+            OperatorExportVisualAsset(
+                asset_id=int(row.get("asset_id")),
+                video_id=video.id,
+                plan_id=int(visual_manifest.get("plan_id")) if isinstance(visual_manifest.get("plan_id"), int) else None,
+                scene_id=scene_id,
+                scene_number=scene_number_by_scene_id.get(scene_id) if scene_id is not None else None,
+                asset_type=str(row.get("asset_type") or "unknown"),
+                file_path=file_path,
+                review_status=str(row.get("review_status") or "pending"),
+                review_notes=str(row.get("review_notes")) if row.get("review_notes") is not None else None,
+                reviewed_at=row.get("reviewed_at"),
+                created_at=row.get("created_at"),
+            )
+        )
+
+    blockers = list(readiness.blocking_reasons)
+    if readiness.preview_has_unapproved_visual_assets:
+        blockers.append("Registered visual assets include pending/rejected review states.")
+    blockers = _dedupe_messages(blockers)
+    warnings = _dedupe_messages(list(readiness.warnings))
+
+    ready_for_manual_upload = len(blockers) == 0
+    youtube_payload_readiness = {
+        "approved": video.approved,
+        "preview_exists": preview_path is not None,
+        "preview_reviewed": bool(video.preview_reviewed),
+        "package_exists": package_dir is not None,
+        "youtube_metadata_asset_exists": has_youtube_metadata_asset,
+        "publish_record_exists": youtube_payload_ready,
+        "ready": (
+            video.approved
+            and preview_path is not None
+            and bool(video.preview_reviewed)
+            and package_dir is not None
+            and has_youtube_metadata_asset
+            and youtube_payload_ready
+            and not readiness.preview_has_unapproved_visual_assets
+        ),
+    }
+
+    export_dir = get_settings().output_path / "exports" / f"video_{video.id}"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    export_file = export_dir / "operator_export.json"
+
+    payload = OperatorExport(
         video=video,
         workflow_status=video.status.value,
         publishing_plan={
@@ -893,23 +1087,26 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
         assets=asset_previews(video),
         audit_events=audit_events,
         package_dir=package_dir,
-        youtube_payload_readiness={
-            "approved": video.approved,
-            "preview_exists": preview_path is not None,
-            "preview_reviewed": bool(video.preview_reviewed),
-            "package_exists": package_dir is not None,
-            "youtube_metadata_asset_exists": has_youtube_metadata_asset,
-            "publish_record_exists": youtube_payload_ready,
-            "ready": (
-                video.approved
-                and preview_path is not None
-                and bool(video.preview_reviewed)
-                and package_dir is not None
-                and has_youtube_metadata_asset
-                and youtube_payload_ready
-            ),
+        preview_path=str(preview_path) if preview_path is not None else None,
+        visual_assets=visual_assets,
+        content_references={
+            "title": video.title,
+            "thumbnail_text": video.thumbnail_text,
+            "script": _latest_asset_reference(video, AssetType.script),
+            "youtube_metadata": _latest_asset_reference(video, AssetType.youtube_metadata),
+            "description": _latest_asset_reference(video, AssetType.description),
         },
+        ready_for_manual_upload=ready_for_manual_upload,
+        blockers=blockers,
+        warnings=warnings,
+        export_path=str(export_file),
+        youtube_payload_readiness=youtube_payload_readiness,
     )
+    export_file.write_text(
+        json.dumps(payload.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return payload
 
 
 @router.get("/{video_id}", response_model=VideoRead)

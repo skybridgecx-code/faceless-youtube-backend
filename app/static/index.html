@@ -571,7 +571,7 @@
             <div class="panel-header">
               <h2 id="selectedVideoTitle">Selected Video: None</h2>
               <div class="header-actions" id="selectedVideoActions" style="display: none;">
-                <button class="btn" onclick="app.openExportModal()">Export Summary</button>
+                <button class="btn" onclick="app.openExportModal()">Generate Local Export Summary</button>
                 <button class="btn" onclick="app.openEditModal()">Edit</button>
                 <button class="btn danger" onclick="app.openDeleteModal()">Delete</button>
               </div>
@@ -632,6 +632,11 @@
                     <span class="meta-label">Status</span>
                     <span class="meta-value" id="previewStatusText">No rendered video preview yet.</span>
                   </div>
+                  <div class="meta-row">
+                    <span class="meta-label">Next Action</span>
+                    <span class="meta-value" id="previewNextRequiredAction">Select a video to see required action.</span>
+                  </div>
+                  <div class="flow-item pending" id="previewAssetApprovalWarning" style="display:none;">• Visual assets still include pending/rejected reviews.</div>
                   <div class="meta-row">
                     <span class="meta-label">Expected Path</span>
                     <span class="meta-value"><code id="previewExpectedPath">out/previews/{video_id}/draft.mp4</code></span>
@@ -744,6 +749,21 @@
                     <div class="flow-card-title">Registered Visual Assets</div>
                     <div id="visualGeneratedAssetsList" class="video-list">
                       <div class="empty-state">No registered visual assets yet.</div>
+                    </div>
+                  </div>
+                  <div class="flow-card" style="margin-top:0.65rem;">
+                    <div class="flow-card-title">Asset Review Queue</div>
+                    <div class="settings-actions" style="margin-bottom:0.55rem;">
+                      <select id="assetReviewQueueFilter" class="form-select" style="max-width:220px;" onchange="app.changeAssetReviewQueueFilter(this.value)">
+                        <option value="pending">Pending</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="approved">Approved</option>
+                        <option value="all">All</option>
+                      </select>
+                      <button class="btn" onclick="app.refreshAssetReviewQueue()">Refresh Queue</button>
+                    </div>
+                    <div id="assetReviewQueueList" class="video-list">
+                      <div class="empty-state">No asset review queue loaded yet.</div>
                     </div>
                   </div>
                   <div id="visualPlanBody" style="margin-top:0.65rem;">
@@ -890,7 +910,7 @@
                 <h2>Selected Video Audit</h2>
                 <div class="header-actions">
                   <button class="btn" onclick="app.loadVideoAudit()">Refresh</button>
-                  <button class="btn" onclick="app.openExportModal()">Export Operator Summary</button>
+                  <button class="btn" onclick="app.openExportModal()">Generate Local Export Summary</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
@@ -1058,11 +1078,14 @@
   <div class="modal-overlay hidden" id="operatorExportModal">
     <div class="modal" style="max-width: 900px; width: 92%;">
       <div class="modal-header">
-        <h2>Operator Summary Export</h2>
+        <h2>Local Export Summary</h2>
         <button class="btn close-btn" onclick="app.closeExportModal()">X</button>
       </div>
       <div class="modal-body form-body">
-        <p class="modal-desc" style="margin-top: 0;">Local/operator-only JSON summary. Full generated asset bodies are intentionally excluded.</p>
+        <p class="modal-desc" style="margin-top: 0;">Manual-only local summary for operator review/upload. Nothing is uploaded or approved automatically.</p>
+        <div class="meta-row"><span class="meta-label">Export Path</span><span class="meta-value" id="operatorExportPath">-</span></div>
+        <div class="meta-row"><span class="meta-label">Ready For Manual Upload</span><span class="meta-value" id="operatorExportReady">No</span></div>
+        <div class="meta-row"><span class="meta-label">Blockers</span><span class="meta-value" id="operatorExportBlockers">-</span></div>
         <pre id="operatorExportPreview" class="json-preview">{}</pre>
       </div>
       <div class="modal-footer">

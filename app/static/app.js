@@ -22,6 +22,8 @@ const app = {
     selectedVisualPlanId: null,
     visualGenerationJobs: [],
     visualGeneratedAssets: [],
+    assetReviewQueue: [],
+    assetReviewQueueFilter: 'pending',
     visualProviderPayload: null,
     producerRecommendation: null,
     producerHistory: [],
@@ -425,6 +427,7 @@ const app = {
       `Videos missing visual plans: ${counts.videos_missing_visual_plans || 0}`,
       `Videos with visual jobs pending: ${counts.videos_visual_jobs_pending || 0}`,
       `Videos with visual assets registered: ${counts.videos_visual_assets_registered || 0}`,
+      `Videos with visual assets needing review: ${counts.videos_visual_assets_needing_review || 0}`,
       `Videos needing preview review: ${counts.videos_needing_preview_review || 0}`,
       `Videos needing compliance/manual approval: ${(counts.videos_needing_compliance || 0) + (counts.videos_needing_manual_approval || 0)}`,
       `Ready to package/payload: ${(counts.videos_ready_to_package || 0) + (counts.videos_ready_for_payload || 0)}`
@@ -540,44 +543,50 @@ const app = {
         buttonLabel: 'Open Visual Assets'
       },
       {
+        key: 'videos_visual_assets_needing_review',
+        title: '9. Videos With Unapproved Visual Assets',
+        targetPage: 'assets',
+        buttonLabel: 'Review Assets'
+      },
+      {
         key: 'videos_needing_preview',
-        title: '9. Videos Needing Preview Render',
+        title: '10. Videos Needing Preview Render',
         targetPage: 'assets',
         buttonLabel: 'Render Preview'
       },
       {
         key: 'videos_needing_preview_review',
-        title: '10. Videos Needing Preview Review',
+        title: '11. Videos Needing Preview Review',
         targetPage: 'assets',
         buttonLabel: 'Review Preview'
       },
       {
         key: 'videos_needing_compliance',
-        title: '11. Videos Needing Compliance',
+        title: '12. Videos Needing Compliance',
         targetPage: 'compliance',
         buttonLabel: 'Run Compliance'
       },
       {
         key: 'videos_needing_manual_approval',
-        title: '12. Videos Needing Manual Approval',
+        title: '13. Videos Needing Manual Approval',
         targetPage: 'compliance',
         buttonLabel: 'Manual Review'
       },
       {
         key: 'videos_ready_to_package',
-        title: '13. Videos Ready to Package',
+        title: '14. Videos Ready to Package',
         targetPage: 'assets',
         buttonLabel: 'Package Video'
       },
       {
         key: 'videos_ready_for_payload',
-        title: '14. Videos Ready for Payload',
+        title: '15. Videos Ready for Payload',
         targetPage: 'publishing',
         buttonLabel: 'Prepare Payload'
       },
       {
         key: 'completed_payloads',
-        title: '15. Completed Payloads',
+        title: '16. Completed Payloads',
         targetPage: 'audit',
         buttonLabel: 'Open Audit'
       }
@@ -1470,13 +1479,98 @@ const app = {
       this.renderDashboardVisualAssetStatus();
       this.renderVisualPlanSection();
       this.renderPipelineDaily(this.state.pipelineDaily);
+      await this.loadAssetReviewQueue(true);
     } catch (err) {
       this.log(`Error loading visual generation data: ${err.message}`, 'error');
       this.state.visualGenerationJobs = [];
       this.state.visualGeneratedAssets = [];
       this.renderDashboardVisualAssetStatus();
       this.renderVisualPlanSection();
+      this.state.assetReviewQueue = [];
+      this.renderAssetReviewQueue();
     }
+  },
+
+  changeAssetReviewQueueFilter(value) {
+    this.state.assetReviewQueueFilter = value || 'pending';
+    this.loadAssetReviewQueue();
+  },
+
+  async refreshAssetReviewQueue() {
+    await this.loadAssetReviewQueue();
+  },
+
+  async loadAssetReviewQueue(silent = false) {
+    try {
+      const status = this.state.assetReviewQueueFilter || 'pending';
+      const params = new URLSearchParams({
+        review_status: status,
+        limit: '200'
+      });
+      const res = await fetch(`/visual-generation/assets/review-queue?${params.toString()}`);
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load visual asset review queue');
+      }
+      this.state.assetReviewQueue = Array.isArray(data) ? data : [];
+      this.renderAssetReviewQueue();
+    } catch (err) {
+      this.state.assetReviewQueue = [];
+      this.renderAssetReviewQueue();
+      if (!silent) {
+        this.log(`Asset review queue load failed: ${err.message}`, 'error');
+      }
+    }
+  },
+
+  renderAssetReviewQueue() {
+    const list = document.getElementById('assetReviewQueueList');
+    if (!list) return;
+    const filterEl = document.getElementById('assetReviewQueueFilter');
+    if (filterEl && filterEl.value !== this.state.assetReviewQueueFilter) {
+      filterEl.value = this.state.assetReviewQueueFilter || 'pending';
+    }
+    const rows = Array.isArray(this.state.assetReviewQueue) ? this.state.assetReviewQueue : [];
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="empty-state">No assets in this queue filter.</div>';
+      return;
+    }
+    list.innerHTML = rows.map(item => {
+      const reviewStatus = item.review_status || 'pending';
+      const statusClass = reviewStatus === 'approved' ? 'approved' : (reviewStatus === 'rejected' ? 'blocked' : 'warning');
+      const sceneLabel = item.scene_number ? `Scene ${item.scene_number}` : (item.scene_id ? `Scene ID ${item.scene_id}` : 'No scene');
+      return `
+        <article class="video-card" style="padding:0.7rem;">
+          <div class="video-header">
+            <div class="video-title">${this.escapeHtml(`Asset #${item.id} • ${item.asset_type}`)}</div>
+            <div class="video-status ${statusClass}">${this.escapeHtml(reviewStatus)}</div>
+          </div>
+          <div class="meta-row"><span class="meta-label">Video</span><span class="meta-value">${this.escapeHtml(item.video_title || `Video #${item.video_id || '?'}`)}</span></div>
+          <div class="meta-row"><span class="meta-label">Plan / Scene</span><span class="meta-value">Plan #${this.escapeHtml(String(item.plan_id))} • ${this.escapeHtml(sceneLabel)}</span></div>
+          <div class="meta-row"><span class="meta-label">Path</span><span class="meta-value">${this.escapeHtml(item.file_path || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">File Exists</span><span class="meta-value">${item.file_exists ? 'yes' : 'no'}</span></div>
+          <div class="meta-row"><span class="meta-label">Review Notes</span><span class="meta-value">${this.escapeHtml(item.review_notes || '-')}</span></div>
+          <label class="agent-field" style="margin-top:0.4rem;">
+            <span>Review / Rejection Notes</span>
+            <input id="assetQueueReviewNotes-${Number(item.id)}" type="text" value="${this.escapeHtml(item.review_notes || '')}" placeholder="Operator notes" />
+          </label>
+          <div class="row-actions" style="margin-top:0.5rem;">
+            <button class="btn" onclick="app.openAssetQueueVideo(${Number(item.video_id || 0)})">Open Video</button>
+            <button class="btn success" onclick="app.approveVisualGeneratedAsset(${Number(item.id)})">Approve Asset</button>
+            <button class="btn danger" onclick="app.rejectVisualGeneratedAsset(${Number(item.id)}, 'assetQueueReviewNotes-${Number(item.id)}')">Reject Asset</button>
+          </div>
+        </article>
+      `;
+    }).join('');
+  },
+
+  async openAssetQueueVideo(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) {
+      this.log('Queue item has no related video id.', 'error');
+      return;
+    }
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('assets');
   },
 
   getVisualPlansForVideo(videoId) {
@@ -2826,6 +2920,10 @@ const app = {
       assetsContainer.innerHTML = '<div class="empty-state">No registered visual assets yet.</div>';
       return;
     }
+    const pendingCount = assets.filter(asset => (asset.review_status || 'pending') === 'pending').length;
+    const rejectedCount = assets.filter(asset => (asset.review_status || 'pending') === 'rejected').length;
+    const approvedCount = assets.filter(asset => (asset.review_status || 'pending') === 'approved').length;
+    const hasUnapproved = pendingCount > 0 || rejectedCount > 0;
     assetsContainer.innerHTML = assets.map(asset => {
       const reviewStatus = asset.review_status || 'pending';
       const statusClass = reviewStatus === 'approved' ? 'approved' : (reviewStatus === 'rejected' ? 'blocked' : 'warning');
@@ -2853,6 +2951,10 @@ const app = {
         </article>
       `;
     }).join('');
+    const summaryBanner = hasUnapproved
+      ? `<div class="flow-item pending" style="margin-bottom:0.55rem;">• Visual review queue: ${approvedCount} approved, ${pendingCount} pending, ${rejectedCount} rejected. Resolve pending/rejected before final preview confidence.</div>`
+      : `<div class="flow-item done" style="margin-bottom:0.55rem;">• All ${approvedCount} registered visual assets are approved.</div>`;
+    assetsContainer.innerHTML = `${summaryBanner}${assetsContainer.innerHTML}`;
   },
 
   async approveVisualGeneratedAsset(assetId) {
@@ -2866,14 +2968,17 @@ const app = {
       this.log(`Approved visual asset #${assetId}.`, 'success');
       await this.loadVisualGenerationData();
       await this.loadPreviewStatus();
+      await this.loadReadiness();
     } catch (err) {
       this.log(`Approve visual asset failed: ${err.message}`, 'error');
     }
   },
 
-  async rejectVisualGeneratedAsset(assetId) {
+  async rejectVisualGeneratedAsset(assetId, notesInputId = null) {
     try {
-      const notes = document.getElementById(`visualAssetReviewNotes-${assetId}`)?.value || '';
+      const defaultId = `visualAssetReviewNotes-${assetId}`;
+      const notesSourceId = notesInputId || defaultId;
+      const notes = document.getElementById(notesSourceId)?.value || '';
       const res = await fetch(`/visual-generation/assets/${assetId}/reject`, {
         method: 'POST',
         headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
@@ -2884,6 +2989,7 @@ const app = {
       this.log(`Rejected visual asset #${assetId}.`, 'success');
       await this.loadVisualGenerationData();
       await this.loadPreviewStatus();
+      await this.loadReadiness();
     } catch (err) {
       this.log(`Reject visual asset failed: ${err.message}`, 'error');
     }
@@ -3138,9 +3244,16 @@ const app = {
       list.appendChild(item);
     });
 
-    const warnings = readiness.blocking_reasons || [];
-    if (warnings.length > 0) {
-      warnings.forEach(w => {
+    const nextActionText = readiness.next_required_action || 'Complete the next required workflow step.';
+    const nextActionItem = document.createElement('div');
+    nextActionItem.style.color = 'var(--text)';
+    nextActionItem.style.fontSize = '0.9rem';
+    nextActionItem.textContent = `Next required action: ${nextActionText}`;
+    warningsBox.appendChild(nextActionItem);
+
+    const blockingReasons = readiness.blocking_reasons || [];
+    if (blockingReasons.length > 0) {
+      blockingReasons.forEach(w => {
         const wItem = document.createElement('div');
         wItem.style.color = 'var(--warning)';
         wItem.style.fontSize = '0.85rem';
@@ -3148,12 +3261,24 @@ const app = {
         warningsBox.appendChild(wItem);
       });
     }
+    const readinessWarnings = readiness.warnings || [];
+    readinessWarnings.forEach(warning => {
+      const warningItem = document.createElement('div');
+      warningItem.style.color = 'var(--textSecondary)';
+      warningItem.style.fontSize = '0.82rem';
+      warningItem.textContent = `• ${warning}`;
+      warningsBox.appendChild(warningItem);
+    });
 
     const previewPlaceholderText = document.getElementById('previewPlaceholderText');
     if (previewPlaceholderText) {
-      previewPlaceholderText.textContent = readiness.preview_rendered
+      let text = readiness.preview_rendered
         ? (readiness.preview_reviewed ? 'Draft preview reviewed.' : 'Draft preview exists but still needs manual review.')
         : 'No rendered video preview yet.';
+      if (readiness.preview_has_unapproved_visual_assets) {
+        text += ` Visual assets: ${readiness.visual_assets_approved_count || 0} approved, ${readiness.visual_assets_pending_count || 0} pending, ${readiness.visual_assets_rejected_count || 0} rejected.`;
+      }
+      previewPlaceholderText.textContent = text;
     }
 
     // Update Review Modal compliance notice
@@ -3201,6 +3326,8 @@ const app = {
 
   renderPreviewStatus(status) {
     const statusText = document.getElementById('previewStatusText');
+    const nextRequiredActionText = document.getElementById('previewNextRequiredAction');
+    const assetApprovalWarning = document.getElementById('previewAssetApprovalWarning');
     const expectedPath = document.getElementById('previewExpectedPath');
     const reviewedText = document.getElementById('previewReviewedText');
     const audioStatusText = document.getElementById('previewAudioStatusText');
@@ -3217,12 +3344,14 @@ const app = {
     const previewPlayer = document.getElementById('previewPlayer');
     const missingMessage = document.getElementById('previewMissingMessage');
     const markReviewedBtn = document.getElementById('btnMarkPreviewReviewed');
-    if (!statusText || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !visualAssetsStatusText || !previewAssetModeText || !visualAssetsUsedCountText || !visualAssetsMissingCountText || !visualThumbnailPathText || !previewIncludedAssetPathsText || !previewVisualWarningsText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
+    if (!statusText || !nextRequiredActionText || !assetApprovalWarning || !expectedPath || !reviewedText || !audioStatusText || !ttsProviderText || !ttsVoiceModelText || !ttsSetupHintText || !visualAssetsStatusText || !previewAssetModeText || !visualAssetsUsedCountText || !visualAssetsMissingCountText || !visualThumbnailPathText || !previewIncludedAssetPathsText || !previewVisualWarningsText || !previewPlayer || !missingMessage || !markReviewedBtn) return;
 
     if (!status) {
       statusText.textContent = 'No rendered video preview yet.';
       expectedPath.textContent = 'out/previews/{video_id}/draft.mp4';
       reviewedText.textContent = 'Not reviewed';
+      nextRequiredActionText.textContent = 'Select a video to see required action.';
+      assetApprovalWarning.style.display = 'none';
       previewPlayer.pause();
       previewPlayer.removeAttribute('src');
       previewPlayer.load();
@@ -3247,11 +3376,19 @@ const app = {
 
     const includedAssetPaths = Array.isArray(status.included_asset_paths) ? status.included_asset_paths : [];
     const visualWarnings = Array.isArray(status.visual_asset_warnings) ? status.visual_asset_warnings : [];
+    nextRequiredActionText.textContent = status.next_required_action || 'Complete the next required workflow step.';
+    const hasUnapprovedVisualAssets = !!status.preview_has_unapproved_visual_assets;
+    if (hasUnapprovedVisualAssets) {
+      assetApprovalWarning.style.display = 'block';
+      assetApprovalWarning.textContent = `• Visual assets pending review: ${status.visual_assets_pending_count || 0} pending, ${status.visual_assets_rejected_count || 0} rejected.`;
+    } else {
+      assetApprovalWarning.style.display = 'none';
+    }
     previewAssetModeText.textContent = status.preview_asset_mode || 'fallback_only';
     visualAssetsUsedCountText.textContent = `${status.visual_assets_used_count || 0}`;
     visualAssetsMissingCountText.textContent = `${status.visual_assets_missing_count || 0}`;
     visualAssetsStatusText.textContent = status.visual_assets_registered
-      ? `${status.visual_assets_count || 0} registered visual asset(s) found.`
+      ? `${status.visual_assets_registered_count || status.visual_assets_count || 0} registered visual asset(s): ${status.visual_assets_approved_count || 0} approved, ${status.visual_assets_pending_count || 0} pending, ${status.visual_assets_rejected_count || 0} rejected.`
       : 'No registered visual assets.';
     visualThumbnailPathText.textContent = status.visual_thumbnail_path || '-';
     previewIncludedAssetPathsText.textContent = includedAssetPaths.length ? includedAssetPaths.join('\n') : '-';
@@ -3966,11 +4103,17 @@ const app = {
   },
 
   async openExportModal() {
-    const selected = this.requireSelectedVideo('export operator summary');
+    const selected = this.requireSelectedVideo('generate local export summary');
     if (!selected) return;
 
     const preview = document.getElementById('operatorExportPreview');
+    const exportPathEl = document.getElementById('operatorExportPath');
+    const readyEl = document.getElementById('operatorExportReady');
+    const blockersEl = document.getElementById('operatorExportBlockers');
     preview.textContent = 'Loading operator summary...';
+    if (exportPathEl) exportPathEl.textContent = '-';
+    if (readyEl) readyEl.textContent = 'No';
+    if (blockersEl) blockersEl.textContent = '-';
     document.getElementById('operatorExportModal').classList.remove('hidden');
 
     try {
@@ -3982,7 +4125,11 @@ const app = {
 
       this.state.operatorExport = data;
       preview.textContent = JSON.stringify(data, null, 2);
-      this.log('Loaded local operator export summary', 'success');
+      if (exportPathEl) exportPathEl.textContent = data.export_path || '-';
+      if (readyEl) readyEl.textContent = data.ready_for_manual_upload ? 'Yes' : 'No';
+      const blockers = Array.isArray(data.blockers) ? data.blockers : [];
+      if (blockersEl) blockersEl.textContent = blockers.length ? blockers.join(' | ') : 'None';
+      this.log('Generated local export summary for manual review/upload.', 'success');
       await this.refreshAuditPanels();
     } catch (err) {
       preview.textContent = `Export failed: ${err.message}`;

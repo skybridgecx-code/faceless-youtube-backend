@@ -111,6 +111,13 @@ class VideoReadiness(BaseModel):
     publish_date_set: bool
     publish_status_ready_or_scheduled: bool
     blocking_reasons: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    visual_assets_registered_count: int = 0
+    visual_assets_approved_count: int = 0
+    visual_assets_pending_count: int = 0
+    visual_assets_rejected_count: int = 0
+    preview_has_unapproved_visual_assets: bool = False
+    next_required_action: str = "Complete the next required workflow step."
     compliance_status: Literal["pass", "warning", "blocked", "untested"] = "untested"
     compliance_blockers_count: int = 0
     compliance_warnings_count: int = 0
@@ -245,6 +252,12 @@ class PreviewStatus(BaseModel):
     visual_assets_registered: bool = False
     visual_assets_count: int = 0
     visual_thumbnail_path: str | None = None
+    visual_assets_registered_count: int = 0
+    visual_assets_approved_count: int = 0
+    visual_assets_pending_count: int = 0
+    visual_assets_rejected_count: int = 0
+    preview_has_unapproved_visual_assets: bool = False
+    next_required_action: str = "Complete the next required workflow step."
 
 
 class PreviewReviewUpdate(BaseModel):
@@ -287,6 +300,20 @@ class AssetPreview(BaseModel):
     body_preview: str
 
 
+class OperatorExportVisualAsset(BaseModel):
+    asset_id: int
+    video_id: int
+    plan_id: int | None = None
+    scene_id: int | None = None
+    scene_number: int | None = None
+    asset_type: str
+    file_path: str
+    review_status: str
+    review_notes: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime | None = None
+
+
 class OperatorExport(BaseModel):
     video: VideoRead
     workflow_status: str
@@ -296,6 +323,13 @@ class OperatorExport(BaseModel):
     assets: list[AssetPreview]
     audit_events: list[AuditEventRead]
     package_dir: str | None = None
+    preview_path: str | None = None
+    visual_assets: list[OperatorExportVisualAsset] = Field(default_factory=list)
+    content_references: dict[str, object] = Field(default_factory=dict)
+    ready_for_manual_upload: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    export_path: str | None = None
     youtube_payload_readiness: dict[str, object]
 
 
@@ -803,6 +837,22 @@ class VisualGeneratedAssetRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VisualGeneratedAssetReviewQueueItem(BaseModel):
+    id: int
+    video_id: int | None = None
+    video_title: str | None = None
+    plan_id: int
+    scene_id: int | None = None
+    scene_number: int | None = None
+    asset_type: str
+    file_path: str
+    file_exists: bool
+    review_status: str
+    review_notes: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+
+
 class VisualGenerationQueueRequest(BaseModel):
     provider: str = Field(default="manual", max_length=40)
     negative_prompt: str | None = None
@@ -902,6 +952,12 @@ class PipelineVideoItem(BaseModel):
     approved: bool
     preview_rendered: bool
     preview_reviewed: bool
+    visual_assets_registered_count: int = 0
+    visual_assets_approved_count: int = 0
+    visual_assets_pending_count: int = 0
+    visual_assets_rejected_count: int = 0
+    preview_has_unapproved_visual_assets: bool = False
+    next_required_action: str | None = None
     updated_at: datetime
     reason: str | None = None
 
@@ -915,6 +971,7 @@ class PipelineSummaryCounts(BaseModel):
     videos_missing_visual_plans: int
     videos_visual_jobs_pending: int
     videos_visual_assets_registered: int
+    videos_visual_assets_needing_review: int
     videos_needing_preview: int
     videos_needing_preview_review: int
     videos_needing_compliance: int
@@ -943,6 +1000,7 @@ class DailyPipelineRead(BaseModel):
     videos_missing_visual_plans: list[PipelineVideoItem]
     videos_visual_jobs_pending: list[PipelineVideoItem]
     videos_visual_assets_registered: list[PipelineVideoItem]
+    videos_visual_assets_needing_review: list[PipelineVideoItem]
     videos_needing_preview: list[PipelineVideoItem]
     videos_needing_preview_review: list[PipelineVideoItem]
     videos_needing_compliance: list[PipelineVideoItem]

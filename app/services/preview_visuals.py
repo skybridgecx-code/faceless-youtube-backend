@@ -173,6 +173,47 @@ def build_preview_visual_manifest(db: Session, video: Video) -> dict[str, Any]:
     }
 
 
+def visual_asset_review_summary_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    assets_raw = manifest.get("assets", [])
+    assets = assets_raw if isinstance(assets_raw, list) else []
+    warnings_raw = manifest.get("visual_asset_warnings", manifest.get("warnings", []))
+    warnings = [str(item) for item in warnings_raw if isinstance(item, str)]
+
+    approved_count = 0
+    pending_count = 0
+    rejected_count = 0
+    registered_count = 0
+
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        registered_count += 1
+        review_status = str(asset.get("review_status") or "pending").strip().lower()
+        if review_status == "approved":
+            approved_count += 1
+        elif review_status == "rejected":
+            rejected_count += 1
+        else:
+            pending_count += 1
+
+    has_unapproved_visual_assets = pending_count > 0 or rejected_count > 0
+    return {
+        "visual_assets_registered_count": registered_count,
+        "visual_assets_approved_count": approved_count,
+        "visual_assets_pending_count": pending_count,
+        "visual_assets_rejected_count": rejected_count,
+        "has_unapproved_visual_assets": has_unapproved_visual_assets,
+        "warnings": warnings,
+    }
+
+
+def build_visual_asset_review_summary(db: Session, video: Video) -> dict[str, Any]:
+    manifest = build_preview_visual_manifest(db, video)
+    summary = visual_asset_review_summary_from_manifest(manifest)
+    summary["manifest"] = manifest
+    return summary
+
+
 def has_registered_preview_assets(db: Session, video_id: int) -> bool:
     video = db.get(Video, video_id)
     if video is None:
