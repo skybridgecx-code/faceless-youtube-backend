@@ -38,6 +38,7 @@ def init_db() -> None:
     _apply_sqlite_visual_generation_queue_columns()
     _apply_sqlite_video_performance_columns()
     _apply_sqlite_publishing_payload_columns()
+    _apply_sqlite_autopilot_columns()
     _apply_sqlite_research_columns()
     _seed_default_agents_for_existing_channels()
 
@@ -434,6 +435,44 @@ def _apply_sqlite_publishing_payload_columns() -> None:
             "generated_at": "ALTER TABLE publishing_payloads ADD COLUMN generated_at DATETIME",
             "created_at": "ALTER TABLE publishing_payloads ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE publishing_payloads ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_autopilot_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "videos",
+        {
+            "final_review_packet_path": "ALTER TABLE videos ADD COLUMN final_review_packet_path TEXT",
+            "final_approval_status": "ALTER TABLE videos ADD COLUMN final_approval_status TEXT DEFAULT 'pending'",
+            "final_approval_notes": "ALTER TABLE videos ADD COLUMN final_approval_notes TEXT",
+            "final_approval_decided_at": "ALTER TABLE videos ADD COLUMN final_approval_decided_at DATETIME",
+        },
+    )
+
+    _apply_sqlite_additive_columns(
+        "autopilot_runs",
+        {
+            "agent_id": "ALTER TABLE autopilot_runs ADD COLUMN agent_id INTEGER",
+            "video_id": "ALTER TABLE autopilot_runs ADD COLUMN video_id INTEGER",
+            "opportunity_id": "ALTER TABLE autopilot_runs ADD COLUMN opportunity_id INTEGER",
+            "brief_id": "ALTER TABLE autopilot_runs ADD COLUMN brief_id INTEGER",
+            "run_status": "ALTER TABLE autopilot_runs ADD COLUMN run_status TEXT DEFAULT 'running'",
+            "content_type": "ALTER TABLE autopilot_runs ADD COLUMN content_type TEXT DEFAULT 'short'",
+            "requested_count": "ALTER TABLE autopilot_runs ADD COLUMN requested_count INTEGER DEFAULT 1",
+            "created_count": "ALTER TABLE autopilot_runs ADD COLUMN created_count INTEGER DEFAULT 0",
+            "ready_for_final_approval_count": "ALTER TABLE autopilot_runs ADD COLUMN ready_for_final_approval_count INTEGER DEFAULT 0",
+            "blocked_count": "ALTER TABLE autopilot_runs ADD COLUMN blocked_count INTEGER DEFAULT 0",
+            "warnings_json": "ALTER TABLE autopilot_runs ADD COLUMN warnings_json TEXT DEFAULT '[]'",
+            "blockers_json": "ALTER TABLE autopilot_runs ADD COLUMN blockers_json TEXT DEFAULT '[]'",
+            "videos_json": "ALTER TABLE autopilot_runs ADD COLUMN videos_json TEXT DEFAULT '[]'",
+            "final_review_packet_path": "ALTER TABLE autopilot_runs ADD COLUMN final_review_packet_path TEXT",
+            "created_at": "ALTER TABLE autopilot_runs ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE autopilot_runs ADD COLUMN updated_at DATETIME",
+            "completed_at": "ALTER TABLE autopilot_runs ADD COLUMN completed_at DATETIME",
         },
     )
 

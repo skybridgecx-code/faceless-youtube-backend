@@ -16,6 +16,8 @@ AI_ROUTE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^/videos/\d+/generate$"),
     re.compile(r"^/videos/\d+/assets/[^/]+/regenerate$"),
     re.compile(r"^/videos/\d+/preview/render-draft$"),
+    re.compile(r"^/review-prep/runs$"),
+    re.compile(r"^/autopilot/runs$"),
     re.compile(r"^/executive-producer/recommendation/run$"),
     re.compile(r"^/research/youtube/run$"),
 )

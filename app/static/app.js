@@ -46,6 +46,9 @@ const app = {
     publishingPayloadQueue: [],
     publishingPayloadQueueStatusFilter: 'all',
     publishingPayloadQueueReadyFilter: 'all',
+    autopilotRuns: [],
+    autopilotLatestRun: null,
+    autopilotFinalApprovalQueue: [],
     stats: {
       ideas: 0,
       generated: 0,
@@ -78,6 +81,8 @@ const app = {
     await this.loadShortsBatchQueue();
     await this.loadPerformanceSummary();
     await this.loadPublishingPayloadQueue();
+    await this.loadAutopilotRuns();
+    await this.loadAutopilotFinalApprovalQueue();
   },
 
   setupNavigation() {
@@ -163,6 +168,8 @@ const app = {
       this.loadVisualGenerationData();
       this.loadShortsBatchQueue();
       this.loadPerformanceSummary();
+      this.loadAutopilotRuns();
+      this.loadAutopilotFinalApprovalQueue();
     }
     if (page === 'assets') {
       this.loadVisualPlans();
@@ -545,6 +552,204 @@ const app = {
     }
     await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
     this.setActivePage('assets');
+  },
+
+  async runAutopilotBatch() {
+    const count = Number(document.getElementById('autopilotCount')?.value || 1);
+    const contentType = (document.getElementById('autopilotContentType')?.value || 'short').trim() || 'short';
+    const topicSeed = document.getElementById('autopilotTopicSeed')?.value?.trim() || null;
+    const autoPlaceholders = document.getElementById('autopilotAutoPlaceholders')?.checked !== false;
+    const autoRenderPreview = document.getElementById('autopilotAutoRenderPreview')?.checked !== false;
+    const autoPayload = document.getElementById('autopilotAutoGeneratePayload')?.checked !== false;
+    const agentRaw = document.getElementById('autopilotAgentSelect')?.value || '';
+    const agentId = agentRaw ? Number(agentRaw) : null;
+
+    const payload = {
+      count: Number.isFinite(count) ? count : 1,
+      content_type: contentType === 'long' ? 'long' : 'short',
+      topic_seed: topicSeed,
+      auto_generate_placeholders: autoPlaceholders,
+      auto_render_preview: autoRenderPreview,
+      auto_generate_payload: autoPayload
+    };
+    if (Number.isFinite(agentId) && agentId > 0) {
+      payload.agent_id = agentId;
+    }
+
+    const button = document.getElementById('btnRunAutopilotBatch');
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+    }
+    try {
+      const res = await fetch('/review-prep/runs', {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to run review prep batch');
+      }
+      this.state.autopilotLatestRun = data;
+      this.renderAutopilotLatestRun();
+      this.log(`Review prep run #${data.run_id} completed (${data.created_count} videos).`, 'success');
+      await this.loadVideos();
+      await this.loadAutopilotRuns();
+      await this.loadAutopilotFinalApprovalQueue();
+      await this.loadPipelineDaily();
+      await this.loadCommandCenter();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Review prep run failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
+    }
+  },
+
+  async loadAutopilotRuns() {
+    try {
+      const res = await fetch('/review-prep/runs?limit=30');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load review prep runs');
+      this.state.autopilotRuns = Array.isArray(data) ? data : [];
+      if (!this.state.autopilotLatestRun && this.state.autopilotRuns.length > 0) {
+        this.state.autopilotLatestRun = this.state.autopilotRuns[0];
+      }
+      this.renderAutopilotLatestRun();
+      return this.state.autopilotRuns;
+    } catch (err) {
+      this.log(`Review prep runs load failed: ${err.message}`, 'error');
+      this.state.autopilotRuns = [];
+      this.renderAutopilotLatestRun();
+      return [];
+    }
+  },
+
+  renderAutopilotLatestRun() {
+    const panel = document.getElementById('autopilotRunSummary');
+    const recent = document.getElementById('autopilotRecentRuns');
+    if (!panel || !recent) return;
+    const run = this.state.autopilotLatestRun;
+    if (!run) {
+      panel.innerHTML = '<div class="empty-state">No review prep run yet.</div>';
+    } else {
+      const warnings = Array.isArray(run.warnings) ? run.warnings : [];
+      const blockers = Array.isArray(run.blockers) ? run.blockers : [];
+      panel.innerHTML = `
+        <div class="meta-row"><span class="meta-label">Run</span><span class="meta-value">#${this.escapeHtml(String(run.run_id || '-'))}</span></div>
+        <div class="meta-row"><span class="meta-label">Status</span><span class="meta-value">${this.escapeHtml(run.run_status || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Requested / Created</span><span class="meta-value">${this.escapeHtml(String(run.requested_count || 0))} / ${this.escapeHtml(String(run.created_count || 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">Ready / Blocked</span><span class="meta-value">${this.escapeHtml(String(run.ready_for_final_approval_count || 0))} / ${this.escapeHtml(String(run.blocked_count || 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(run.next_required_action || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Warnings</span><span class="meta-value">${this.escapeHtml(warnings.length ? warnings.join(' | ') : 'None')}</span></div>
+        <div class="meta-row"><span class="meta-label">Blockers</span><span class="meta-value">${this.escapeHtml(blockers.length ? blockers.join(' | ') : 'None')}</span></div>
+      `;
+    }
+
+    const rows = Array.isArray(this.state.autopilotRuns) ? this.state.autopilotRuns.slice(0, 6) : [];
+    if (rows.length === 0) {
+      recent.innerHTML = '<div class="empty-state">No runs yet.</div>';
+      return;
+    }
+    recent.innerHTML = rows.map(item => `
+      <article class="video-card" style="padding:0.6rem;">
+        <div class="video-header">
+          <div class="video-title">Run #${this.escapeHtml(String(item.run_id || '-'))}</div>
+          <div class="video-status ${this.escapeHtml(item.run_status || 'completed')}">${this.escapeHtml(item.run_status || 'completed')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Created</span><span class="meta-value">${this.escapeHtml(String(item.created_count || 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">Ready</span><span class="meta-value">${this.escapeHtml(String(item.ready_for_final_approval_count || 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">Blocked</span><span class="meta-value">${this.escapeHtml(String(item.blocked_count || 0))}</span></div>
+      </article>
+    `).join('');
+  },
+
+  async loadAutopilotFinalApprovalQueue() {
+    try {
+      const res = await fetch('/review-prep/final-review-queue?limit=100');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load final approval queue');
+      }
+      this.state.autopilotFinalApprovalQueue = Array.isArray(data) ? data : [];
+      this.renderAutopilotFinalApprovalQueue();
+      return data;
+    } catch (err) {
+      this.log(`Final approval queue load failed: ${err.message}`, 'error');
+      this.state.autopilotFinalApprovalQueue = [];
+      this.renderAutopilotFinalApprovalQueue();
+      return [];
+    }
+  },
+
+  renderAutopilotFinalApprovalQueue() {
+    const container = document.getElementById('autopilotFinalApprovalQueueList');
+    if (!container) return;
+    const rows = Array.isArray(this.state.autopilotFinalApprovalQueue) ? this.state.autopilotFinalApprovalQueue : [];
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="empty-state">No review prep packets in final review queue.</div>';
+      return;
+    }
+    container.innerHTML = rows.map(item => `
+      <article class="video-card" style="padding:0.75rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
+          <div class="video-status ${this.escapeHtml(item.readiness_status || 'needs_human_fix')}">${this.escapeHtml(item.readiness_status || 'needs_human_fix')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Agent</span><span class="meta-value">${this.escapeHtml(item.agent_name || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Type</span><span class="meta-value">${this.escapeHtml(item.content_type || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Compliance</span><span class="meta-value">${this.escapeHtml(item.compliance_status || 'untested')}</span></div>
+        <div class="meta-row"><span class="meta-label">Payload Status</span><span class="meta-value">${this.escapeHtml(item.publishing_payload_status || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Final Packet</span><span class="meta-value">${this.escapeHtml(item.final_review_packet_path || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Preview Path</span><span class="meta-value">${this.escapeHtml(item.preview_path || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Thumbnail Path</span><span class="meta-value">${this.escapeHtml(item.thumbnail_path || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Blockers / Warnings</span><span class="meta-value">${this.escapeHtml(String(item.blockers_count || 0))} / ${this.escapeHtml(String(item.warnings_count || 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(item.next_required_action || '-')}</span></div>
+        <div class="row-actions" style="margin-top:0.6rem;">
+          <button class="btn" onclick="app.openAutopilotFinalQueueVideo(${Number(item.video_id)})">Open Video</button>
+          <button class="btn success" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'approve')">Approve Final Package</button>
+          <button class="btn warning" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'needs_changes')">Needs Changes</button>
+          <button class="btn danger" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'reject')">Reject</button>
+        </div>
+      </article>
+    `).join('');
+  },
+
+  async openAutopilotFinalQueueVideo(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) return;
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('assets');
+  },
+
+  async submitAutopilotFinalDecision(videoId, decision) {
+    if (!videoId || !Number.isFinite(Number(videoId))) {
+      this.log('Invalid video for final approval action.', 'error');
+      return;
+    }
+    const notes = window.prompt('Optional final approval notes (leave blank to skip):', '') || null;
+    try {
+      const res = await fetch(`/review-prep/videos/${Number(videoId)}/final-review-decision`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ decision, notes })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Final approval action failed');
+      }
+      this.log(`Final approval decision saved for video #${videoId}: ${data.approval_status}.`, 'success');
+      await this.loadVideos();
+      await this.loadAutopilotFinalApprovalQueue();
+      await this.loadCommandCenter();
+      await this.loadPipelineDaily();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Final approval action failed: ${err.message}`, 'error');
+    }
   },
 
   executePipelineAction(action) {
@@ -1271,12 +1476,14 @@ const app = {
         this.state.channelStudioSelectedAgentId = this.state.channelStudioAgents[0].id;
       }
       this.renderChannelStudioAgents();
+      this.renderAutopilotAgentOptions();
       this.renderChannelStudioSelectedAgent();
       return this.state.channelStudioAgents;
     } catch (err) {
       this.state.channelStudioAgents = [];
       this.state.channelStudioSelectedAgentId = null;
       this.renderChannelStudioAgents();
+      this.renderAutopilotAgentOptions();
       this.renderChannelStudioSelectedAgent();
       if (list) list.innerHTML = '<div class="empty-state">Failed to load channel studio agents.</div>';
       this.log(`Channel studio agent load failed: ${err.message}`, 'error');
@@ -1305,6 +1512,23 @@ const app = {
         </article>
       `;
     }).join('');
+  },
+
+  renderAutopilotAgentOptions() {
+    const select = document.getElementById('autopilotAgentSelect');
+    if (!select) return;
+    const currentValue = select.value || '';
+    const rows = Array.isArray(this.state.channelStudioAgents) ? this.state.channelStudioAgents : [];
+    const options = ['<option value=\"\">No specific agent</option>'];
+    rows.forEach(agent => {
+      options.push(
+        `<option value=\"${this.escapeHtml(String(agent.id))}\">${this.escapeHtml(agent.name)} (${this.escapeHtml(agent.niche || '-')})</option>`
+      );
+    });
+    select.innerHTML = options.join('');
+    if (currentValue && rows.some(agent => String(agent.id) === currentValue)) {
+      select.value = currentValue;
+    }
   },
 
   selectChannelStudioAgent(agentId) {

@@ -463,6 +463,105 @@ class PublishingPayloadListItem(BaseModel):
     next_required_action: str = "Complete the next required workflow step."
 
 
+AutopilotRunStatus = Literal["running", "completed", "blocked", "failed"]
+AutopilotFinalReadinessStatus = Literal["ready_for_final_approval", "needs_human_fix", "blocked"]
+AutopilotFinalDecision = Literal["approve", "reject", "needs_changes"]
+AutopilotFinalApprovalStatus = Literal["pending", "approved", "rejected", "needs_changes"]
+
+
+class AutopilotRunRequest(BaseModel):
+    agent_id: int | None = None
+    content_type: ContentType = ContentType.short
+    count: int = Field(default=1, ge=1, le=5)
+    topic_seed: str | None = Field(default=None, max_length=200)
+    auto_generate_placeholders: bool = True
+    auto_render_preview: bool = True
+    auto_generate_payload: bool = True
+
+    @field_validator("topic_seed", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class AutopilotRunVideoSummary(BaseModel):
+    video_id: int
+    title: str
+    content_type: ContentType
+    agent_id: int | None = None
+    agent_name: str | None = None
+    opportunity_id: int | None = None
+    brief_id: int | None = None
+    final_review_packet_path: str | None = None
+    publishing_payload_path: str | None = None
+    publishing_payload_status: str | None = None
+    compliance_status: Literal["pass", "warning", "blocked", "untested"] = "untested"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    readiness_status: AutopilotFinalReadinessStatus = "needs_human_fix"
+    next_required_action: str
+
+
+class AutopilotRunRead(BaseModel):
+    run_id: int
+    run_status: AutopilotRunStatus
+    requested_count: int
+    created_count: int
+    ready_for_final_approval_count: int
+    blocked_count: int
+    videos: list[AutopilotRunVideoSummary] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_required_action: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class FinalApprovalQueueItem(BaseModel):
+    video_id: int
+    title: str
+    content_type: ContentType
+    agent_name: str | None = None
+    final_review_packet_path: str | None = None
+    preview_path: str | None = None
+    thumbnail_path: str | None = None
+    compliance_status: Literal["pass", "warning", "blocked", "untested"] = "untested"
+    publishing_payload_status: str | None = None
+    blockers_count: int = 0
+    warnings_count: int = 0
+    readiness_status: AutopilotFinalReadinessStatus = "needs_human_fix"
+    next_required_action: str
+    final_approval_status: AutopilotFinalApprovalStatus = "pending"
+
+
+class FinalApprovalDecisionRequest(BaseModel):
+    decision: AutopilotFinalDecision
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class FinalApprovalDecisionResponse(BaseModel):
+    video_id: int
+    decision: AutopilotFinalDecision
+    approval_status: AutopilotFinalApprovalStatus
+    next_required_action: str
+
+
 class MarkPublishedRequest(BaseModel):
     external_id: str
     metadata_body: str = ""

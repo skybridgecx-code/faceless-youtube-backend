@@ -17,6 +17,7 @@ from app.db import get_db, init_db
 from app.models import AuditEvent, PublishRecord, Video, VideoStatus, VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
 from app.routers import (
     agents,
+    autopilot,
     channel_studio,
     channels,
     command_center,
@@ -119,6 +120,8 @@ app.include_router(research.router)
 app.include_router(visual_assets.router)
 app.include_router(visual_generation.router)
 app.include_router(shorts.router)
+app.include_router(autopilot.router)
+app.include_router(autopilot.compat_router)
 
 
 def has_preview_file(video: Video) -> bool:

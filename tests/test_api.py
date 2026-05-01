@@ -22,7 +22,7 @@ import app.services.content_engine as content_engine  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AuditEvent, ContentAgent, ContentType, Video, VideoOpportunity, VideoPerformanceMetric, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
+from app.models import AuditEvent, ContentAgent, ContentType, PublishRecord, Video, VideoOpportunity, VideoPerformanceMetric, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
 from app.security import InMemoryRateLimiter  # noqa: E402
@@ -3644,3 +3644,175 @@ def test_research_create_opportunities_workflow_and_duplicate_skip(monkeypatch: 
     second_body = second_create.json()
     assert second_body["created_count"] == 0
     assert second_body["skipped_duplicates"] == first_body["requested_topics"]
+
+
+def _run_review_prep_batch(client: TestClient, count: int = 1, **overrides) -> dict[str, object]:
+    payload = {
+        "count": count,
+        "content_type": "short",
+        "auto_generate_placeholders": True,
+        "auto_render_preview": False,
+        "auto_generate_payload": True,
+    }
+    payload.update(overrides)
+    response = client.post("/review-prep/runs", json=payload)
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_review_prep_run_requires_internal_api_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    denied = client.post("/review-prep/runs", json={"count": 1})
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        "/review-prep/runs",
+        json={"count": 1, "auto_render_preview": False},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_review_prep_run_creates_workflow_artifacts_and_preserves_manual_gates(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    monkeypatch.setattr(settings, "image_generation_api_key", None)
+    monkeypatch.setattr(settings, "image_generation_provider", "placeholder")
+    content_engine.clear_asset_cache()
+
+    payload = _run_review_prep_batch(client, count=1, auto_render_preview=False)
+    assert payload["requested_count"] == 1
+    assert payload["created_count"] == 1
+    assert payload["ready_for_final_approval_count"] >= 0
+    assert payload["run_status"] in {"completed", "blocked"}
+    assert payload["videos"]
+
+    row = payload["videos"][0]
+    assert row["opportunity_id"] is not None
+    assert row["brief_id"] is not None
+    assert row["video_id"] > 0
+    assert row["final_review_packet_path"]
+    packet_path = Path(row["final_review_packet_path"])
+    assert packet_path.exists()
+    packet_payload = json.loads(packet_path.read_text(encoding="utf-8"))
+    assert packet_payload["final_approval_required"] is True
+    assert packet_payload["local_only"] is True
+    assert isinstance(packet_payload.get("visual_assets"), list)
+    assert any(str(asset.get("file_path", "")).endswith(".svg") for asset in packet_payload["visual_assets"])
+
+    video = client.get(f"/videos/{row['video_id']}").json()
+    assert video["approved"] is False
+    assert video["preview_reviewed"] is False
+    assert video["status"] != "published"
+
+    assets = client.get(f"/videos/{row['video_id']}/assets").json()
+    assert assets
+    assert any(asset["asset_type"] == "script" for asset in assets)
+
+    perf = client.get(f"/videos/{row['video_id']}/performance").json()
+    assert perf["has_data"] is False
+    assert perf["published_url"] is None
+
+    db = SessionLocal()
+    try:
+        publish_records = list(db.scalars(select(PublishRecord).where(PublishRecord.video_id == row["video_id"])))
+        assert publish_records == []
+    finally:
+        db.close()
+
+    queue = client.get("/review-prep/final-review-queue?limit=100")
+    assert queue.status_code == 200
+    queue_rows = queue.json()
+    matching = [item for item in queue_rows if item["video_id"] == row["video_id"]]
+    assert matching
+    assert matching[0]["final_review_packet_path"] == row["final_review_packet_path"]
+
+
+def test_review_prep_final_review_decision_rules_and_side_effects() -> None:
+    client = TestClient(app)
+
+    missing_channel_id = client.post("/channels", json={"name": "Review Prep Missing Packet Channel"}).json()["id"]
+    missing_video_id = client.post(
+        "/videos",
+        json={"channel_id": missing_channel_id, "title": "Missing Packet Video"},
+    ).json()["id"]
+    missing_packet = client.post(
+        f"/review-prep/videos/{missing_video_id}/final-review-decision",
+        json={"decision": "approve", "notes": "should fail"},
+    )
+    assert missing_packet.status_code == 400
+    assert "packet" in missing_packet.json()["detail"].lower()
+
+    run = _run_review_prep_batch(client, count=3, auto_render_preview=False)
+    assert run["created_count"] == 3
+    run_videos = [item for item in run["videos"] if item["video_id"] > 0]
+    assert len(run_videos) == 3
+
+    blocked_video_id = run_videos[0]["video_id"]
+    assert client.patch(
+        f"/videos/{blocked_video_id}/assets/script",
+        json={"body": "Guaranteed results. You will make $10k fast."},
+    ).status_code == 200
+    blocked_approve = client.post(
+        f"/review-prep/videos/{blocked_video_id}/final-review-decision",
+        json={"decision": "approve", "notes": "try blocked"},
+    )
+    assert blocked_approve.status_code == 400
+    assert "compliance" in blocked_approve.json()["detail"].lower()
+
+    approve_video_id = run_videos[1]["video_id"]
+    approve = client.post(
+        f"/review-prep/videos/{approve_video_id}/final-review-decision",
+        json={"decision": "approve", "notes": "ready for manual upload checklist"},
+    )
+    assert approve.status_code == 200
+    approve_body = approve.json()
+    assert approve_body["approval_status"] == "approved"
+    approved_video = client.get(f"/videos/{approve_video_id}").json()
+    assert approved_video["approved"] is True
+    assert approved_video["status"] == "approved"
+
+    reject_video_id = run_videos[2]["video_id"]
+    packet_path = Path(run_videos[2]["final_review_packet_path"])
+    assert packet_path.exists()
+    reject = client.post(
+        f"/review-prep/videos/{reject_video_id}/final-review-decision",
+        json={"decision": "reject", "notes": "needs full rewrite"},
+    )
+    assert reject.status_code == 200
+    reject_body = reject.json()
+    assert reject_body["approval_status"] == "rejected"
+    rejected_video = client.get(f"/videos/{reject_video_id}").json()
+    assert rejected_video["approved"] is False
+    assert rejected_video["status"] == "rejected"
+    assert packet_path.exists()
+    db = SessionLocal()
+    try:
+        rejected_row = db.get(Video, reject_video_id)
+        assert rejected_row is not None
+        assert rejected_row.final_approval_status == "rejected"
+        assert rejected_row.final_approval_notes == "needs full rewrite"
+    finally:
+        db.close()
+
+    needs_changes = client.post(
+        f"/review-prep/videos/{reject_video_id}/final-review-decision",
+        json={"decision": "needs_changes", "notes": "improve opening section"},
+    )
+    assert needs_changes.status_code == 200
+    nc_body = needs_changes.json()
+    assert nc_body["approval_status"] == "needs_changes"
+    changed_video = client.get(f"/videos/{reject_video_id}").json()
+    assert changed_video["approved"] is False
+    assert changed_video["status"] != "approved"
+    db = SessionLocal()
+    try:
+        changed_row = db.get(Video, reject_video_id)
+        assert changed_row is not None
+        assert changed_row.final_approval_status == "needs_changes"
+        assert changed_row.final_approval_notes == "improve opening section"
+    finally:
+        db.close()

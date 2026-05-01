@@ -253,6 +253,49 @@
 
             <div class="panel">
               <div class="panel-header">
+                <h2>One-Click Prep Run</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadAutopilotRuns()">Refresh Runs</button>
+                  <button class="btn" onclick="app.loadAutopilotFinalApprovalQueue()">Refresh Queue</button>
+                  <button class="btn success" id="btnRunAutopilotBatch" onclick="app.runAutopilotBatch()">Run Review Prep Batch</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note">Review Prep prepares local packages only. You still manually approve and manually upload.</div>
+                <div class="agent-edit-grid">
+                  <label class="agent-field"><span>Agent</span><select id="autopilotAgentSelect" class="form-select"><option value="">No specific agent</option></select></label>
+                  <label class="agent-field"><span>Content Type</span><select id="autopilotContentType" class="form-select"><option value="short" selected>short</option><option value="long">long</option></select></label>
+                  <label class="agent-field"><span>Count</span><input type="number" id="autopilotCount" min="1" max="5" value="1" /></label>
+                  <label class="agent-field"><span>Topic Seed (optional)</span><input type="text" id="autopilotTopicSeed" placeholder="local ops workflow" /></label>
+                </div>
+                <div class="agent-edit-grid" style="margin-top:0.55rem;">
+                  <label class="check-item"><input type="checkbox" id="autopilotAutoPlaceholders" checked /><span>Auto-generate placeholder visuals</span></label>
+                  <label class="check-item"><input type="checkbox" id="autopilotAutoRenderPreview" checked /><span>Auto-render preview when renderer is available</span></label>
+                  <label class="check-item"><input type="checkbox" id="autopilotAutoGeneratePayload" checked /><span>Auto-generate publishing payload summary</span></label>
+                </div>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Latest Run Summary</div>
+                  <div id="autopilotRunSummary">
+                    <div class="empty-state">No review prep run yet.</div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Recent Runs</div>
+                  <div id="autopilotRecentRuns" class="video-list">
+                    <div class="empty-state">No runs yet.</div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Final Approval Queue</div>
+                  <div id="autopilotFinalApprovalQueueList" class="video-list">
+                    <div class="empty-state">No review prep packets in final review queue.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
                 <h2>Analytics Feedback</h2>
                 <div class="header-actions">
                   <button class="btn" onclick="app.loadPerformanceSummary()">Refresh</button>

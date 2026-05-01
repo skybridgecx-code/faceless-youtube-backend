@@ -139,6 +139,10 @@ class Video(Base):
     preview_rendered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     preview_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     preview_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    final_review_packet_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_approval_status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    final_approval_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_approval_decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -235,6 +239,29 @@ class PublishingPayload(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     video: Mapped[Video] = relationship(back_populates="publishing_payloads")
+
+
+class AutopilotRun(Base):
+    __tablename__ = "autopilot_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("channel_studio_agents.id"), nullable=True, index=True)
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True, index=True)
+    opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("video_opportunities.id"), nullable=True, index=True)
+    brief_id: Mapped[int | None] = mapped_column(ForeignKey("production_briefs.id"), nullable=True, index=True)
+    run_status: Mapped[str] = mapped_column(String(40), default="running", index=True)
+    content_type: Mapped[str] = mapped_column(String(20), default="short", index=True)
+    requested_count: Mapped[int] = mapped_column(Integer, default=1)
+    created_count: Mapped[int] = mapped_column(Integer, default=0)
+    ready_for_final_approval_count: Mapped[int] = mapped_column(Integer, default=0)
+    blocked_count: Mapped[int] = mapped_column(Integer, default=0)
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    blockers_json: Mapped[str] = mapped_column(Text, default="[]")
+    videos_json: Mapped[str] = mapped_column(Text, default="[]")
+    final_review_packet_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class PublishRecord(Base):
