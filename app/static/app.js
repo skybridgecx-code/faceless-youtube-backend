@@ -36,6 +36,8 @@ const app = {
     pipelineDaily: null,
     shortsBatchSummary: null,
     shortsBatchQueue: [],
+    performanceByVideoId: {},
+    performanceSummary: null,
     stats: {
       ideas: 0,
       generated: 0,
@@ -65,6 +67,7 @@ const app = {
     await this.loadCommandCenter();
     await this.loadPipelineDaily();
     await this.loadShortsBatchQueue();
+    await this.loadPerformanceSummary();
   },
 
   setupNavigation() {
@@ -148,6 +151,7 @@ const app = {
       this.loadVisualPlans();
       this.loadVisualGenerationData();
       this.loadShortsBatchQueue();
+      this.loadPerformanceSummary();
     }
     if (page === 'assets') {
       this.loadVisualPlans();
@@ -595,6 +599,62 @@ const app = {
     jobsExportedEl.textContent = String(jobsExported);
     jobsImportedEl.textContent = String(jobsImported);
     assetsRegisteredEl.textContent = String(assetsRegistered);
+  },
+
+  async loadPerformanceSummary() {
+    try {
+      const res = await fetch('/performance/summary?limit=20');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load performance summary');
+      }
+      this.state.performanceSummary = data;
+      this.renderPerformanceSummary();
+    } catch (err) {
+      this.log(`Performance summary load failed: ${err.message}`, 'error');
+      this.state.performanceSummary = null;
+      this.renderPerformanceSummary();
+    }
+  },
+
+  renderPerformanceSummary() {
+    const container = document.getElementById('performanceSummaryList');
+    if (!container) return;
+    const summary = this.state.performanceSummary;
+    const topRows = Array.isArray(summary?.top_videos) ? summary.top_videos : [];
+    const bottomRows = Array.isArray(summary?.bottom_videos) ? summary.bottom_videos : [];
+    if (topRows.length === 0 && bottomRows.length === 0) {
+      container.innerHTML = '<div class="empty-state">No manual/local performance metrics yet.</div>';
+      return;
+    }
+    const toRow = (item, label) => `
+      <article class="video-card" style="padding:0.65rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
+          <div class="video-status ${this.escapeHtml(item.performance_band || 'needs_data')}">${this.escapeHtml(item.performance_band || 'needs_data')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Group</span><span class="meta-value">${this.escapeHtml(label)}</span></div>
+        <div class="meta-row"><span class="meta-label">Type / Pillar</span><span class="meta-value">${this.escapeHtml(item.content_type || '-')} • ${this.escapeHtml(item.pillar || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Views</span><span class="meta-value">${this.escapeHtml(String(item.views ?? 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">CTR</span><span class="meta-value">${item.ctr == null ? '-' : `${item.ctr}%`}</span></div>
+        <div class="meta-row"><span class="meta-label">Retention</span><span class="meta-value">${item.retention == null ? '-' : `${item.retention}%`}</span></div>
+        <div class="row-actions" style="margin-top:0.5rem;">
+          <button class="btn" onclick="app.openPerformanceVideo(${Number(item.video_id)})">Open Video</button>
+        </div>
+      </article>
+    `;
+    const topHtml = topRows.slice(0, 10).map(item => toRow(item, 'Top')).join('');
+    const bottomHtml = bottomRows.slice(0, 10).map(item => toRow(item, 'Bottom')).join('');
+    container.innerHTML = `${topHtml}${bottomHtml}`;
+  },
+
+  async openPerformanceVideo(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) {
+      this.log('Invalid video id for performance row.', 'error');
+      return;
+    }
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('assets');
   },
 
   renderPipelineDaily(data) {
@@ -1261,7 +1321,10 @@ const app = {
         <td>
           <span class="video-status ${this.escapeHtml(item.review_status || 'unreviewed')}">${this.escapeHtml(this.formatReviewStatus(item.review_status))}</span>
         </td>
-        <td><strong>${this.escapeHtml(String(item.score?.total_score ?? '-'))}</strong></td>
+        <td>
+          <strong>${this.escapeHtml(String(item.score?.analytics_adjusted_total_score ?? item.score?.total_score ?? '-'))}</strong>
+          <div class="video-meta-line">base ${this.escapeHtml(String(item.score?.base_total_score ?? item.score?.total_score ?? '-'))}</div>
+        </td>
         <td>
           <div>${this.escapeHtml(item.expected_monetization_path || item.monetization_path || '—')}</div>
           <div class="video-meta-line">${this.escapeHtml(agentLane)}</div>
@@ -1327,7 +1390,7 @@ const app = {
     }
 
     topicEl.textContent = item.topic || '-';
-    scoreEl.textContent = `${item.score?.total_score ?? '-'} / 40`;
+    scoreEl.textContent = `${item.score?.analytics_adjusted_total_score ?? item.score?.total_score ?? '-'} / 40 (base ${item.score?.base_total_score ?? item.score?.total_score ?? '-'})`;
     monetizationEl.textContent = item.expected_monetization_path || item.monetization_path || '-';
     titleEl.textContent = item.recommended_title || '-';
     thumbEl.textContent = item.thumbnail_angle || '-';
@@ -1342,19 +1405,23 @@ const app = {
 
     const score = item.score || {};
     const rows = [
-      ['Search Demand', score.search_demand],
-      ['Buyer Intent', score.buyer_intent],
-      ['Affiliate Potential', score.affiliate_potential],
-      ['Sponsorship Potential', score.sponsorship_potential],
-      ['Production Difficulty (lower is better)', score.production_difficulty],
-      ['Compliance Risk (lower is better)', score.compliance_risk],
-      ['Trend Freshness', score.trend_freshness],
-      ['Product Connection', score.product_connection],
+      { label: 'Search Demand', value: score.search_demand, unit: '/5' },
+      { label: 'Buyer Intent', value: score.buyer_intent, unit: '/5' },
+      { label: 'Affiliate Potential', value: score.affiliate_potential, unit: '/5' },
+      { label: 'Sponsorship Potential', value: score.sponsorship_potential, unit: '/5' },
+      { label: 'Production Difficulty (lower is better)', value: score.production_difficulty, unit: '/5' },
+      { label: 'Compliance Risk (lower is better)', value: score.compliance_risk, unit: '/5' },
+      { label: 'Trend Freshness', value: score.trend_freshness, unit: '/5' },
+      { label: 'Product Connection', value: score.product_connection, unit: '/5' },
+      { label: 'Analytics Signal', value: score.analytics_signal || 'neutral', unit: '' },
+      { label: 'Analytics Adjustment', value: score.analytics_confidence_adjustment ?? 0, unit: '' },
+      { label: 'Analytics Sample Size', value: score.analytics_sample_size ?? 0, unit: '' },
+      { label: 'Analytics Reason', value: score.analytics_reason || 'No analytics feedback applied.', unit: '' },
     ];
-    scoreGridEl.innerHTML = rows.map(([label, value]) => `
+    scoreGridEl.innerHTML = rows.map((row) => `
       <div class="score-row">
-        <span>${this.escapeHtml(String(label))}</span>
-        <strong>${this.escapeHtml(String(value ?? '-'))}/5</strong>
+        <span>${this.escapeHtml(String(row.label))}</span>
+        <strong>${this.escapeHtml(String(row.value ?? '-'))}${this.escapeHtml(row.unit || '')}</strong>
       </div>
     `).join('');
   },
@@ -2540,6 +2607,7 @@ const app = {
 
     await this.loadReadiness();
     await this.loadPreviewStatus();
+    await this.loadSelectedVideoPerformance();
     if (reloadAudit) {
       await this.loadVideoAudit();
     }
@@ -2570,10 +2638,142 @@ const app = {
     const ctaPanel = document.getElementById('ctaPanel');
     if (ctaPanel) ctaPanel.innerHTML = '<div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>';
     this.renderPreviewStatus(null);
+    this.renderSelectedVideoPerformance(null);
     this.clearComplianceResults();
     this.renderAssets();
     this.renderVisualPlanSection();
     this.renderVideoAudit();
+  },
+
+  async loadSelectedVideoPerformance() {
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      this.renderSelectedVideoPerformance(null);
+      return null;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/performance`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load video performance');
+      this.state.performanceByVideoId[selected.id] = data;
+      this.renderSelectedVideoPerformance(data);
+      return data;
+    } catch (err) {
+      this.log(`Load performance failed: ${err.message}`, 'error');
+      this.renderSelectedVideoPerformance(null);
+      return null;
+    }
+  },
+
+  renderSelectedVideoPerformance(data) {
+    const platformEl = document.getElementById('perfPlatform');
+    const publishedUrlEl = document.getElementById('perfPublishedUrl');
+    const impressionsEl = document.getElementById('perfImpressions');
+    const viewsEl = document.getElementById('perfViews');
+    const clicksEl = document.getElementById('perfClicks');
+    const ctrEl = document.getElementById('perfCtr');
+    const avgDurationEl = document.getElementById('perfAvgDuration');
+    const avgViewedEl = document.getElementById('perfAvgViewed');
+    const watchTimeEl = document.getElementById('perfWatchTime');
+    const likesEl = document.getElementById('perfLikes');
+    const commentsEl = document.getElementById('perfComments');
+    const subsEl = document.getElementById('perfSubscribersGained');
+    const notesEl = document.getElementById('perfNotes');
+    const bandEl = document.getElementById('perfBand');
+    const ctrBandEl = document.getElementById('perfCtrBand');
+    const retentionBandEl = document.getElementById('perfRetentionBand');
+    const computedCtrEl = document.getElementById('perfComputedCtr');
+    const recommendationEl = document.getElementById('perfRecommendation');
+    if (!platformEl || !publishedUrlEl || !impressionsEl || !viewsEl || !clicksEl || !ctrEl || !avgDurationEl || !avgViewedEl || !watchTimeEl || !likesEl || !commentsEl || !subsEl || !notesEl || !bandEl || !ctrBandEl || !retentionBandEl || !computedCtrEl || !recommendationEl) {
+      return;
+    }
+
+    const perf = data || {
+      platform: 'youtube',
+      published_url: '',
+      impressions: 0,
+      views: 0,
+      clicks: 0,
+      ctr: null,
+      average_view_duration_seconds: null,
+      average_percentage_viewed: null,
+      watch_time_minutes: null,
+      likes: 0,
+      comments: 0,
+      subscribers_gained: 0,
+      notes: '',
+      performance_band: 'needs_data',
+      ctr_band: 'needs_data',
+      retention_band: 'needs_data',
+      next_recommendation: 'Collect local/manual metrics first.'
+    };
+
+    platformEl.value = perf.platform || 'youtube';
+    publishedUrlEl.value = perf.published_url || '';
+    impressionsEl.value = String(perf.impressions ?? 0);
+    viewsEl.value = String(perf.views ?? 0);
+    clicksEl.value = String(perf.clicks ?? 0);
+    ctrEl.value = perf.ctr == null ? '' : String(perf.ctr);
+    avgDurationEl.value = perf.average_view_duration_seconds == null ? '' : String(perf.average_view_duration_seconds);
+    avgViewedEl.value = perf.average_percentage_viewed == null ? '' : String(perf.average_percentage_viewed);
+    watchTimeEl.value = perf.watch_time_minutes == null ? '' : String(perf.watch_time_minutes);
+    likesEl.value = String(perf.likes ?? 0);
+    commentsEl.value = String(perf.comments ?? 0);
+    subsEl.value = String(perf.subscribers_gained ?? 0);
+    notesEl.value = perf.notes || '';
+
+    bandEl.textContent = perf.performance_band || 'needs_data';
+    ctrBandEl.textContent = perf.ctr_band || 'needs_data';
+    retentionBandEl.textContent = perf.retention_band || 'needs_data';
+    computedCtrEl.textContent = perf.ctr == null ? '-' : `${perf.ctr}%`;
+    recommendationEl.textContent = perf.next_recommendation || 'Collect local/manual metrics first.';
+  },
+
+  async saveManualPerformance() {
+    const selected = this.requireSelectedVideo('save manual performance');
+    if (!selected) return;
+
+    const numOrNull = (value) => {
+      if (value == null || value === '') return null;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    };
+    const intOrZero = (value) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+    };
+
+    const payload = {
+      platform: (document.getElementById('perfPlatform')?.value || 'youtube').trim() || 'youtube',
+      published_url: (document.getElementById('perfPublishedUrl')?.value || '').trim() || null,
+      impressions: intOrZero(document.getElementById('perfImpressions')?.value),
+      views: intOrZero(document.getElementById('perfViews')?.value),
+      clicks: intOrZero(document.getElementById('perfClicks')?.value),
+      ctr: numOrNull(document.getElementById('perfCtr')?.value),
+      average_view_duration_seconds: numOrNull(document.getElementById('perfAvgDuration')?.value),
+      average_percentage_viewed: numOrNull(document.getElementById('perfAvgViewed')?.value),
+      watch_time_minutes: numOrNull(document.getElementById('perfWatchTime')?.value),
+      likes: intOrZero(document.getElementById('perfLikes')?.value),
+      comments: intOrZero(document.getElementById('perfComments')?.value),
+      subscribers_gained: Number(document.getElementById('perfSubscribersGained')?.value || 0) || 0,
+      notes: (document.getElementById('perfNotes')?.value || '').trim() || null
+    };
+    try {
+      const res = await fetch(`/videos/${selected.id}/performance`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to save performance');
+      this.state.performanceByVideoId[selected.id] = data;
+      this.renderSelectedVideoPerformance(data);
+      this.log('Saved manual/local performance metrics.', 'success');
+      await this.loadPerformanceSummary();
+      await this.loadOpportunities();
+    } catch (err) {
+      this.log(`Save performance failed: ${err.message}`, 'error');
+    }
   },
 
   updateWorkflowAndCTA(video) {

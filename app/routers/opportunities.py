@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Channel, OpportunityReviewStatus, Video, VideoOpportunity, VideoStatus
+from app.models import Channel, ContentType, OpportunityReviewStatus, Video, VideoOpportunity, VideoStatus
 from app.schemas import (
     OpportunityCreate,
     OpportunityDailySeedRequest,
@@ -22,6 +22,7 @@ from app.schemas import (
 from app.services.agents import ensure_channel_agents, first_active_agent_name, maybe_assign_agent_to_opportunity
 from app.services.audit import log_audit_event
 from app.services.opportunity_intake import build_daily_seed_blueprints, normalize_text
+from app.services.performance_feedback import build_analytics_feedback_for_opportunity
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
 
@@ -155,7 +156,14 @@ def apply_scores(opportunity: VideoOpportunity) -> None:
     opportunity.scored_at = datetime.utcnow()
 
 
-def serialize_opportunity(opportunity: VideoOpportunity) -> OpportunityRead:
+def serialize_opportunity(db: Session, opportunity: VideoOpportunity) -> OpportunityRead:
+    analytics = build_analytics_feedback_for_opportunity(
+        db,
+        channel_id=opportunity.channel_id,
+        pillar_hint=opportunity.niche_lane,
+        content_type=ContentType.long,
+        base_total_score=opportunity.total_score,
+    )
     score = OpportunityScoreBreakdown(
         search_demand=opportunity.search_demand,
         buyer_intent=opportunity.buyer_intent,
@@ -166,6 +174,12 @@ def serialize_opportunity(opportunity: VideoOpportunity) -> OpportunityRead:
         trend_freshness=opportunity.trend_freshness,
         product_connection=opportunity.product_connection,
         total_score=opportunity.total_score,
+        base_total_score=opportunity.total_score,
+        analytics_adjusted_total_score=analytics.analytics_adjusted_total_score,
+        analytics_signal=analytics.analytics_signal,
+        analytics_confidence_adjustment=analytics.analytics_confidence_adjustment,
+        analytics_reason=analytics.analytics_reason,
+        analytics_sample_size=analytics.analytics_sample_size,
     )
     return OpportunityRead(
         id=opportunity.id,
@@ -207,7 +221,7 @@ def get_opportunity_or_404(db: Session, opportunity_id: int) -> VideoOpportunity
 @router.get("", response_model=list[OpportunityRead])
 def list_opportunities(db: Session = Depends(get_db)) -> list[OpportunityRead]:
     rows = list(db.scalars(select(VideoOpportunity).order_by(VideoOpportunity.total_score.desc(), VideoOpportunity.created_at.desc())))
-    return [serialize_opportunity(row) for row in rows]
+    return [serialize_opportunity(db, row) for row in rows]
 
 
 @router.get("/top", response_model=list[OpportunityRead])
@@ -222,7 +236,7 @@ def list_top_opportunities(
             .limit(limit)
         )
     )
-    return [serialize_opportunity(row) for row in rows]
+    return [serialize_opportunity(db, row) for row in rows]
 
 
 @router.get("/review-queue", response_model=list[OpportunityRead])
@@ -243,7 +257,7 @@ def list_review_queue(
             -item.created_at.timestamp(),
         )
     )
-    return [serialize_opportunity(row) for row in rows[:limit]]
+    return [serialize_opportunity(db, row) for row in rows[:limit]]
 
 
 @router.get("/intake/status", response_model=OpportunityIntakeStatusRead)
@@ -323,7 +337,7 @@ def create_opportunity(payload: OpportunityCreate, db: Session = Depends(get_db)
         },
     )
 
-    return serialize_opportunity(opportunity)
+    return serialize_opportunity(db, opportunity)
 
 
 @router.post("/intake/daily-seed", response_model=OpportunityDailySeedResult)
@@ -462,7 +476,7 @@ def review_opportunity(
             "has_rejection_reason": bool(opportunity.rejection_reason),
         },
     )
-    return serialize_opportunity(opportunity)
+    return serialize_opportunity(db, opportunity)
 
 
 @router.post("/{opportunity_id}/score", response_model=OpportunityRead)
@@ -485,7 +499,7 @@ def score_opportunity(opportunity_id: int, db: Session = Depends(get_db)) -> Opp
         },
     )
 
-    return serialize_opportunity(opportunity)
+    return serialize_opportunity(db, opportunity)
 
 
 @router.post("/{opportunity_id}/promote-to-video", response_model=VideoRead)

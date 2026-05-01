@@ -334,6 +334,70 @@ class ThumbnailGenerationResponse(BaseModel):
     prompt_used: str
 
 
+class VideoPerformanceUpdate(BaseModel):
+    platform: str = Field(default="youtube", max_length=60)
+    published_url: str | None = None
+    impressions: int = Field(default=0, ge=0)
+    views: int = Field(default=0, ge=0)
+    clicks: int = Field(default=0, ge=0)
+    ctr: float | None = Field(default=None, ge=0)
+    average_view_duration_seconds: float | None = Field(default=None, ge=0)
+    average_percentage_viewed: float | None = Field(default=None, ge=0, le=100)
+    watch_time_minutes: float | None = Field(default=None, ge=0)
+    likes: int = Field(default=0, ge=0)
+    comments: int = Field(default=0, ge=0)
+    subscribers_gained: int = Field(default=0)
+    published_at: datetime | None = None
+    notes: str | None = None
+
+
+class VideoPerformanceRead(BaseModel):
+    id: int | None = None
+    video_id: int
+    platform: str = "youtube"
+    published_url: str | None = None
+    impressions: int = 0
+    views: int = 0
+    clicks: int = 0
+    ctr: float | None = None
+    average_view_duration_seconds: float | None = None
+    average_percentage_viewed: float | None = None
+    watch_time_minutes: float | None = None
+    likes: int = 0
+    comments: int = 0
+    subscribers_gained: int = 0
+    published_at: datetime | None = None
+    measured_at: datetime | None = None
+    notes: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    has_data: bool = False
+    performance_band: Literal["unknown", "needs_data", "weak", "average", "strong"] = "needs_data"
+    ctr_band: Literal["unknown", "needs_data", "weak", "average", "strong"] = "needs_data"
+    retention_band: Literal["unknown", "needs_data", "weak", "average", "strong"] = "needs_data"
+    next_recommendation: str = "Collect local/manual metrics first."
+    is_manual_local: bool = True
+    manual_local_note: str = "Manual/local metrics only — no YouTube API connected yet."
+
+
+class PerformanceSummaryRow(BaseModel):
+    video_id: int
+    title: str
+    content_type: str
+    pillar: str
+    views: int
+    ctr: float | None = None
+    retention: float | None = None
+    performance_band: Literal["unknown", "needs_data", "weak", "average", "strong"] = "needs_data"
+
+
+class PerformanceSummaryResponse(BaseModel):
+    top_videos: list[PerformanceSummaryRow] = Field(default_factory=list)
+    bottom_videos: list[PerformanceSummaryRow] = Field(default_factory=list)
+    total_videos_with_manual_metrics: int = 0
+    manual_local_note: str = "Manual/local metrics only — no YouTube API connected yet."
+
+
 class YouTubePayloadResponse(BaseModel):
     video_id: int
     title: str
@@ -396,6 +460,7 @@ class OperatorExport(BaseModel):
     preview_path: str | None = None
     visual_assets: list[OperatorExportVisualAsset] = Field(default_factory=list)
     content_references: dict[str, object] = Field(default_factory=dict)
+    performance: dict[str, object] = Field(default_factory=dict)
     thumbnail_image_path: str | None = None
     thumbnail_review_status: str | None = None
     thumbnail_warning: str | None = None
@@ -425,6 +490,12 @@ class OpportunityScoreBreakdown(BaseModel):
     trend_freshness: int = Field(ge=1, le=5)
     product_connection: int = Field(ge=1, le=5)
     total_score: int
+    base_total_score: int
+    analytics_adjusted_total_score: int
+    analytics_signal: Literal["neutral", "positive", "negative"] = "neutral"
+    analytics_confidence_adjustment: int = 0
+    analytics_reason: str = "No analytics feedback applied."
+    analytics_sample_size: int = 0
 
 
 class OpportunityRead(BaseModel):

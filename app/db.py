@@ -35,6 +35,7 @@ def init_db() -> None:
     _apply_sqlite_production_brief_columns()
     _apply_sqlite_visual_asset_factory_columns()
     _apply_sqlite_visual_generation_queue_columns()
+    _apply_sqlite_video_performance_columns()
     _apply_sqlite_research_columns()
     _seed_default_agents_for_existing_channels()
 
@@ -345,6 +346,35 @@ def _apply_sqlite_visual_generation_queue_columns() -> None:
             "notes": "ALTER TABLE visual_generated_assets ADD COLUMN notes TEXT",
             "created_at": "ALTER TABLE visual_generated_assets ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE visual_generated_assets ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_video_performance_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "video_performance_metrics",
+        {
+            "video_id": "ALTER TABLE video_performance_metrics ADD COLUMN video_id INTEGER",
+            "platform": "ALTER TABLE video_performance_metrics ADD COLUMN platform TEXT DEFAULT 'youtube'",
+            "published_url": "ALTER TABLE video_performance_metrics ADD COLUMN published_url TEXT",
+            "impressions": "ALTER TABLE video_performance_metrics ADD COLUMN impressions INTEGER DEFAULT 0",
+            "views": "ALTER TABLE video_performance_metrics ADD COLUMN views INTEGER DEFAULT 0",
+            "clicks": "ALTER TABLE video_performance_metrics ADD COLUMN clicks INTEGER DEFAULT 0",
+            "ctr": "ALTER TABLE video_performance_metrics ADD COLUMN ctr FLOAT",
+            "average_view_duration_seconds": "ALTER TABLE video_performance_metrics ADD COLUMN average_view_duration_seconds FLOAT",
+            "average_percentage_viewed": "ALTER TABLE video_performance_metrics ADD COLUMN average_percentage_viewed FLOAT",
+            "watch_time_minutes": "ALTER TABLE video_performance_metrics ADD COLUMN watch_time_minutes FLOAT",
+            "likes": "ALTER TABLE video_performance_metrics ADD COLUMN likes INTEGER DEFAULT 0",
+            "comments": "ALTER TABLE video_performance_metrics ADD COLUMN comments INTEGER DEFAULT 0",
+            "subscribers_gained": "ALTER TABLE video_performance_metrics ADD COLUMN subscribers_gained INTEGER DEFAULT 0",
+            "published_at": "ALTER TABLE video_performance_metrics ADD COLUMN published_at DATETIME",
+            "measured_at": "ALTER TABLE video_performance_metrics ADD COLUMN measured_at DATETIME",
+            "notes": "ALTER TABLE video_performance_metrics ADD COLUMN notes TEXT",
+            "created_at": "ALTER TABLE video_performance_metrics ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE video_performance_metrics ADD COLUMN updated_at DATETIME",
         },
     )
 

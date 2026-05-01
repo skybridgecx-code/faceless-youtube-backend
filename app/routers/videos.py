@@ -29,6 +29,7 @@ from app.models import (
     PublishRecord,
     Review,
     Video,
+    VideoPerformanceMetric,
     VideoStatus,
     VisualAssetPlan,
     VisualAssetPrompt,
@@ -50,6 +51,8 @@ from app.schemas import (
     PreviewReviewUpdate,
     PreviewStatus,
     ThumbnailGenerationResponse,
+    VideoPerformanceRead,
+    VideoPerformanceUpdate,
     ReviewCreate,
     ReviewRead,
     VideoBatchCreate,
@@ -72,6 +75,7 @@ from app.services.content_engine import (
     generate_video_ideas,
 )
 from app.services.package_builder import build_video_package, slugify
+from app.services.performance_feedback import latest_performance_for_video, performance_payload_for_video
 from app.services.preview_visuals import build_preview_visual_manifest, build_visual_asset_review_summary
 from app.services.thumbnail_generation import generate_thumbnail_image
 from app.services.visual_asset_review import asset_review_fields, update_visual_asset_review
@@ -1068,6 +1072,8 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
     readiness = build_readiness(video, db)
     report = run_compliance_checks(video)
     visual_summary = build_visual_asset_review_summary(db, video)
+    performance_metric = latest_performance_for_video(db, video.id)
+    performance_payload = performance_payload_for_video(video.id, performance_metric)
     visual_manifest = visual_summary.get("manifest", {})
     manifest_assets = visual_manifest.get("assets", [])
     audit_events = list(
@@ -1191,6 +1197,7 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
             "youtube_metadata": _latest_asset_reference(video, AssetType.youtube_metadata),
             "description": _latest_asset_reference(video, AssetType.description),
         },
+        performance=performance_payload,
         thumbnail_image_path=thumbnail_image_path,
         thumbnail_review_status=thumbnail_review_status,
         thumbnail_warning=thumbnail_warning,
@@ -1285,6 +1292,85 @@ def get_video_readiness(video_id: int, db: Session = Depends(get_db)) -> VideoRe
     db.commit()
     db.refresh(video)
     return readiness
+
+
+@router.post("/{video_id}/performance", response_model=VideoPerformanceRead)
+def save_video_performance(
+    video_id: int,
+    payload: VideoPerformanceUpdate,
+    db: Session = Depends(get_db),
+) -> VideoPerformanceRead:
+    video = get_video_or_404(db, video_id)
+    metric = latest_performance_for_video(db, video.id)
+    now = datetime.utcnow()
+    data = payload.model_dump()
+
+    if metric is None:
+        metric = VideoPerformanceMetric(
+            video_id=video.id,
+            platform=str(data.get("platform") or "youtube"),
+            published_url=data.get("published_url"),
+            impressions=int(data.get("impressions") or 0),
+            views=int(data.get("views") or 0),
+            clicks=int(data.get("clicks") or 0),
+            ctr=data.get("ctr"),
+            average_view_duration_seconds=data.get("average_view_duration_seconds"),
+            average_percentage_viewed=data.get("average_percentage_viewed"),
+            watch_time_minutes=data.get("watch_time_minutes"),
+            likes=int(data.get("likes") or 0),
+            comments=int(data.get("comments") or 0),
+            subscribers_gained=int(data.get("subscribers_gained") or 0),
+            published_at=data.get("published_at"),
+            measured_at=now,
+            notes=data.get("notes"),
+        )
+        db.add(metric)
+    else:
+        metric.platform = str(data.get("platform") or metric.platform or "youtube")
+        metric.published_url = data.get("published_url")
+        metric.impressions = int(data.get("impressions") or 0)
+        metric.views = int(data.get("views") or 0)
+        metric.clicks = int(data.get("clicks") or 0)
+        metric.ctr = data.get("ctr")
+        metric.average_view_duration_seconds = data.get("average_view_duration_seconds")
+        metric.average_percentage_viewed = data.get("average_percentage_viewed")
+        metric.watch_time_minutes = data.get("watch_time_minutes")
+        metric.likes = int(data.get("likes") or 0)
+        metric.comments = int(data.get("comments") or 0)
+        metric.subscribers_gained = int(data.get("subscribers_gained") or 0)
+        metric.published_at = data.get("published_at")
+        metric.notes = data.get("notes")
+        metric.measured_at = now
+
+    if metric.ctr is None and metric.impressions > 0:
+        metric.ctr = round((max(0, metric.clicks) / metric.impressions) * 100.0, 2)
+
+    db.commit()
+    db.refresh(metric)
+
+    log_audit_event(
+        db,
+        "video_performance_saved",
+        f"Saved manual/local performance metrics for: {video.title}",
+        video_id=video.id,
+        metadata={
+            "performance_metric_id": metric.id,
+            "platform": metric.platform,
+            "views": metric.views,
+            "impressions": metric.impressions,
+            "clicks": metric.clicks,
+            "ctr": metric.ctr,
+            "is_manual_local": True,
+        },
+    )
+    return VideoPerformanceRead.model_validate(performance_payload_for_video(video.id, metric))
+
+
+@router.get("/{video_id}/performance", response_model=VideoPerformanceRead)
+def get_video_performance(video_id: int, db: Session = Depends(get_db)) -> VideoPerformanceRead:
+    get_video_or_404(db, video_id)
+    metric = latest_performance_for_video(db, video_id)
+    return VideoPerformanceRead.model_validate(performance_payload_for_video(video_id, metric))
 
 
 @router.get("/{video_id}/preview/status", response_model=PreviewStatus)

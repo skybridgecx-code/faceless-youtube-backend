@@ -104,7 +104,7 @@ def get_agent_opportunities(agent_id: int, db: Session = Depends(get_db)) -> lis
             .order_by(VideoOpportunity.total_score.desc(), VideoOpportunity.created_at.desc())
         )
     )
-    return [serialize_opportunity(row) for row in rows]
+    return [serialize_opportunity(db, row) for row in rows]
 
 
 @router.get("/{agent_id}/videos", response_model=list[VideoRead])

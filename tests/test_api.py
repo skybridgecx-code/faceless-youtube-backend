@@ -22,7 +22,7 @@ import app.services.content_engine as content_engine  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AuditEvent, ContentAgent, ContentType, Video, VideoOpportunity, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
+from app.models import AuditEvent, ContentAgent, ContentType, Video, VideoOpportunity, VideoPerformanceMetric, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
 from app.security import InMemoryRateLimiter  # noqa: E402
@@ -984,6 +984,110 @@ def test_audit_trail_and_operator_export_are_safe() -> None:
     assert "youtube_payload_readiness" in export_payload
 
 
+def test_video_performance_write_requires_internal_api_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    channel_id = client.post(
+        "/channels",
+        json={"name": "Performance Key Channel"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()["id"]
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Performance Key Video"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()
+
+    denied = client.post(f"/videos/{video['id']}/performance", json={"views": 10})
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        f"/videos/{video['id']}/performance",
+        json={"impressions": 100, "views": 20, "clicks": 5},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_video_performance_save_and_get_computes_ctr_without_workflow_side_effects() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Performance Save Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Performance Save Video"}).json()
+    before_video = client.get(f"/videos/{video['id']}").json()
+
+    save = client.post(
+        f"/videos/{video['id']}/performance",
+        json={
+            "platform": "youtube",
+            "impressions": 1000,
+            "views": 220,
+            "clicks": 95,
+            "average_view_duration_seconds": 78.2,
+            "average_percentage_viewed": 49.0,
+            "watch_time_minutes": 310.5,
+            "likes": 31,
+            "comments": 12,
+            "subscribers_gained": 8,
+            "published_url": "https://youtube.com/watch?v=localdemo",
+            "notes": "manual entry",
+        },
+    )
+    assert save.status_code == 200
+    payload = save.json()
+    assert payload["video_id"] == video["id"]
+    assert payload["ctr"] == 9.5
+    assert payload["has_data"] is True
+    assert payload["performance_band"] in {"average", "strong"}
+    assert payload["is_manual_local"] is True
+
+    fetched = client.get(f"/videos/{video['id']}/performance")
+    assert fetched.status_code == 200
+    body = fetched.json()
+    assert body["ctr"] == 9.5
+    assert body["ctr_band"] == "strong"
+    assert body["retention_band"] in {"average", "strong"}
+    assert body["next_recommendation"]
+
+    after_video = client.get(f"/videos/{video['id']}").json()
+    assert after_video["approved"] == before_video["approved"]
+    assert after_video["preview_reviewed"] == before_video["preview_reviewed"]
+
+
+def test_video_performance_get_without_data_returns_needs_data() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Performance Empty Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Performance Empty Video"}).json()
+
+    response = client.get(f"/videos/{video['id']}/performance")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["video_id"] == video["id"]
+    assert body["has_data"] is False
+    assert body["performance_band"] == "needs_data"
+    assert body["manual_local_note"]
+
+
+def test_performance_summary_returns_manual_local_rows_and_respects_limit() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Performance Summary Channel"}).json()["id"]
+
+    for index in range(3):
+        video = client.post("/videos", json={"channel_id": channel_id, "title": f"Performance Summary Video {index}"}).json()
+        assert client.post(
+            f"/videos/{video['id']}/performance",
+            json={"impressions": 100 + index * 10, "views": 20 + index * 5, "clicks": 4 + index},
+        ).status_code == 200
+
+    response = client.get("/performance/summary?limit=2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["manual_local_note"]
+    assert payload["total_videos_with_manual_metrics"] >= 3
+    assert len(payload["top_videos"]) <= 2
+    assert len(payload["bottom_videos"]) <= 2
+
+
 def test_operator_export_generates_local_file_with_blockers_and_visual_statuses() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Operator Export Local Channel"}).json()["id"]
@@ -1083,6 +1187,28 @@ def test_operator_export_generates_local_file_with_blockers_and_visual_statuses(
     assert after_video["preview_reviewed"] == before_video["preview_reviewed"]
     assert after_video["approved"] == before_video["approved"]
     assert pending_asset["id"] in {row["asset_id"] for row in visual_rows}
+
+
+def test_operator_export_includes_manual_local_performance_when_present() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Export Performance Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Export Performance Video"}).json()
+    video_id = video["id"]
+
+    assert client.post(
+        f"/videos/{video_id}/performance",
+        json={"impressions": 500, "views": 120, "clicks": 21, "average_percentage_viewed": 33.0, "watch_time_minutes": 190.0},
+    ).status_code == 200
+
+    export_response = client.get(f"/videos/{video_id}/operator-export")
+    assert export_response.status_code == 200
+    payload = export_response.json()
+    assert "performance" in payload
+    assert payload["performance"]["video_id"] == video_id
+    assert payload["performance"]["has_data"] is True
+    assert payload["performance"]["ctr"] == 4.2
+    assert payload["performance"]["performance_band"] in {"weak", "average", "strong"}
+    assert "manual/local" in payload["performance"]["manual_local_note"].lower()
 
 
 def test_operator_export_includes_generated_thumbnail_path_and_review_status() -> None:
@@ -1187,6 +1313,104 @@ def test_opportunity_routes_and_promotion_workflow() -> None:
     assert "opportunity_scored" in event_types
     assert "opportunity_review_updated" in event_types
     assert "opportunity_promoted" in event_types
+
+
+def test_opportunity_scoring_analytics_feedback_neutral_without_metrics() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Opportunity Neutral Analytics Channel"}).json()["id"]
+    response = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "AI phone automation for local service follow-up",
+            "niche_lane": "Local Automation Pillar",
+            "audience": "service operators",
+            "monetization_path": "consulting",
+        },
+    )
+    assert response.status_code == 200
+    score = response.json()["score"]
+    assert score["analytics_signal"] == "neutral"
+    assert score["analytics_confidence_adjustment"] == 0
+    assert score["analytics_sample_size"] == 0
+    assert score["analytics_adjusted_total_score"] == score["base_total_score"]
+
+
+def test_opportunity_scoring_analytics_feedback_positive_for_strong_local_metrics() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Opportunity Positive Analytics Channel"}).json()["id"]
+    pillar = "Local Automation Pillar"
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Strong Performance Video", "pillar": pillar},
+    ).json()
+    assert client.post(
+        f"/videos/{video['id']}/performance",
+        json={
+            "impressions": 1200,
+            "views": 420,
+            "clicks": 96,
+            "average_percentage_viewed": 51.0,
+            "average_view_duration_seconds": 82.0,
+            "watch_time_minutes": 420.0,
+        },
+    ).status_code == 200
+
+    response = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Local automation scripts for dispatch operators",
+            "niche_lane": pillar,
+            "audience": "dispatch owners",
+            "monetization_path": "service + audit",
+        },
+    )
+    assert response.status_code == 200
+    score = response.json()["score"]
+    assert score["analytics_signal"] == "positive"
+    assert 1 <= score["analytics_confidence_adjustment"] <= 3
+    assert score["analytics_adjusted_total_score"] >= score["base_total_score"]
+    assert score["analytics_sample_size"] >= 1
+    assert "will perform" not in (score["analytics_reason"] or "").lower()
+
+
+def test_opportunity_scoring_analytics_feedback_negative_for_weak_local_metrics_and_bounded() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Opportunity Negative Analytics Channel"}).json()["id"]
+    pillar = "Weak Analytics Pillar"
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Weak Performance Video", "pillar": pillar},
+    ).json()
+    assert client.post(
+        f"/videos/{video['id']}/performance",
+        json={
+            "impressions": 900,
+            "views": 55,
+            "clicks": 5,
+            "average_percentage_viewed": 12.0,
+            "average_view_duration_seconds": 15.0,
+            "watch_time_minutes": 35.0,
+        },
+    ).status_code == 200
+
+    response = client.post(
+        "/opportunities",
+        json={
+            "channel_id": channel_id,
+            "topic": "Weak pipeline angle to test",
+            "niche_lane": pillar,
+            "audience": "operators",
+            "monetization_path": "affiliate",
+        },
+    )
+    assert response.status_code == 200
+    score = response.json()["score"]
+    assert score["analytics_signal"] == "negative"
+    assert -3 <= score["analytics_confidence_adjustment"] <= -1
+    assert score["analytics_adjusted_total_score"] <= score["base_total_score"]
+    assert "guarantee" not in (score["analytics_reason"] or "").lower()
 
 
 def test_daily_seed_creates_opportunities_and_scores() -> None:

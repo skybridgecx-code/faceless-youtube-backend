@@ -119,6 +119,10 @@ class Video(Base):
     channel: Mapped[Channel] = relationship(back_populates="videos")
     assets: Mapped[list["ContentAsset"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     reviews: Mapped[list["Review"]] = relationship(back_populates="video", cascade="all, delete-orphan")
+    performance_metrics: Mapped[list["VideoPerformanceMetric"]] = relationship(
+        back_populates="video",
+        cascade="all, delete-orphan",
+    )
     publish_records: Mapped[list["PublishRecord"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     visual_plans: Mapped[list["VisualAssetPlan"]] = relationship(back_populates="video", cascade="all, delete-orphan")
@@ -148,6 +152,32 @@ class Review(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     video: Mapped[Video] = relationship(back_populates="reviews")
+
+
+class VideoPerformanceMetric(Base):
+    __tablename__ = "video_performance_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"), index=True)
+    platform: Mapped[str] = mapped_column(String(60), default="youtube", index=True)
+    published_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    ctr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    average_view_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    average_percentage_viewed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    watch_time_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    comments: Mapped[int] = mapped_column(Integer, default=0)
+    subscribers_gained: Mapped[int] = mapped_column(Integer, default=0)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    measured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    video: Mapped[Video] = relationship(back_populates="performance_metrics")
 
 
 class PublishRecord(Base):

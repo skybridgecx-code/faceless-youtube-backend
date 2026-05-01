@@ -139,7 +139,7 @@ def get_command_center_today(db: Session = Depends(get_db)) -> CommandCenterToda
         elif brief.status == ProductionBriefStatus.approved.value:
             approved_briefs_ready_to_promote.append(_brief_task(brief, agent_name))
 
-    best_opportunity = serialize_opportunity(best_opportunity_row) if best_opportunity_row else None
+    best_opportunity = serialize_opportunity(db, best_opportunity_row) if best_opportunity_row else None
     executive_recommendation = (
         serialize_recommendation(latest_recommendation_row, db) if latest_recommendation_row else None
     )

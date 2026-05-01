@@ -21,6 +21,7 @@ from app.routers import (
     command_center,
     executive_producer,
     opportunities,
+    performance,
     pipeline,
     production_briefs,
     publish,
@@ -104,6 +105,7 @@ app.include_router(channels.router)
 app.include_router(videos.router)
 app.include_router(publish.router)
 app.include_router(opportunities.router)
+app.include_router(performance.router)
 app.include_router(executive_producer.router)
 app.include_router(agents.router)
 app.include_router(command_center.router)
