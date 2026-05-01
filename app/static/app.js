@@ -2826,19 +2826,67 @@ const app = {
       assetsContainer.innerHTML = '<div class="empty-state">No registered visual assets yet.</div>';
       return;
     }
-    assetsContainer.innerHTML = assets.map(asset => `
-      <article class="video-card" style="padding:0.7rem;">
-        <div class="video-header">
-          <div class="video-title">${this.escapeHtml(`Asset #${asset.id} • ${asset.asset_type}`)}</div>
-          <div class="video-status ${asset.file_exists ? 'approved' : 'blocked'}">${asset.file_exists ? 'registered' : 'missing'}</div>
-        </div>
-        <div class="meta-row"><span class="meta-label">Path</span><span class="meta-value">${this.escapeHtml(asset.file_path || '-')}</span></div>
-        <div class="meta-row"><span class="meta-label">MIME</span><span class="meta-value">${this.escapeHtml(asset.mime_type || '-')}</span></div>
-        <div class="meta-row"><span class="meta-label">Size</span><span class="meta-value">${this.escapeHtml(asset.width ? `${asset.width}x${asset.height || '?'}` : '-')}</span></div>
-        <div class="meta-row"><span class="meta-label">Duration</span><span class="meta-value">${this.escapeHtml(asset.duration_seconds ? `${asset.duration_seconds}s` : '-')}</span></div>
-        <div class="meta-row"><span class="meta-label">Notes</span><span class="meta-value">${this.escapeHtml(asset.notes || '-')}</span></div>
-      </article>
-    `).join('');
+    assetsContainer.innerHTML = assets.map(asset => {
+      const reviewStatus = asset.review_status || 'pending';
+      const statusClass = reviewStatus === 'approved' ? 'approved' : (reviewStatus === 'rejected' ? 'blocked' : 'warning');
+      return `
+        <article class="video-card" style="padding:0.7rem;">
+          <div class="video-header">
+            <div class="video-title">${this.escapeHtml(`Asset #${asset.id} • ${asset.asset_type}`)}</div>
+            <div class="video-status ${statusClass}">${this.escapeHtml(reviewStatus)}</div>
+          </div>
+          <div class="meta-row"><span class="meta-label">Registered</span><span class="meta-value">${asset.file_exists ? 'yes' : 'missing'}</span></div>
+          <div class="meta-row"><span class="meta-label">Path</span><span class="meta-value">${this.escapeHtml(asset.file_path || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">MIME</span><span class="meta-value">${this.escapeHtml(asset.mime_type || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Size</span><span class="meta-value">${this.escapeHtml(asset.width ? `${asset.width}x${asset.height || '?'}` : '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Duration</span><span class="meta-value">${this.escapeHtml(asset.duration_seconds ? `${asset.duration_seconds}s` : '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Notes</span><span class="meta-value">${this.escapeHtml(asset.notes || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Review Notes</span><span class="meta-value">${this.escapeHtml(asset.review_notes || '-')}</span></div>
+          ${reviewStatus !== 'approved' ? '<div class="flow-item pending" style="margin-top:0.55rem;">• Asset needs manual approval before final preview confidence.</div>' : ''}
+          <div class="agent-edit-grid" style="margin-top:0.55rem;">
+            <label class="agent-field"><span>Review / Rejection Notes</span><input id="visualAssetReviewNotes-${Number(asset.id)}" type="text" value="${this.escapeHtml(asset.review_notes || '')}" placeholder="Why approved/rejected?" /></label>
+          </div>
+          <div class="row-actions" style="margin-top:0.5rem;">
+            <button class="btn success" onclick="app.approveVisualGeneratedAsset(${Number(asset.id)})">Approve Asset</button>
+            <button class="btn danger" onclick="app.rejectVisualGeneratedAsset(${Number(asset.id)})">Reject Asset</button>
+          </div>
+        </article>
+      `;
+    }).join('');
+  },
+
+  async approveVisualGeneratedAsset(assetId) {
+    try {
+      const res = await fetch(`/visual-generation/assets/${assetId}/approve`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Approve asset failed');
+      this.log(`Approved visual asset #${assetId}.`, 'success');
+      await this.loadVisualGenerationData();
+      await this.loadPreviewStatus();
+    } catch (err) {
+      this.log(`Approve visual asset failed: ${err.message}`, 'error');
+    }
+  },
+
+  async rejectVisualGeneratedAsset(assetId) {
+    try {
+      const notes = document.getElementById(`visualAssetReviewNotes-${assetId}`)?.value || '';
+      const res = await fetch(`/visual-generation/assets/${assetId}/reject`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ review_notes: notes })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Reject asset failed');
+      this.log(`Rejected visual asset #${assetId}.`, 'success');
+      await this.loadVisualGenerationData();
+      await this.loadPreviewStatus();
+    } catch (err) {
+      this.log(`Reject visual asset failed: ${err.message}`, 'error');
+    }
   },
 
   async refreshVisualPlanSection() {
