@@ -125,6 +125,63 @@ class VideoReadiness(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ShortsBatchRequest(BaseModel):
+    count: int = Field(default=5, ge=1, le=50)
+    pillar: str | None = Field(default=None, max_length=120)
+    topic_seed: str | None = Field(default=None, max_length=200)
+    target_viewer: str | None = Field(default=None, max_length=240)
+    auto_generate_assets: bool = True
+
+    @field_validator("pillar", "topic_seed", "target_viewer", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class ShortsBatchVideoSummary(BaseModel):
+    id: int
+    title: str
+    content_type: ContentType
+    pillar: str
+    target_viewer: str
+    workflow_status: VideoStatus
+    approved: bool
+    preview_reviewed: bool
+    generated_assets_count: int = 0
+    next_required_action: str
+
+
+class ShortsBatchResponse(BaseModel):
+    batch_id: str
+    requested_count: int
+    created_count: int
+    videos: list[ShortsBatchVideoSummary]
+    warnings: list[str] = Field(default_factory=list)
+    next_required_action: str
+
+
+class ShortsBatchQueueItem(BaseModel):
+    video_id: int
+    title: str
+    content_type: ContentType
+    pillar: str
+    target_viewer: str
+    pain_point: str
+    workflow_status: VideoStatus
+    approved: bool
+    assets_generated: bool
+    compliance_status: Literal["pass", "warning", "blocked", "untested"] = "untested"
+    preview_exists: bool
+    preview_reviewed: bool
+    created_at: datetime
+    next_required_action: str
+
+
 class BulkIdeaRequest(BaseModel):
     channel_id: int
     count: int = Field(default=15, ge=1, le=50)

@@ -33,6 +33,8 @@ const app = {
     selectedResearchRunDetail: null,
     commandCenterToday: null,
     pipelineDaily: null,
+    shortsBatchSummary: null,
+    shortsBatchQueue: [],
     stats: {
       ideas: 0,
       generated: 0,
@@ -61,6 +63,7 @@ const app = {
     await this.loadResearchData();
     await this.loadCommandCenter();
     await this.loadPipelineDaily();
+    await this.loadShortsBatchQueue();
   },
 
   setupNavigation() {
@@ -143,6 +146,7 @@ const app = {
       this.loadPipelineDaily();
       this.loadVisualPlans();
       this.loadVisualGenerationData();
+      this.loadShortsBatchQueue();
     }
     if (page === 'assets') {
       this.loadVisualPlans();
@@ -401,6 +405,126 @@ const app = {
       this.renderPipelineDaily(null);
       return null;
     }
+  },
+
+  async createShortsBatch() {
+    const count = Number(document.getElementById('shortsBatchCount')?.value || 5);
+    const pillar = document.getElementById('shortsBatchPillar')?.value?.trim() || null;
+    const topicSeed = document.getElementById('shortsBatchTopicSeed')?.value?.trim() || null;
+    const targetViewer = document.getElementById('shortsBatchTargetViewer')?.value?.trim() || null;
+    const autoGenerate = document.getElementById('shortsBatchAutoGenerate')?.checked !== false;
+
+    const payload = {
+      count: Number.isFinite(count) ? count : 5,
+      pillar,
+      topic_seed: topicSeed,
+      target_viewer: targetViewer,
+      auto_generate_assets: autoGenerate
+    };
+    const button = document.getElementById('btnCreateShortsBatch');
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+    }
+    try {
+      const res = await fetch('/shorts/batch', {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to create shorts batch');
+      }
+      this.state.shortsBatchSummary = data;
+      this.renderShortsBatchSummary(data);
+      this.log(`Created shorts batch ${data.batch_id} (${data.created_count} videos).`, 'success');
+      await this.loadVideos();
+      await this.loadShortsBatchQueue();
+      await this.loadPipelineDaily();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Shorts batch creation failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
+    }
+  },
+
+  async loadShortsBatchQueue() {
+    try {
+      const res = await fetch('/shorts/batch-queue?limit=100');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load shorts batch queue');
+      }
+      this.state.shortsBatchQueue = Array.isArray(data) ? data : [];
+      this.renderShortsBatchQueue();
+      this.renderShortsBatchSummary(this.state.shortsBatchSummary);
+      return data;
+    } catch (err) {
+      this.log(`Shorts batch queue failed: ${err.message}`, 'error');
+      this.state.shortsBatchQueue = [];
+      this.renderShortsBatchQueue();
+      return [];
+    }
+  },
+
+  renderShortsBatchSummary(summary) {
+    const panel = document.getElementById('shortsBatchSummary');
+    if (!panel) return;
+    if (!summary) {
+      panel.innerHTML = '<div class="empty-state">No shorts batch created yet.</div>';
+      return;
+    }
+    const warnings = Array.isArray(summary.warnings) ? summary.warnings : [];
+    panel.innerHTML = `
+      <div class="meta-row"><span class="meta-label">Batch ID</span><span class="meta-value">${this.escapeHtml(summary.batch_id || '-')}</span></div>
+      <div class="meta-row"><span class="meta-label">Requested</span><span class="meta-value">${this.escapeHtml(String(summary.requested_count || 0))}</span></div>
+      <div class="meta-row"><span class="meta-label">Created</span><span class="meta-value">${this.escapeHtml(String(summary.created_count || 0))}</span></div>
+      <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(summary.next_required_action || '-')}</span></div>
+      <div class="meta-row"><span class="meta-label">Warnings</span><span class="meta-value">${this.escapeHtml(warnings.length ? warnings.join(' | ') : 'None')}</span></div>
+    `;
+  },
+
+  renderShortsBatchQueue() {
+    const container = document.getElementById('shortsBatchQueueList');
+    if (!container) return;
+    const rows = Array.isArray(this.state.shortsBatchQueue) ? this.state.shortsBatchQueue : [];
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="empty-state">No shorts awaiting review.</div>';
+      return;
+    }
+    container.innerHTML = rows.map(item => `
+      <article class="video-card" style="padding:0.75rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
+          <div class="video-status ${this.escapeHtml(item.workflow_status || 'idea')}">${this.escapeHtml(item.workflow_status || 'idea')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Type</span><span class="meta-value">${this.escapeHtml(item.content_type || 'short')}</span></div>
+        <div class="meta-row"><span class="meta-label">Pillar</span><span class="meta-value">${this.escapeHtml(item.pillar || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Target Viewer</span><span class="meta-value">${this.escapeHtml(item.target_viewer || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Compliance</span><span class="meta-value">${this.escapeHtml(item.compliance_status || 'untested')}</span></div>
+        <div class="meta-row"><span class="meta-label">Approved</span><span class="meta-value">${item.approved ? 'yes' : 'no'}</span></div>
+        <div class="meta-row"><span class="meta-label">Packaged</span><span class="meta-value">${item.workflow_status === 'packaged' || item.workflow_status === 'publish_ready' || item.workflow_status === 'published' ? 'yes' : 'no'}</span></div>
+        <div class="meta-row"><span class="meta-label">Preview Reviewed</span><span class="meta-value">${item.preview_reviewed ? 'yes' : 'no'}</span></div>
+        <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(item.next_required_action || '-')}</span></div>
+        <div class="row-actions" style="margin-top:0.55rem;">
+          <button class="btn" onclick="app.openShortsQueueVideo(${Number(item.video_id)})">Open Video</button>
+        </div>
+      </article>
+    `).join('');
+  },
+
+  async openShortsQueueVideo(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) {
+      this.log('Invalid shorts queue video id.', 'error');
+      return;
+    }
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('assets');
   },
 
   executePipelineAction(action) {

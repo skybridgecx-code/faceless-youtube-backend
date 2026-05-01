@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from app.config import get_settings
-from app.models import Video
+from app.models import ContentType, Video
 from app.services.compliance import build_review_checklist, scan_text
 
 
@@ -241,8 +241,16 @@ def _build_idea_prompt(count: int) -> str:
 
 
 def _build_asset_prompt(video: Video, asset_type: str, fallback_text: str) -> str:
+    content_type_value = getattr(getattr(video, "content_type", None), "value", "long")
+    short_script_instruction = ""
+    if asset_type == "script" and content_type_value == "short":
+        short_script_instruction = (
+            "\nThis is a SHORT-FORM script: 45-60 seconds, strong first 3-second hook, "
+            "single clear point, vertical-video direction, and CTA or loop ending."
+        )
     return (
         f"Generate only the {asset_type} asset for this video.\n"
+        f"Content type: {content_type_value}\n"
         f"Title: {video.title}\n"
         f"Pillar: {video.pillar}\n"
         f"Target viewer: {video.target_viewer}\n"
@@ -251,6 +259,7 @@ def _build_asset_prompt(video: Video, asset_type: str, fallback_text: str) -> st
         f"Thumbnail text: {video.thumbnail_text}\n"
         "Keep output practical, educational, and safe.\n"
         "Do not include HTML.\n"
+        f"{short_script_instruction}\n"
         "Use this deterministic template as structure/style reference, but produce a fresh variant:\n"
         f"{fallback_text}"
     )
@@ -446,7 +455,31 @@ This video is an educational/demo workflow. If you want to see more AI systems f
 """.strip()
 
 
+def _template_build_short_script(video: Video) -> str:
+    business = _infer_business(video.title)
+    return f"""# Short-Form Script (45-60s): {video.title}
+
+## 0:00-0:03 Hook
+If you run a {business}, one missed call can quietly become a lost job.
+
+## 0:03-0:25 One Clear Point
+Most losses are not from bad service. They happen when nobody answers, details are missed, and follow-up starts too late.
+
+## 0:25-0:45 Vertical Demo Direction
+Show a vertical split: missed call log on top, then a clean lead card with name, issue, urgency, and next step.
+
+## 0:45-0:58 Practical Wrap
+This is not magic. It is a safer workflow: answer fast, capture details, tag urgency, and follow up on time.
+
+## 0:58-1:00 CTA / Loop
+Want more local AI workflow breakdowns? Follow for the next short.
+""".strip()
+
+
 def build_script(video: Video) -> str:
+    content_type = getattr(video, "content_type", ContentType.long)
+    if content_type == ContentType.short:
+        return _render_asset_with_fallback(video, "script", _template_build_short_script)
     return _render_asset_with_fallback(video, "script", _template_build_script)
 
 

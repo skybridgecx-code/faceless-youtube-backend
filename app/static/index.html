@@ -218,6 +218,41 @@
 
             <div class="panel">
               <div class="panel-header">
+                <h2>Shorts Batch Factory</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadShortsBatchQueue()">Refresh Queue</button>
+                  <button class="btn success" id="btnCreateShortsBatch" onclick="app.createShortsBatch()">Create Shorts Batch</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note">Shorts-first local production. No auto-approval, no auto-packaging, no auto-publish.</div>
+                <div class="agent-edit-grid">
+                  <label class="agent-field"><span>Count</span><input type="number" id="shortsBatchCount" min="1" max="10" value="5" /></label>
+                  <label class="agent-field"><span>Pillar</span><input type="text" id="shortsBatchPillar" placeholder="AI call handling" /></label>
+                  <label class="agent-field"><span>Topic Seed</span><input type="text" id="shortsBatchTopicSeed" placeholder="Missed calls workflow" /></label>
+                  <label class="agent-field"><span>Target Viewer</span><input type="text" id="shortsBatchTargetViewer" placeholder="Local service owner" /></label>
+                </div>
+                <label class="check-item" style="margin-top:0.55rem;">
+                  <input type="checkbox" id="shortsBatchAutoGenerate" checked />
+                  <span>Auto-generate initial assets</span>
+                </label>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Batch Summary</div>
+                  <div id="shortsBatchSummary">
+                    <div class="empty-state">No shorts batch created yet.</div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Shorts Awaiting Review</div>
+                  <div id="shortsBatchQueueList" class="video-list">
+                    <div class="empty-state">No shorts awaiting review.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
                 <h2>Recent Activity</h2>
                 <div class="header-actions">
                   <button class="btn" onclick="app.setActivePage('audit')">Open Audit</button>

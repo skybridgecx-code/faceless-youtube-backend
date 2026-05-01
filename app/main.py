@@ -25,6 +25,7 @@ from app.routers import (
     production_briefs,
     publish,
     research,
+    shorts,
     videos,
     visual_generation,
     visual_assets,
@@ -111,6 +112,7 @@ app.include_router(pipeline.router)
 app.include_router(research.router)
 app.include_router(visual_assets.router)
 app.include_router(visual_generation.router)
+app.include_router(shorts.router)
 
 
 def has_preview_file(video: Video) -> bool:

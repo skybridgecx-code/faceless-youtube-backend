@@ -285,6 +285,42 @@ def test_content_engine_without_openai_key_preserves_deterministic_templates(mon
     assert "This is an educational/demo video." in description
 
 
+def test_content_engine_short_script_uses_shorts_structure_without_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    content_engine.clear_asset_cache()
+
+    short_video = Video(
+        id=12,
+        channel_id=1,
+        title="Short Script Demo",
+        content_type=ContentType.short,
+        pillar="AI call handling",
+        target_viewer="Owner",
+        pain_point="Missed calls",
+        demo_idea="Workflow demo",
+        thumbnail_text="SHORT DEMO",
+    )
+    long_video = Video(
+        id=13,
+        channel_id=1,
+        title="Long Script Demo",
+        content_type=ContentType.long,
+        pillar="AI call handling",
+        target_viewer="Owner",
+        pain_point="Missed calls",
+        demo_idea="Workflow demo",
+        thumbnail_text="LONG DEMO",
+    )
+
+    short_script = content_engine.build_script(short_video)
+    long_script = content_engine.build_script(long_video)
+    assert "Short-Form Script (45-60s)" in short_script
+    assert "0:00-0:03 Hook" in short_script
+    assert "Vertical Demo Direction" in short_script
+    assert "8:45 CTA" in long_script
+
+
 def test_content_engine_llm_success_changes_core_assets(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = content_engine.get_settings()
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
@@ -352,6 +388,32 @@ def test_content_engine_unsafe_llm_output_falls_back(monkeypatch: pytest.MonkeyP
 
     script = content_engine.build_script(video)
     assert "## 0:00 Hook" in script
+    assert "Guaranteed results" not in script
+
+
+def test_content_engine_short_script_unsafe_llm_output_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    def unsafe_llm(_prompt: str) -> str:  # noqa: ANN001
+        return "Guaranteed results. You will make $10k fast."
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", unsafe_llm)
+    video = Video(
+        id=42,
+        channel_id=1,
+        title="Unsafe Short Script",
+        content_type=ContentType.short,
+        pillar="AI call handling",
+        target_viewer="Owner",
+        pain_point="Missed calls",
+        demo_idea="Workflow demo",
+        thumbnail_text="UNSAFE SHORT",
+    )
+
+    script = content_engine.build_script(video)
+    assert "Short-Form Script (45-60s)" in script
     assert "Guaranteed results" not in script
 
 
@@ -451,6 +513,124 @@ def test_clear_asset_cache_clears_only_requested_video(monkeypatch: pytest.Monke
     assert calls["count"] == 3
     assert third_a != first_a
     assert third_b == first_b
+
+
+def test_shorts_batch_creates_requested_count_capped_and_generates_assets(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    content_engine.clear_asset_cache()
+
+    def should_not_call(_prompt: str) -> str:  # noqa: ANN001
+        raise AssertionError("LLM request should not run when OPENAI_API_KEY is missing.")
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", should_not_call)
+    channel = client.post("/channels", json={"name": "Shorts Batch Channel"})
+    assert channel.status_code == 200
+
+    response = client.post(
+        "/shorts/batch",
+        json={
+            "count": 12,
+            "pillar": "Shorts QA",
+            "topic_seed": "Missed call fix",
+            "target_viewer": "Local owner",
+            "auto_generate_assets": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requested_count"] == 12
+    assert payload["created_count"] == 10
+    assert len(payload["videos"]) == 10
+    assert any("Created 10 shorts candidates" in warning for warning in payload["warnings"])
+    assert payload["next_required_action"]
+
+    for row in payload["videos"]:
+        assert row["content_type"] == "short"
+        assert row["approved"] is False
+        assert row["preview_reviewed"] is False
+        assert row["generated_assets_count"] > 0
+        assert row["next_required_action"]
+        video = client.get(f"/videos/{row['id']}").json()
+        assert video["approved"] is False
+        assert video["preview_reviewed"] is False
+        assets = client.get(f"/videos/{row['id']}/assets").json()
+        assert len(assets) > 0
+
+
+def test_shorts_batch_respects_auto_generate_assets_false() -> None:
+    client = TestClient(app)
+    channel = client.post("/channels", json={"name": "Shorts Batch No Auto Assets"})
+    assert channel.status_code == 200
+
+    response = client.post(
+        "/shorts/batch",
+        json={
+            "count": 3,
+            "pillar": "No Auto Assets",
+            "auto_generate_assets": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 3
+    assert "Generate assets" in payload["next_required_action"]
+    for row in payload["videos"]:
+        assert row["generated_assets_count"] == 0
+        assert row["workflow_status"] == "idea"
+        assets = client.get(f"/videos/{row['id']}/assets").json()
+        assert assets == []
+        video = client.get(f"/videos/{row['id']}").json()
+        assert video["approved"] is False
+        assert video["preview_reviewed"] is False
+
+
+def test_shorts_batch_queue_lists_shorts_only_and_filters() -> None:
+    client = TestClient(app)
+    channel = client.post("/channels", json={"name": "Shorts Queue Channel"})
+    assert channel.status_code == 200
+    channel_id = channel.json()["id"]
+
+    first = client.post(
+        "/shorts/batch",
+        json={"count": 2, "pillar": "Queue A", "auto_generate_assets": True},
+    )
+    second = client.post(
+        "/shorts/batch",
+        json={"count": 2, "pillar": "Queue B", "auto_generate_assets": False},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    long_video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Long Form Control", "content_type": "long"},
+    )
+    assert long_video.status_code == 200
+
+    queue = client.get("/shorts/batch-queue?limit=50")
+    assert queue.status_code == 200
+    rows = queue.json()
+    assert rows
+    assert all(row["content_type"] == "short" for row in rows)
+    assert all("next_required_action" in row and row["next_required_action"] for row in rows)
+
+    pillar_filtered = client.get("/shorts/batch-queue?pillar=Queue A&limit=50")
+    assert pillar_filtered.status_code == 200
+    filtered_rows = pillar_filtered.json()
+    assert filtered_rows
+    assert all(row["pillar"] == "Queue A" for row in filtered_rows)
+
+    status_filtered = client.get("/shorts/batch-queue?status=idea&limit=50")
+    assert status_filtered.status_code == 200
+    assert all(row["workflow_status"] == "idea" for row in status_filtered.json())
+
+
+def test_shorts_batch_queue_limit_max_enforced() -> None:
+    client = TestClient(app)
+    response = client.get("/shorts/batch-queue?limit=201")
+    assert response.status_code == 422
 
 
 def test_protected_write_rejects_without_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
