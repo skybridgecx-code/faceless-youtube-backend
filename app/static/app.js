@@ -64,25 +64,10 @@ const app = {
     this.setActivePage('dashboard');
     await this.checkHealth();
     await this.loadVideos();
-    await this.loadPipelineSummary();
-    await this.loadCalendar();
-    await this.loadGlobalAudit();
-    await this.loadOpportunities();
-    await this.loadAgents();
-    await this.loadChannelStudioData();
-    await this.loadBriefs();
-    await this.loadVisualPlans();
-    await this.loadVisualGenerationData();
-    await this.loadExecutiveProducerRecommendation();
-    await this.loadProducerHistory();
-    await this.loadResearchData();
-    await this.loadCommandCenter();
-    await this.loadPipelineDaily();
-    await this.loadShortsBatchQueue();
-    await this.loadPerformanceSummary();
-    await this.loadPublishingPayloadQueue();
     await this.loadAutopilotRuns();
     await this.loadAutopilotFinalApprovalQueue();
+    await this.loadPublishingPayloadQueue();
+    await this.loadGlobalAudit();
   },
 
   setupNavigation() {
@@ -123,6 +108,10 @@ const app = {
 
     const titleMap = {
       dashboard: 'Dashboard',
+      'review-prep': 'Review Prep',
+      'final-approval': 'Final Approval',
+      'manual-upload': 'Manual Upload',
+      advanced: 'Advanced / Debug',
       opportunities: 'Opportunities',
       agents: 'Agents',
       producer: 'Producer',
@@ -162,14 +151,18 @@ const app = {
       this.loadVisualGenerationData();
     }
     if (page === 'dashboard') {
-      this.loadCommandCenter();
-      this.loadPipelineDaily();
-      this.loadVisualPlans();
-      this.loadVisualGenerationData();
-      this.loadShortsBatchQueue();
-      this.loadPerformanceSummary();
       this.loadAutopilotRuns();
       this.loadAutopilotFinalApprovalQueue();
+    }
+    if (page === 'review-prep') {
+      this.loadAutopilotRuns();
+      this.loadAutopilotFinalApprovalQueue();
+    }
+    if (page === 'final-approval') {
+      this.loadAutopilotFinalApprovalQueue();
+    }
+    if (page === 'manual-upload') {
+      this.loadPublishingPayloadQueue();
     }
     if (page === 'assets') {
       this.loadVisualPlans();

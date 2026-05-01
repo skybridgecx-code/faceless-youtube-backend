@@ -19,17 +19,10 @@
 
       <nav class="sidebar-nav" id="sidebarNav">
         <button class="nav-item active" data-page="dashboard">Dashboard</button>
-        <button class="nav-item" data-page="opportunities">Opportunities</button>
-        <button class="nav-item" data-page="agents">Agents</button>
-        <button class="nav-item" data-page="producer">Producer</button>
-        <button class="nav-item" data-page="research">Research</button>
-        <button class="nav-item" data-page="briefs">Briefs</button>
-        <button class="nav-item" data-page="pipeline">Pipeline</button>
-        <button class="nav-item" data-page="content">Content</button>
-        <button class="nav-item" data-page="assets">Assets</button>
-        <button class="nav-item" data-page="publishing">Publishing</button>
-        <button class="nav-item" data-page="compliance">Compliance</button>
-        <button class="nav-item" data-page="audit">Audit</button>
+        <button class="nav-item" data-page="review-prep">Review Prep</button>
+        <button class="nav-item" data-page="final-approval">Final Approval</button>
+        <button class="nav-item" data-page="manual-upload">Manual Upload</button>
+        <button class="nav-item" data-page="advanced">Advanced / Debug</button>
       </nav>
 
       <div class="sidebar-foot">
@@ -51,85 +44,31 @@
 
       <main class="studio-content">
         <section class="page active" id="page-dashboard">
-          <div class="kpi-grid">
-            <div class="kpi-card">
-              <span class="kpi-title">Total Ideas</span>
-              <span class="kpi-value" id="kpiTotalIdeas">-</span>
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Daily Workflow</h2>
             </div>
-            <div class="kpi-card">
-              <span class="kpi-title">Generated Assets</span>
-              <span class="kpi-value" id="kpiGeneratedAssets">-</span>
-            </div>
-            <div class="kpi-card">
-              <span class="kpi-title">Approved Videos</span>
-              <span class="kpi-value" id="kpiApprovedVideos">-</span>
-            </div>
-            <div class="kpi-card">
-              <span class="kpi-title">Packages Created</span>
-              <span class="kpi-value" id="kpiPackagesCreated">-</span>
-            </div>
-          </div>
+            <div class="panel-body compact-body">
+              <div class="sim-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+                <div class="sim-card" onclick="app.setActivePage('review-prep')" style="cursor: pointer; padding: 1.5rem; border: 2px solid var(--primary); border-radius: 12px; background: rgba(100, 150, 255, 0.05); transition: all 0.2s;">
+                  <div style="font-size: 2rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem;">Step 1</div>
+                  <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Review Prep</div>
+                  <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 1rem;">Generate and review content packages with one-click prep</div>
+                  <button class="btn primary" style="width: 100%;">Go to Review Prep →</button>
+                </div>
 
-          <div class="panel-grid flow-grid">
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Daily Command Center</h2>
-                <div class="header-actions">
-                  <button class="btn success" onclick="app.generateDailyOpportunities()">Generate Today&apos;s Opportunities</button>
-                  <button class="btn" onclick="app.loadCommandCenter()">Refresh</button>
+                <div class="sim-card" onclick="app.setActivePage('final-approval')" style="cursor: pointer; padding: 1.5rem; border: 2px solid var(--primary); border-radius: 12px; background: rgba(100, 150, 255, 0.05); transition: all 0.2s;">
+                  <div style="font-size: 2rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem;">Step 2</div>
+                  <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Final Approval</div>
+                  <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 1rem;">Review and approve generated packages before upload</div>
+                  <button class="btn primary" style="width: 100%;">Go to Final Approval →</button>
                 </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="opportunity-note" id="dailySeedStatusMessage">Generate today&apos;s opportunities to seed the review queue.</div>
-                <div class="flow-card" id="nextBestActionCard">
-                  <div class="flow-card-title">Today&apos;s Best Move</div>
-                  <div class="flow-card-body" id="nextBestActionText">Loading next action...</div>
-                  <div class="meta-row"><span class="meta-label">Best Opportunity</span><span class="meta-value" id="ccBestOpportunity">-</span></div>
-                  <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="ccAssignedAgent">-</span></div>
-                  <div class="meta-row"><span class="meta-label">Executive Producer Reason</span><span class="meta-value pre-wrap" id="ccProducerReason">-</span></div>
-                  <button class="btn primary" id="nextBestActionButton" disabled>No Action</button>
-                </div>
-                <div class="flow-card">
-                  <div class="flow-card-title">Operator Checklist</div>
-                  <div class="flow-list" id="dailyChecklistList"></div>
-                </div>
-                <div class="flow-card">
-                  <div class="flow-card-title">Blockers</div>
-                  <div class="flow-card-body" id="blockersNextStep">Loading workflow guidance...</div>
-                  <div class="video-list" id="commandCenterBlockersList">
-                    <div class="empty-state">No blockers loaded.</div>
-                  </div>
-                </div>
-                <div class="flow-card">
-                  <div class="flow-card-title">Production Brief Queue</div>
-                  <div class="video-list" id="commandCenterBriefsReviewList">
-                    <div class="empty-state">No briefs pending review.</div>
-                  </div>
-                  <div class="video-list" id="commandCenterBriefsApprovedList" style="margin-top:0.65rem;">
-                    <div class="empty-state">No approved briefs ready to promote.</div>
-                  </div>
-                </div>
-                <div class="flow-card">
-                  <div class="flow-card-title">Production Pipeline Snapshot</div>
-                  <div class="flow-list" id="dashboardPipelineSummaryList">
-                    <div class="flow-item pending">Loading pipeline summary...</div>
-                  </div>
-                  <button class="btn primary" style="margin-top:0.65rem;" onclick="app.setActivePage('pipeline')">Continue Production Pipeline</button>
-                </div>
-              </div>
-            </div>
 
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Needs Review</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.setActivePage('compliance')">Open Compliance</button>
-                  <button class="btn" onclick="app.setActivePage('assets')">Open Assets</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div id="needsAttentionQueueList" class="video-list">
-                  <div class="empty-state">Loading queue...</div>
+                <div class="sim-card" onclick="app.setActivePage('manual-upload')" style="cursor: pointer; padding: 1.5rem; border: 2px solid var(--primary); border-radius: 12px; background: rgba(100, 150, 255, 0.05); transition: all 0.2s;">
+                  <div style="font-size: 2rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem;">Step 3</div>
+                  <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Manual Upload</div>
+                  <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 1rem;">Download approved packages for manual YouTube upload</div>
+                  <button class="btn primary" style="width: 100%;">Go to Manual Upload →</button>
                 </div>
               </div>
             </div>
@@ -138,183 +77,9 @@
           <div class="panel-grid dashboard-grid">
             <div class="panel">
               <div class="panel-header">
-                <h2>Supervisor Research</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.setActivePage('research')">Open Research</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="flow-card">
-                  <div class="flow-card-title">Latest Thesis</div>
-                  <div class="flow-card-body" id="dashboardResearchThesis">No research strategy yet.</div>
-                  <div class="meta-row"><span class="meta-label">Top Pattern</span><span class="meta-value" id="dashboardResearchPattern">-</span></div>
-                  <div class="meta-row"><span class="meta-label">Recommended Action</span><span class="meta-value" id="dashboardResearchAction">Run research or create opportunities from strategy.</span></div>
-                  <button class="btn primary" id="dashboardResearchActionBtn" onclick="app.setActivePage('research')">Go To Research</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Executive Producer</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.runExecutiveProducer()">Run Executive Producer</button>
-                  <button class="btn" onclick="app.setActivePage('producer')">Open Producer Page</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="flow-card">
-                  <div class="flow-card-title">Best Video To Make Today</div>
-                  <div class="flow-card-body" id="producerDashboardTopic">Run Executive Producer to generate a daily recommendation.</div>
-                  <div class="meta-row"><span class="meta-label">Confidence</span><span class="meta-value"><span class="video-status" id="producerDashboardConfidence">n/a</span></span></div>
-                  <div class="meta-row"><span class="meta-label">Assigned Agent</span><span class="meta-value" id="producerDashboardAgent">-</span></div>
-                  <div class="meta-row"><span class="meta-label">Monetization</span><span class="meta-value" id="producerDashboardMonetization">-</span></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Ready for Packaging / Payload</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.setActivePage('publishing')">Open Publishing</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="pipeline-counts" id="pipelineCounts"></div>
-                <h3 class="subheading">Ready for Packaging</h3>
-                <div id="commandCenterPackagingList" class="video-list">
-                  <div class="empty-state">No packaging queue loaded.</div>
-                </div>
-                <h3 class="subheading">Ready for Payload</h3>
-                <div id="commandCenterPayloadList" class="video-list">
-                  <div class="empty-state">No payload queue loaded.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Visual Asset Factory</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.refreshVisualPlanSection()">Refresh</button>
-                  <button class="btn" onclick="app.setActivePage('assets')">Open Assets</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="flow-card">
-                  <div class="flow-card-title">Status</div>
-                  <div class="meta-row"><span class="meta-label">Plans Created</span><span class="meta-value" id="visualPlansCreatedCount">0</span></div>
-                  <div class="meta-row"><span class="meta-label">Plans Ready for Generation</span><span class="meta-value" id="visualPlansReadyCount">0</span></div>
-                  <div class="meta-row"><span class="meta-label">Videos Missing Visual Plans</span><span class="meta-value" id="videosMissingVisualPlanCount">0</span></div>
-                  <div class="meta-row"><span class="meta-label">Jobs Queued</span><span class="meta-value" id="visualJobsQueuedCount">0</span></div>
-                  <div class="meta-row"><span class="meta-label">Jobs Exported</span><span class="meta-value" id="visualJobsExportedCount">0</span></div>
-                  <div class="meta-row"><span class="meta-label">Jobs Imported</span><span class="meta-value" id="visualJobsImportedCount">0</span></div>
-                  <div class="meta-row"><span class="meta-label">Assets Registered</span><span class="meta-value" id="visualAssetsRegisteredCount">0</span></div>
-                  <div class="opportunity-note" style="margin-top:0.5rem;">Prompts only. No image/video files are auto-generated in this phase.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Shorts Batch Factory</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.loadShortsBatchQueue()">Refresh Queue</button>
-                  <button class="btn success" id="btnCreateShortsBatch" onclick="app.createShortsBatch()">Create Shorts Batch</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="opportunity-note">Shorts-first local production. No auto-approval, no auto-packaging, no auto-publish.</div>
-                <div class="agent-edit-grid">
-                  <label class="agent-field"><span>Count</span><input type="number" id="shortsBatchCount" min="1" max="10" value="5" /></label>
-                  <label class="agent-field"><span>Pillar</span><input type="text" id="shortsBatchPillar" placeholder="AI call handling" /></label>
-                  <label class="agent-field"><span>Topic Seed</span><input type="text" id="shortsBatchTopicSeed" placeholder="Missed calls workflow" /></label>
-                  <label class="agent-field"><span>Target Viewer</span><input type="text" id="shortsBatchTargetViewer" placeholder="Local service owner" /></label>
-                </div>
-                <label class="check-item" style="margin-top:0.55rem;">
-                  <input type="checkbox" id="shortsBatchAutoGenerate" checked />
-                  <span>Auto-generate initial assets</span>
-                </label>
-                <div class="flow-card" style="margin-top:0.7rem;">
-                  <div class="flow-card-title">Batch Summary</div>
-                  <div id="shortsBatchSummary">
-                    <div class="empty-state">No shorts batch created yet.</div>
-                  </div>
-                </div>
-                <div class="flow-card" style="margin-top:0.7rem;">
-                  <div class="flow-card-title">Shorts Awaiting Review</div>
-                  <div id="shortsBatchQueueList" class="video-list">
-                    <div class="empty-state">No shorts awaiting review.</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h2>One-Click Prep Run</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.loadAutopilotRuns()">Refresh Runs</button>
-                  <button class="btn" onclick="app.loadAutopilotFinalApprovalQueue()">Refresh Queue</button>
-                  <button class="btn success" id="btnRunAutopilotBatch" onclick="app.runAutopilotBatch()">Run Review Prep Batch</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="opportunity-note">Review Prep prepares local packages only. You still manually approve and manually upload.</div>
-                <div class="agent-edit-grid">
-                  <label class="agent-field"><span>Agent</span><select id="autopilotAgentSelect" class="form-select"><option value="">No specific agent</option></select></label>
-                  <label class="agent-field"><span>Content Type</span><select id="autopilotContentType" class="form-select"><option value="short" selected>short</option><option value="long">long</option></select></label>
-                  <label class="agent-field"><span>Count</span><input type="number" id="autopilotCount" min="1" max="5" value="1" /></label>
-                  <label class="agent-field"><span>Topic Seed (optional)</span><input type="text" id="autopilotTopicSeed" placeholder="local ops workflow" /></label>
-                </div>
-                <div class="agent-edit-grid" style="margin-top:0.55rem;">
-                  <label class="check-item"><input type="checkbox" id="autopilotAutoPlaceholders" checked /><span>Auto-generate placeholder visuals</span></label>
-                  <label class="check-item"><input type="checkbox" id="autopilotAutoRenderPreview" checked /><span>Auto-render preview when renderer is available</span></label>
-                  <label class="check-item"><input type="checkbox" id="autopilotAutoGeneratePayload" checked /><span>Auto-generate publishing payload summary</span></label>
-                </div>
-                <div class="flow-card" style="margin-top:0.7rem;">
-                  <div class="flow-card-title">Latest Run Summary</div>
-                  <div id="autopilotRunSummary">
-                    <div class="empty-state">No review prep run yet.</div>
-                  </div>
-                </div>
-                <div class="flow-card" style="margin-top:0.7rem;">
-                  <div class="flow-card-title">Recent Runs</div>
-                  <div id="autopilotRecentRuns" class="video-list">
-                    <div class="empty-state">No runs yet.</div>
-                  </div>
-                </div>
-                <div class="flow-card" style="margin-top:0.7rem;">
-                  <div class="flow-card-title">Final Approval Queue</div>
-                  <div id="autopilotFinalApprovalQueueList" class="video-list">
-                    <div class="empty-state">No review prep packets in final review queue.</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h2>Analytics Feedback</h2>
-                <div class="header-actions">
-                  <button class="btn" onclick="app.loadPerformanceSummary()">Refresh</button>
-                </div>
-              </div>
-              <div class="panel-body compact-body">
-                <div class="opportunity-note">Manual/local metrics only — no YouTube API connected yet.</div>
-                <div id="performanceSummaryList" class="video-list">
-                  <div class="empty-state">No manual/local performance metrics yet.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
                 <h2>Recent Activity</h2>
                 <div class="header-actions">
-                  <button class="btn" onclick="app.setActivePage('audit')">Open Audit</button>
-                  <button class="btn" onclick="app.loadCommandCenter()">Refresh</button>
+                  <button class="btn" onclick="app.loadGlobalAudit()">Refresh</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
@@ -1151,6 +916,147 @@
               <div class="panel-body compact-body">
                 <div id="videoAuditList" class="audit-list">
                   <div class="empty-state" style="padding: 1rem 0; height: auto;">No audit events yet.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-review-prep">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Step 1: Review Prep</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.loadAutopilotRuns()">Refresh Runs</button>
+                <button class="btn" onclick="app.loadAutopilotFinalApprovalQueue()">Refresh Queue</button>
+                <button class="btn success" id="btnRunAutopilotBatch" onclick="app.runAutopilotBatch()">Run Review Prep Batch</button>
+              </div>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="opportunity-note">Review Prep prepares local packages only. You still manually approve and manually upload.</div>
+              <div class="agent-edit-grid">
+                <label class="agent-field"><span>Agent</span><select id="autopilotAgentSelect" class="form-select"><option value="">No specific agent</option></select></label>
+                <label class="agent-field"><span>Content Type</span><select id="autopilotContentType" class="form-select"><option value="short" selected>short</option><option value="long">long</option></select></label>
+                <label class="agent-field"><span>Count</span><input type="number" id="autopilotCount" min="1" max="5" value="1" /></label>
+                <label class="agent-field"><span>Topic Seed (optional)</span><input type="text" id="autopilotTopicSeed" placeholder="local ops workflow" /></label>
+              </div>
+              <div class="agent-edit-grid" style="margin-top:0.55rem;">
+                <label class="check-item"><input type="checkbox" id="autopilotAutoPlaceholders" checked /><span>Auto-generate placeholder visuals</span></label>
+                <label class="check-item"><input type="checkbox" id="autopilotAutoRenderPreview" checked /><span>Auto-render preview when renderer is available</span></label>
+                <label class="check-item"><input type="checkbox" id="autopilotAutoGeneratePayload" checked /><span>Auto-generate publishing payload summary</span></label>
+              </div>
+              <div class="flow-card" style="margin-top:0.7rem;">
+                <div class="flow-card-title">Latest Run Summary</div>
+                <div id="autopilotRunSummary">
+                  <div class="empty-state">No review prep run yet.</div>
+                </div>
+              </div>
+              <div class="flow-card" style="margin-top:0.7rem;">
+                <div class="flow-card-title">Recent Runs</div>
+                <div id="autopilotRecentRuns" class="video-list">
+                  <div class="empty-state">No runs yet.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-final-approval">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Step 2: Final Approval</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.loadAutopilotFinalApprovalQueue()">Refresh Queue</button>
+              </div>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="opportunity-note">Review and approve generated packages before manual upload.</div>
+              <div class="flow-card">
+                <div class="flow-card-title">Final Approval Queue</div>
+                <div id="autopilotFinalApprovalQueueList" class="video-list">
+                  <div class="empty-state">No review prep packets in final review queue.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-manual-upload">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Step 3: Manual Upload</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.loadPublishingPayloadQueue()">Refresh Queue</button>
+              </div>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="opportunity-note" style="background: rgba(100, 150, 255, 0.1); padding: 1rem; border-radius: 6px; border: 1px solid rgba(100, 150, 255, 0.3); margin-bottom: 1rem;">
+                <strong>This app does not upload to YouTube.</strong> Download your approved packages below and upload them manually using YouTube Studio.
+              </div>
+              <div class="flow-card">
+                <div class="flow-card-title">Approved Packages Ready for Upload</div>
+                <div id="publishingPayloadQueueList" class="video-list">
+                  <div class="empty-state">No approved packages yet. Complete Review Prep and Final Approval first.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page hidden" id="page-advanced">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Advanced / Debug — Hidden Navigation</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.setActivePage('dashboard')'>Back to Dashboard</button>
+              </div>
+            </div>
+            <div class="panel-body compact-body">
+              <div class="opportunity-note">These pages are hidden from the main sidebar. Use them for troubleshooting and advanced operations only.</div>
+              <div class="sim-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('opportunities')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Opportunities</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Generate and manage content opportunities</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('agents')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Agents</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Configure content agents and channel studio</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('producer')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Producer</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Executive producer recommendations</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('research')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Research</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Supervisor research intelligence</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('briefs')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Briefs</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Production briefs and templates</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('pipeline')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Pipeline</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Daily production pipeline</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('content')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Content</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Content management and ideas</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('assets')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Assets</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Visual assets and generation</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('publishing')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Publishing</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Publishing payloads and scheduling</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('compliance')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Compliance</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Compliance review and checklist</div>
+                </div>
+                <div style="padding: 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;" onclick="app.setActivePage('audit')">
+                  <div style="font-weight: 600; margin-bottom: 0.5rem;">Audit</div>
+                  <div style="font-size: 0.9rem; color: var(--text-secondary);">Audit log and history</div>
                 </div>
               </div>
             </div>
