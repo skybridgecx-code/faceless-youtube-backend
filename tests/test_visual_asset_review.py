@@ -22,10 +22,17 @@ def reset_test_db() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     main_module.rate_limiter = InMemoryRateLimiter()
+    main_module.settings.internal_api_key = None
     output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _write_headers() -> dict[str, str]:
+    if main_module.settings.internal_api_key:
+        return {"X-Internal-API-Key": str(main_module.settings.internal_api_key)}
+    return {}
 
 
 def _write_real_visual_asset_file(name: str = "visual_asset_review.png") -> Path:
@@ -37,10 +44,19 @@ def _write_real_visual_asset_file(name: str = "visual_asset_review.png") -> Path
 
 
 def _create_approved_video_for_preview(client: TestClient, channel_name: str, title: str) -> int:
-    channel_id = client.post("/channels", json={"name": channel_name}).json()["id"]
-    video_id = client.post("/videos", json={"channel_id": channel_id, "title": title}).json()["id"]
-    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
-    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    headers = _write_headers()
+    channel_response = client.post("/channels", json={"name": channel_name}, headers=headers)
+    assert channel_response.status_code == 200
+    channel_id = channel_response.json()["id"]
+    video_response = client.post("/videos", json={"channel_id": channel_id, "title": title}, headers=headers)
+    assert video_response.status_code == 200
+    video_id = video_response.json()["id"]
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}, headers=headers).status_code == 200
+    assert client.post(
+        f"/videos/{video_id}/review",
+        json={"passed": True, "notes": "approved"},
+        headers=headers,
+    ).status_code == 200
     return video_id
 
 
@@ -50,7 +66,9 @@ def _create_visual_asset_for_review(client: TestClient, filename: str) -> tuple[
         channel_name=f"Asset Review Channel {filename}",
         title=f"Asset Review Video {filename}",
     )
-    plan = client.post(f"/visual-assets/from-video/{video_id}").json()
+    plan_response = client.post(f"/visual-assets/from-video/{video_id}", headers=_write_headers())
+    assert plan_response.status_code == 200
+    plan = plan_response.json()
     real_asset_path = _write_real_visual_asset_file(filename)
 
     db = SessionLocal()
