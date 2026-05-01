@@ -18,10 +18,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.routers.videos as videos_router  # noqa: E402
 import app.routers.research as research_router  # noqa: E402
+import app.services.content_engine as content_engine  # noqa: E402
 from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
 import app.main as main_module  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import AuditEvent, ContentAgent, Video, VideoOpportunity, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
+from app.models import AuditEvent, ContentAgent, ContentType, Video, VideoOpportunity, VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
 from app.security import InMemoryRateLimiter  # noqa: E402
@@ -253,6 +254,203 @@ def test_health_remains_public_with_internal_api_key(monkeypatch: pytest.MonkeyP
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+def test_content_engine_without_openai_key_preserves_deterministic_templates(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    content_engine.clear_asset_cache()
+
+    def should_not_call(_prompt: str) -> str:  # noqa: ANN001
+        raise AssertionError("LLM request should not run when OPENAI_API_KEY is missing.")
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", should_not_call)
+    video = Video(
+        id=11,
+        channel_id=1,
+        title="Deterministic Template Video",
+        content_type=ContentType.long,
+        pillar="AI call handling",
+        target_viewer="Owner",
+        pain_point="Missed calls",
+        demo_idea="Workflow demo",
+        thumbnail_text="DETERMINISTIC",
+    )
+
+    script = content_engine.build_script(video)
+    brief = content_engine.build_brief(video)
+    description = content_engine.build_description(video)
+    assert "## 0:00 Hook" in script
+    assert "# Creative Brief" in brief
+    assert "This is an educational/demo video." in description
+
+
+def test_content_engine_llm_success_changes_core_assets(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    def fake_llm(_prompt: str) -> str:  # noqa: ANN001
+        return "Safe custom asset variant. Educational framing only."
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", fake_llm)
+    video = Video(
+        id=21,
+        channel_id=1,
+        title="LLM Success Video",
+        content_type=ContentType.long,
+        pillar="AI call handling",
+        target_viewer="Owner",
+        pain_point="Missed calls",
+        demo_idea="Workflow demo",
+        thumbnail_text="LLM SUCCESS",
+    )
+
+    script = content_engine.build_script(video)
+    brief = content_engine.build_brief(video)
+    description = content_engine.build_description(video)
+    assert script == "Safe custom asset variant. Educational framing only."
+    assert brief == "Safe custom asset variant. Educational framing only."
+    assert description == "Safe custom asset variant. Educational framing only."
+
+
+def test_content_engine_llm_failure_falls_back_to_templates(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    def fail_llm(_prompt: str) -> str:  # noqa: ANN001
+        raise RuntimeError("simulated llm failure")
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", fail_llm)
+    video = Video(
+        id=31,
+        channel_id=1,
+        title="LLM Failure Video",
+        content_type=ContentType.long,
+        pillar="AI call handling",
+        target_viewer="Owner",
+        pain_point="Missed calls",
+        demo_idea="Workflow demo",
+        thumbnail_text="LLM FAILURE",
+    )
+
+    brief = content_engine.build_brief(video)
+    assert "# Creative Brief" in brief
+
+
+def test_content_engine_unsafe_llm_output_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    def unsafe_llm(_prompt: str) -> str:  # noqa: ANN001
+        return "Guaranteed results. You will make $10k fast."
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", unsafe_llm)
+    video = Video(id=41, channel_id=1, title="LLM Unsafe Video")
+
+    script = content_engine.build_script(video)
+    assert "## 0:00 Hook" in script
+    assert "Guaranteed results" not in script
+
+
+def test_generate_video_ideas_parses_valid_json_from_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    payload = [
+        {
+            "title": "Idea One",
+            "pillar": "AI call handling",
+            "target_viewer": "Owner",
+            "pain_point": "Missed calls",
+            "demo_idea": "Lead routing demo",
+            "thumbnail_text": "IDEA ONE",
+        },
+        {
+            "title": "Idea Two",
+            "pillar": "Business dashboard demos",
+            "target_viewer": "Operator",
+            "pain_point": "No follow-up",
+            "demo_idea": "Dashboard walk-through",
+            "thumbnail_text": "IDEA TWO",
+        },
+    ]
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", lambda _prompt: json.dumps(payload))
+    ideas = content_engine.generate_video_ideas(2)
+    assert ideas == payload
+
+
+def test_generate_video_ideas_pads_invalid_items_with_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    payload = [
+        {
+            "title": "Valid Idea",
+            "pillar": "Tool stack and tutorials",
+            "target_viewer": "Local operator",
+            "pain_point": "Messy workflow",
+            "demo_idea": "Safe walkthrough",
+            "thumbnail_text": "VALID IDEA",
+        },
+        {
+            "title": "Missing Field Idea",
+            "pillar": "AI call handling",
+            "target_viewer": "Owner",
+            "pain_point": "Missed calls",
+            "thumbnail_text": "BROKEN",
+        },
+        "bad-row",
+    ]
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", lambda _prompt: json.dumps(payload))
+    ideas = content_engine.generate_video_ideas(4)
+    assert len(ideas) == 4
+    assert ideas[0]["title"] == "Valid Idea"
+    assert ideas[1]["title"] == "This Is Why Contractors Miss So Many Leads"
+    assert ideas[2]["title"] == "I Built a Dashboard That Tracks Every Missed Call"
+    assert ideas[3]["title"] == "AI Phone Agent vs Human Receptionist"
+
+
+def test_clear_asset_cache_clears_only_requested_video(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = content_engine.get_settings()
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    content_engine.clear_asset_cache()
+
+    calls: dict[str, int] = {"count": 0}
+
+    def fake_llm(prompt: str) -> str:
+        calls["count"] += 1
+        if "Video A" in prompt:
+            return f"Safe asset for Video A - call {calls['count']}"
+        return f"Safe asset for Video B - call {calls['count']}"
+
+    monkeypatch.setattr(content_engine, "_llm_text_request", fake_llm)
+
+    video_a = Video(id=501, channel_id=1, title="Video A")
+    video_b = Video(id=502, channel_id=1, title="Video B")
+
+    first_a = content_engine.build_script(video_a)
+    first_b = content_engine.build_script(video_b)
+    assert calls["count"] == 2
+
+    second_a = content_engine.build_script(video_a)
+    second_b = content_engine.build_script(video_b)
+    assert calls["count"] == 2
+    assert second_a == first_a
+    assert second_b == first_b
+
+    content_engine.clear_asset_cache(video_id=501)
+    third_a = content_engine.build_script(video_a)
+    third_b = content_engine.build_script(video_b)
+    assert calls["count"] == 3
+    assert third_a != first_a
+    assert third_b == first_b
 
 
 def test_protected_write_rejects_without_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
+from typing import Any, Callable
 
+from app.config import get_settings
 from app.models import Video
-from app.services.compliance import build_review_checklist
+from app.services.compliance import build_review_checklist, scan_text
 
 
 @dataclass(frozen=True)
@@ -105,36 +110,225 @@ FIRST_IDEAS = [
     ),
 ]
 
+_ASSET_CACHE: dict[tuple[int, str], str] = {}
+_REQUIRED_IDEA_KEYS = ("title", "pillar", "target_viewer", "pain_point", "demo_idea", "thumbnail_text")
+_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+_LLM_SYSTEM_PROMPT = (
+    "You are writing educational local-business faceless YouTube content. "
+    "Keep claims conservative, avoid guarantees, avoid fake results, and avoid hype."
+)
+
+
+def clear_asset_cache(video_id: int | None = None) -> None:
+    if video_id is None:
+        _ASSET_CACHE.clear()
+        return
+    for cache_key in [key for key in _ASSET_CACHE if key[0] == int(video_id)]:
+        _ASSET_CACHE.pop(cache_key, None)
+
+
+def _fallback_idea(index: int) -> dict[str, str]:
+    if index < len(FIRST_IDEAS):
+        title, pillar, target_viewer, pain_point, demo_idea, thumbnail_text = FIRST_IDEAS[index]
+        return {
+            "title": title,
+            "pillar": pillar,
+            "target_viewer": target_viewer,
+            "pain_point": pain_point,
+            "demo_idea": demo_idea,
+            "thumbnail_text": thumbnail_text,
+        }
+    n = index + 1
+    return {
+        "title": f"Local Business AI Workflow #{n}",
+        "pillar": "Business dashboard demos",
+        "target_viewer": "Local service business owner",
+        "pain_point": "Missed follow-up and unclear lead status",
+        "demo_idea": "AI workflow and dashboard walkthrough",
+        "thumbnail_text": "AI WORKFLOW",
+    }
+
+
+def _fallback_ideas(count: int) -> list[dict[str, str]]:
+    return [_fallback_idea(index) for index in range(max(0, count))]
+
+
+def _llm_enabled() -> bool:
+    return bool((get_settings().openai_api_key or "").strip())
+
+
+def _cache_key(video: Video, asset_type: str) -> tuple[int, str] | None:
+    if getattr(video, "id", None) is None:
+        return None
+    return (int(video.id), asset_type)
+
+
+def _is_compliance_safe(text: str) -> bool:
+    findings = scan_text(text)
+    return not any(finding.severity == "high" for finding in findings)
+
+
+def _extract_text_from_response(payload: dict[str, Any]) -> str:
+    if isinstance(payload.get("output_text"), str) and payload.get("output_text"):
+        return str(payload["output_text"]).strip()
+
+    chunks: list[str] = []
+    for output_item in payload.get("output", []):
+        if not isinstance(output_item, dict):
+            continue
+        for content_item in output_item.get("content", []):
+            if not isinstance(content_item, dict):
+                continue
+            text_value = content_item.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                chunks.append(text_value.strip())
+    return "\n".join(chunks).strip()
+
+
+def _llm_text_request(user_prompt: str) -> str:
+    settings = get_settings()
+    api_key = (settings.openai_api_key or "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured.")
+
+    payload = {
+        "model": settings.openai_model,
+        "input": [
+            {"role": "system", "content": _LLM_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    req = urllib.request.Request(
+        _OPENAI_RESPONSES_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:  # noqa: S310 - fixed API endpoint
+            body = response.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"LLM request failed: {exc}") from exc
+
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("LLM response was not valid JSON.") from exc
+    text = _extract_text_from_response(parsed)
+    if not text:
+        raise RuntimeError("LLM response did not contain text output.")
+    return text
+
+
+def _extract_json_array_text(value: str) -> str:
+    start = value.find("[")
+    end = value.rfind("]")
+    if start == -1 or end == -1 or end < start:
+        return value
+    return value[start:end + 1]
+
+
+def _build_idea_prompt(count: int) -> str:
+    return (
+        "Return JSON only. Generate an array of idea objects for faceless local-business AI videos.\n"
+        f"Create exactly {count} ideas.\n"
+        "Each item must include string keys: title, pillar, target_viewer, pain_point, demo_idea, thumbnail_text.\n"
+        "Keep claims educational and non-guaranteed."
+    )
+
+
+def _build_asset_prompt(video: Video, asset_type: str, fallback_text: str) -> str:
+    return (
+        f"Generate only the {asset_type} asset for this video.\n"
+        f"Title: {video.title}\n"
+        f"Pillar: {video.pillar}\n"
+        f"Target viewer: {video.target_viewer}\n"
+        f"Pain point: {video.pain_point}\n"
+        f"Demo idea: {video.demo_idea}\n"
+        f"Thumbnail text: {video.thumbnail_text}\n"
+        "Keep output practical, educational, and safe.\n"
+        "Do not include HTML.\n"
+        "Use this deterministic template as structure/style reference, but produce a fresh variant:\n"
+        f"{fallback_text}"
+    )
+
+
+def _llm_candidate_for_asset(video: Video, asset_type: str, fallback_text: str) -> str | None:
+    if not _llm_enabled():
+        return None
+    cache_key = _cache_key(video, asset_type)
+    if cache_key and cache_key in _ASSET_CACHE:
+        return _ASSET_CACHE[cache_key]
+    prompt = _build_asset_prompt(video, asset_type, fallback_text)
+    candidate = _llm_text_request(prompt).strip()
+    if not candidate:
+        return None
+    if not _is_compliance_safe(candidate):
+        return None
+    if cache_key:
+        _ASSET_CACHE[cache_key] = candidate
+    return candidate
+
+
+def _render_asset_with_fallback(video: Video, asset_type: str, fallback_builder: Callable[[Video], str]) -> str:
+    fallback_text = fallback_builder(video)
+    if not _llm_enabled():
+        return fallback_text
+    try:
+        llm_text = _llm_candidate_for_asset(video, asset_type, fallback_text)
+    except Exception:  # noqa: BLE001
+        return fallback_text
+    if not llm_text:
+        return fallback_text
+    return llm_text
+
 
 def generate_video_ideas(count: int) -> list[dict[str, str]]:
+    fallback_ideas = _fallback_ideas(count)
+    if count <= 0:
+        return []
+    if not _llm_enabled():
+        return fallback_ideas
+
+    try:
+        raw = _llm_text_request(_build_idea_prompt(count))
+        parsed = json.loads(_extract_json_array_text(raw))
+    except Exception:  # noqa: BLE001
+        return fallback_ideas
+
+    if not isinstance(parsed, list):
+        return fallback_ideas
+
     output: list[dict[str, str]] = []
-    for title, pillar, target_viewer, pain_point, demo_idea, thumbnail_text in FIRST_IDEAS[:count]:
-        output.append(
-            {
-                "title": title,
-                "pillar": pillar,
-                "target_viewer": target_viewer,
-                "pain_point": pain_point,
-                "demo_idea": demo_idea,
-                "thumbnail_text": thumbnail_text,
-            }
-        )
-    while len(output) < count:
-        n = len(output) + 1
-        output.append(
-            {
-                "title": f"Local Business AI Workflow #{n}",
-                "pillar": "Business dashboard demos",
-                "target_viewer": "Local service business owner",
-                "pain_point": "Missed follow-up and unclear lead status",
-                "demo_idea": "AI workflow and dashboard walkthrough",
-                "thumbnail_text": "AI WORKFLOW",
-            }
-        )
+    for index in range(count):
+        fallback_item = fallback_ideas[index]
+        item = parsed[index] if index < len(parsed) else None
+        if not isinstance(item, dict):
+            output.append(fallback_item)
+            continue
+
+        candidate: dict[str, str] = {}
+        valid = True
+        for key in _REQUIRED_IDEA_KEYS:
+            value = item.get(key)
+            if not isinstance(value, str) or not value.strip():
+                valid = False
+                break
+            candidate[key] = value.strip()
+        if not valid:
+            output.append(fallback_item)
+            continue
+        if not _is_compliance_safe(" ".join(candidate.values())):
+            output.append(fallback_item)
+            continue
+        output.append(candidate)
     return output
 
 
-def build_brief(video: Video) -> str:
+def _template_build_brief(video: Video) -> str:
     return f"""# Creative Brief
 
 ## Title
@@ -163,7 +357,11 @@ Show the old messy workflow, then show the cleaner AI-assisted workflow. Keep th
 """.strip()
 
 
-def build_script(video: Video) -> str:
+def build_brief(video: Video) -> str:
+    return _render_asset_with_fallback(video, "brief", _template_build_brief)
+
+
+def _template_build_script(video: Video) -> str:
     business = _infer_business(video.title)
     return f"""# Long-Form Script: {video.title}
 
@@ -248,7 +446,11 @@ This video is an educational/demo workflow. If you want to see more AI systems f
 """.strip()
 
 
-def build_shorts(video: Video) -> str:
+def build_script(video: Video) -> str:
+    return _render_asset_with_fallback(video, "script", _template_build_script)
+
+
+def _template_build_shorts(video: Video) -> str:
     return f"""# Shorts Pack for {video.title}
 
 ## Short 1: Missed Call Problem
@@ -303,7 +505,11 @@ Checklist overlay with approved/review/urgent states.
 """.strip()
 
 
-def build_description(video: Video) -> str:
+def build_shorts(video: Video) -> str:
+    return _render_asset_with_fallback(video, "shorts", _template_build_shorts)
+
+
+def _template_build_description(video: Video) -> str:
     return f"""Local businesses lose money when calls are missed, leads are not followed up with, and customer details get scattered across voicemails, texts, and notebooks.
 
 In this video, I break down: {video.title}
@@ -328,7 +534,11 @@ Subscribe for more local business AI systems and dashboard breakdowns.
 """.strip()
 
 
-def build_thumbnail_prompt(video: Video) -> str:
+def build_description(video: Video) -> str:
+    return _render_asset_with_fallback(video, "description", _template_build_description)
+
+
+def _template_build_thumbnail_prompt(video: Video) -> str:
     return f"""Create a premium YouTube thumbnail in a dark luxury dashboard style.
 
 Text: {video.thumbnail_text}
@@ -346,10 +556,14 @@ Style:
 """.strip()
 
 
-def build_youtube_metadata(video: Video) -> str:
+def build_thumbnail_prompt(video: Video) -> str:
+    return _render_asset_with_fallback(video, "thumbnail_prompt", _template_build_thumbnail_prompt)
+
+
+def _template_build_youtube_metadata(video: Video) -> str:
     tags = ", ".join(DEFAULT_TAGS)
     return f"""title: {video.title}
-description: {build_description(video)}
+description: {_template_build_description(video)}
 tags: {tags}
 category_id: 27
 privacy_status: private
@@ -358,15 +572,24 @@ review_required: true
 """.strip()
 
 
+def build_youtube_metadata(video: Video) -> str:
+    return _render_asset_with_fallback(video, "youtube_metadata", _template_build_youtube_metadata)
+
+
 def build_all_assets(video: Video) -> list[GeneratedAsset]:
+    brief = build_brief(video)
     script = build_script(video)
+    shorts = build_shorts(video)
+    description = build_description(video)
+    thumbnail_prompt = build_thumbnail_prompt(video)
+    youtube_metadata = build_youtube_metadata(video)
     return [
-        GeneratedAsset("brief", build_brief(video)),
+        GeneratedAsset("brief", brief),
         GeneratedAsset("script", script),
-        GeneratedAsset("shorts", build_shorts(video)),
-        GeneratedAsset("description", build_description(video)),
-        GeneratedAsset("thumbnail_prompt", build_thumbnail_prompt(video)),
-        GeneratedAsset("youtube_metadata", build_youtube_metadata(video)),
+        GeneratedAsset("shorts", shorts),
+        GeneratedAsset("description", description),
+        GeneratedAsset("thumbnail_prompt", thumbnail_prompt),
+        GeneratedAsset("youtube_metadata", youtube_metadata),
         GeneratedAsset("package_manifest", build_review_checklist(script)),
     ]
 
