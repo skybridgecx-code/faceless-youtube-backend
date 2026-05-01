@@ -38,6 +38,10 @@ const app = {
     shortsBatchQueue: [],
     performanceByVideoId: {},
     performanceSummary: null,
+    publishingPayloadByVideoId: {},
+    publishingPayloadQueue: [],
+    publishingPayloadQueueStatusFilter: 'all',
+    publishingPayloadQueueReadyFilter: 'all',
     stats: {
       ideas: 0,
       generated: 0,
@@ -68,6 +72,7 @@ const app = {
     await this.loadPipelineDaily();
     await this.loadShortsBatchQueue();
     await this.loadPerformanceSummary();
+    await this.loadPublishingPayloadQueue();
   },
 
   setupNavigation() {
@@ -156,6 +161,10 @@ const app = {
     if (page === 'assets') {
       this.loadVisualPlans();
       this.loadVisualGenerationData();
+    }
+    if (page === 'publishing') {
+      this.loadPublishingPayloadQueue();
+      this.loadPublishingPayloadForSelectedVideo();
     }
   },
 
@@ -2608,6 +2617,7 @@ const app = {
     await this.loadReadiness();
     await this.loadPreviewStatus();
     await this.loadSelectedVideoPerformance();
+    await this.loadPublishingPayloadForSelectedVideo();
     if (reloadAudit) {
       await this.loadVideoAudit();
     }
@@ -2639,6 +2649,7 @@ const app = {
     if (ctaPanel) ctaPanel.innerHTML = '<div class="empty-state" style="height: auto; padding: 1rem;">Select a video to see actions</div>';
     this.renderPreviewStatus(null);
     this.renderSelectedVideoPerformance(null);
+    this.renderPublishingPayloadSummary(null);
     this.clearComplianceResults();
     this.renderAssets();
     this.renderVisualPlanSection();
@@ -4040,6 +4051,178 @@ const app = {
     if (stale) stale.style.display = 'none';
   },
 
+  async generatePublishingPayload() {
+    const selected = this.requireSelectedVideo('generate publishing payload');
+    if (!selected) return;
+    const button = document.getElementById('btnGeneratePublishingPayload');
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/publishing-payload/generate`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to generate publishing payload');
+      }
+      this.state.publishingPayloadByVideoId[selected.id] = data;
+      this.renderPublishingPayloadSummary(data);
+      this.log(`Generated publishing payload #${data.payload_id} (${data.payload_status}).`, 'success');
+      await this.loadPublishingPayloadQueue();
+      await this.loadGlobalAudit();
+      await this.loadReadiness();
+    } catch (err) {
+      this.log(`Publishing payload generation failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
+    }
+  },
+
+  async loadPublishingPayloadForSelectedVideo() {
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      this.renderPublishingPayloadSummary(null);
+      return null;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/publishing-payload`);
+      if (res.status === 404) {
+        this.renderPublishingPayloadSummary(null);
+        return null;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load publishing payload');
+      this.state.publishingPayloadByVideoId[selected.id] = data;
+      this.renderPublishingPayloadSummary(data);
+      return data;
+    } catch (err) {
+      this.log(`Load publishing payload failed: ${err.message}`, 'error');
+      this.renderPublishingPayloadSummary(null);
+      return null;
+    }
+  },
+
+  renderPublishingPayloadSummary(payload) {
+    const statusEl = document.getElementById('publishingPayloadStatus');
+    const pathEl = document.getElementById('publishingPayloadPath');
+    const readyEl = document.getElementById('publishingPayloadReady');
+    const nextEl = document.getElementById('publishingPayloadNextAction');
+    const blockersEl = document.getElementById('publishingPayloadBlockers');
+    const warningsEl = document.getElementById('publishingPayloadWarnings');
+    const checklistEl = document.getElementById('publishingPayloadChecklist');
+    const noteEl = document.getElementById('publishingPayloadManualNote');
+    if (!statusEl || !pathEl || !readyEl || !nextEl || !blockersEl || !warningsEl || !checklistEl || !noteEl) return;
+
+    if (!payload) {
+      statusEl.textContent = '-';
+      pathEl.textContent = '-';
+      readyEl.textContent = 'No';
+      nextEl.textContent = 'Generate Publishing Payload for the selected video.';
+      blockersEl.textContent = '-';
+      warningsEl.textContent = '-';
+      checklistEl.innerHTML = '<li>No checklist generated yet.</li>';
+      noteEl.textContent = 'Manual upload only — no YouTube API upload connected.';
+      return;
+    }
+
+    const blockers = Array.isArray(payload.blockers) ? payload.blockers : [];
+    const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+    const checklist = Array.isArray(payload.manual_upload_checklist) ? payload.manual_upload_checklist : [];
+    statusEl.textContent = payload.payload_status || '-';
+    pathEl.textContent = payload.payload_path || '-';
+    readyEl.textContent = payload.ready_for_manual_upload ? 'Yes' : 'No';
+    nextEl.textContent = payload.next_required_action || '-';
+    blockersEl.textContent = blockers.length ? blockers.join(' | ') : 'None';
+    warningsEl.textContent = warnings.length ? warnings.join(' | ') : 'None';
+    checklistEl.innerHTML = checklist.length
+      ? checklist.map(item => `<li>${this.escapeHtml(item)}</li>`).join('')
+      : '<li>No checklist generated yet.</li>';
+    noteEl.textContent = 'Manual upload only — no YouTube API upload connected.';
+  },
+
+  changePublishingPayloadQueueFilters() {
+    const statusEl = document.getElementById('publishingPayloadStatusFilter');
+    const readyEl = document.getElementById('publishingPayloadReadyFilter');
+    this.state.publishingPayloadQueueStatusFilter = statusEl?.value || 'all';
+    this.state.publishingPayloadQueueReadyFilter = readyEl?.value || 'all';
+    this.loadPublishingPayloadQueue();
+  },
+
+  async loadPublishingPayloadQueue() {
+    try {
+      const params = new URLSearchParams({ limit: '100' });
+      const status = this.state.publishingPayloadQueueStatusFilter || 'all';
+      const ready = this.state.publishingPayloadQueueReadyFilter || 'all';
+      if (status && status !== 'all') params.set('status', status);
+      if (ready === 'true' || ready === 'false') params.set('ready_for_manual_upload', ready);
+      const res = await fetch(`/publishing-payloads?${params.toString()}`);
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load publishing payload queue');
+      }
+      this.state.publishingPayloadQueue = Array.isArray(data) ? data : [];
+      this.renderPublishingPayloadQueue();
+      return this.state.publishingPayloadQueue;
+    } catch (err) {
+      this.state.publishingPayloadQueue = [];
+      this.renderPublishingPayloadQueue();
+      this.log(`Publishing payload queue failed: ${err.message}`, 'error');
+      return [];
+    }
+  },
+
+  renderPublishingPayloadQueue() {
+    const list = document.getElementById('publishingPayloadQueueList');
+    const statusEl = document.getElementById('publishingPayloadStatusFilter');
+    const readyEl = document.getElementById('publishingPayloadReadyFilter');
+    if (!list) return;
+
+    if (statusEl && statusEl.value !== this.state.publishingPayloadQueueStatusFilter) {
+      statusEl.value = this.state.publishingPayloadQueueStatusFilter || 'all';
+    }
+    if (readyEl && readyEl.value !== this.state.publishingPayloadQueueReadyFilter) {
+      readyEl.value = this.state.publishingPayloadQueueReadyFilter || 'all';
+    }
+
+    const rows = Array.isArray(this.state.publishingPayloadQueue) ? this.state.publishingPayloadQueue : [];
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="empty-state">No publishing payload records found for current filters.</div>';
+      return;
+    }
+    list.innerHTML = rows.map(item => `
+      <article class="video-card" style="padding:0.7rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
+          <div class="video-status ${this.escapeHtml(item.payload_status || 'draft')}">${this.escapeHtml(item.payload_status || 'draft')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Video</span><span class="meta-value">#${Number(item.video_id)}</span></div>
+        <div class="meta-row"><span class="meta-label">Type</span><span class="meta-value">${this.escapeHtml(item.content_type || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Ready for Manual Upload</span><span class="meta-value">${item.ready_for_manual_upload ? 'yes' : 'no'}</span></div>
+        <div class="meta-row"><span class="meta-label">Blockers / Warnings</span><span class="meta-value">${Number(item.blockers_count || 0)} / ${Number(item.warnings_count || 0)}</span></div>
+        <div class="meta-row"><span class="meta-label">Payload Path</span><span class="meta-value">${this.escapeHtml(item.payload_path || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(item.next_required_action || '-')}</span></div>
+        <div class="row-actions" style="margin-top:0.5rem;">
+          <button class="btn" onclick="app.openPublishingPayloadVideo(${Number(item.video_id)})">Open Video</button>
+        </div>
+      </article>
+    `).join('');
+  },
+
+  async openPublishingPayloadVideo(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) {
+      this.log('Invalid publishing payload video id.', 'error');
+      return;
+    }
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('publishing');
+  },
+
   async savePublishing() {
     const selected = this.requireSelectedVideo('save publishing settings');
     if (!selected) return;
@@ -4065,7 +4248,7 @@ const app = {
     try {
       const res = await fetch(`/videos/${selected.id}/publishing`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload)
       });
       
@@ -4090,7 +4273,7 @@ const app = {
     this.actionWrapper(
       'btnDynamic',
       'Package Assets',
-      { method: 'POST' },
+      { method: 'POST', headers: this.buildWriteHeaders() },
       id => `/videos/${id}/package`,
       (data) => {
         if (data && data.package_dir && this.state.selectedVideoId) {
@@ -4106,7 +4289,7 @@ const app = {
     this.actionWrapper(
       'btnDynamic',
       'Prepare YT Payload',
-      { method: 'POST' },
+      { method: 'POST', headers: this.buildWriteHeaders() },
       id => `/publish/${id}/prepare-youtube-payload`,
       () => 'YouTube payload prepared successfully.',
       { reloadAssets: false, reloadCalendar: true, reloadAudit: true, keepComplianceReport: true }

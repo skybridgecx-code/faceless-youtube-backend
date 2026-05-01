@@ -889,12 +889,51 @@
                 <h2>Publishing Plan</h2>
                 <div class="header-actions">
                   <button class="btn" onclick="app.loadCalendar()">Refresh</button>
+                  <button class="btn success" id="btnGeneratePublishingPayload" onclick="app.generatePublishingPayload()">Generate Publishing Payload</button>
                   <button class="btn" onclick="app.prepareYtPayload()">Prepare Payload</button>
                 </div>
               </div>
               <div class="panel-body compact-body">
+                <div class="opportunity-note">Manual upload only — no YouTube API upload connected.</div>
                 <div id="calendarList" class="video-list">
                   <div class="empty-state">Loading plan...</div>
+                </div>
+                <div class="flow-card" style="margin-top:0.75rem;">
+                  <div class="flow-card-title">Publishing Payload Center</div>
+                  <div class="meta-row"><span class="meta-label">Status</span><span class="meta-value" id="publishingPayloadStatus">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Payload Path</span><span class="meta-value" id="publishingPayloadPath">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Ready For Manual Upload</span><span class="meta-value" id="publishingPayloadReady">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value" id="publishingPayloadNextAction">Generate Publishing Payload for the selected video.</span></div>
+                  <div class="meta-row"><span class="meta-label">Blockers</span><span class="meta-value pre-wrap" id="publishingPayloadBlockers">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Warnings</span><span class="meta-value pre-wrap" id="publishingPayloadWarnings">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Manual Upload Note</span><span class="meta-value" id="publishingPayloadManualNote">Manual upload only — no YouTube API upload connected.</span></div>
+                  <div style="margin-top:0.55rem;">
+                    <div class="meta-label" style="margin-bottom:0.35rem;">Manual Upload Checklist</div>
+                    <ol id="publishingPayloadChecklist" style="padding-left:1.25rem; margin:0;">
+                      <li>No checklist generated yet.</li>
+                    </ol>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.75rem;">
+                  <div class="flow-card-title">Publishing Payload Queue</div>
+                  <div class="settings-actions" style="margin-bottom:0.55rem;">
+                    <select id="publishingPayloadStatusFilter" class="form-select" style="max-width:220px;" onchange="app.changePublishingPayloadQueueFilters()">
+                      <option value="all">All Statuses</option>
+                      <option value="ready">Ready</option>
+                      <option value="blocked">Blocked</option>
+                      <option value="draft">Draft</option>
+                      <option value="regenerated">Regenerated</option>
+                    </select>
+                    <select id="publishingPayloadReadyFilter" class="form-select" style="max-width:220px;" onchange="app.changePublishingPayloadQueueFilters()">
+                      <option value="all">Any Readiness</option>
+                      <option value="true">Ready Only</option>
+                      <option value="false">Not Ready</option>
+                    </select>
+                    <button class="btn" onclick="app.loadPublishingPayloadQueue()">Refresh Queue</button>
+                  </div>
+                  <div id="publishingPayloadQueueList" class="video-list">
+                    <div class="empty-state">No publishing payload records loaded yet.</div>
+                  </div>
                 </div>
               </div>
             </div>

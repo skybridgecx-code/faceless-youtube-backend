@@ -36,6 +36,7 @@ def init_db() -> None:
     _apply_sqlite_visual_asset_factory_columns()
     _apply_sqlite_visual_generation_queue_columns()
     _apply_sqlite_video_performance_columns()
+    _apply_sqlite_publishing_payload_columns()
     _apply_sqlite_research_columns()
     _seed_default_agents_for_existing_channels()
 
@@ -375,6 +376,36 @@ def _apply_sqlite_video_performance_columns() -> None:
             "notes": "ALTER TABLE video_performance_metrics ADD COLUMN notes TEXT",
             "created_at": "ALTER TABLE video_performance_metrics ADD COLUMN created_at DATETIME",
             "updated_at": "ALTER TABLE video_performance_metrics ADD COLUMN updated_at DATETIME",
+        },
+    )
+
+
+def _apply_sqlite_publishing_payload_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "publishing_payloads",
+        {
+            "video_id": "ALTER TABLE publishing_payloads ADD COLUMN video_id INTEGER",
+            "payload_path": "ALTER TABLE publishing_payloads ADD COLUMN payload_path TEXT DEFAULT ''",
+            "payload_status": "ALTER TABLE publishing_payloads ADD COLUMN payload_status TEXT DEFAULT 'draft'",
+            "ready_for_manual_upload": "ALTER TABLE publishing_payloads ADD COLUMN ready_for_manual_upload BOOLEAN DEFAULT 0",
+            "title": "ALTER TABLE publishing_payloads ADD COLUMN title TEXT DEFAULT ''",
+            "description": "ALTER TABLE publishing_payloads ADD COLUMN description TEXT DEFAULT ''",
+            "tags_json": "ALTER TABLE publishing_payloads ADD COLUMN tags_json TEXT DEFAULT '[]'",
+            "category_id": "ALTER TABLE publishing_payloads ADD COLUMN category_id TEXT DEFAULT '27'",
+            "privacy_status": "ALTER TABLE publishing_payloads ADD COLUMN privacy_status TEXT DEFAULT 'private'",
+            "made_for_kids": "ALTER TABLE publishing_payloads ADD COLUMN made_for_kids BOOLEAN DEFAULT 0",
+            "video_file_path": "ALTER TABLE publishing_payloads ADD COLUMN video_file_path TEXT",
+            "thumbnail_image_path": "ALTER TABLE publishing_payloads ADD COLUMN thumbnail_image_path TEXT",
+            "export_path": "ALTER TABLE publishing_payloads ADD COLUMN export_path TEXT",
+            "blockers_json": "ALTER TABLE publishing_payloads ADD COLUMN blockers_json TEXT DEFAULT '[]'",
+            "warnings_json": "ALTER TABLE publishing_payloads ADD COLUMN warnings_json TEXT DEFAULT '[]'",
+            "manual_upload_checklist_json": "ALTER TABLE publishing_payloads ADD COLUMN manual_upload_checklist_json TEXT DEFAULT '[]'",
+            "generated_at": "ALTER TABLE publishing_payloads ADD COLUMN generated_at DATETIME",
+            "created_at": "ALTER TABLE publishing_payloads ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE publishing_payloads ADD COLUMN updated_at DATETIME",
         },
     )
 

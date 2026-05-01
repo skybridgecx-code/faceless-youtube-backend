@@ -409,6 +409,59 @@ class YouTubePayloadResponse(BaseModel):
     review_required: bool
 
 
+class PublishingPayloadRead(BaseModel):
+    id: int
+    video_id: int
+    payload_path: str
+    payload_status: Literal["draft", "blocked", "ready", "regenerated"] = "draft"
+    ready_for_manual_upload: bool = False
+    title: str
+    description: str
+    tags: list[str] = Field(default_factory=list)
+    category_id: str = "27"
+    privacy_status: str = "private"
+    made_for_kids: bool = False
+    video_file_path: str | None = None
+    thumbnail_image_path: str | None = None
+    export_path: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    manual_upload_checklist: list[str] = Field(default_factory=list)
+    generated_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    next_required_action: str = "Complete the next required workflow step."
+
+
+class PublishingPayloadGenerateResponse(BaseModel):
+    video_id: int
+    payload_id: int
+    payload_path: str
+    payload_status: Literal["draft", "blocked", "ready", "regenerated"] = "draft"
+    ready_for_manual_upload: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    manual_upload_checklist: list[str] = Field(default_factory=list)
+    next_required_action: str = "Complete the next required workflow step."
+    video_file_path: str | None = None
+    thumbnail_image_path: str | None = None
+    export_path: str | None = None
+
+
+class PublishingPayloadListItem(BaseModel):
+    payload_id: int
+    video_id: int
+    title: str
+    content_type: ContentType
+    payload_status: Literal["draft", "blocked", "ready", "regenerated"] = "draft"
+    ready_for_manual_upload: bool = False
+    blockers_count: int = 0
+    warnings_count: int = 0
+    payload_path: str
+    generated_at: datetime | None = None
+    next_required_action: str = "Complete the next required workflow step."
+
+
 class MarkPublishedRequest(BaseModel):
     external_id: str
     metadata_body: str = ""
@@ -469,6 +522,12 @@ class OperatorExport(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     export_path: str | None = None
     youtube_payload_readiness: dict[str, object]
+    publishing_payload_path: str | None = None
+    publishing_payload_status: str | None = None
+    publishing_payload_ready_for_manual_upload: bool | None = None
+    publishing_payload_blockers: list[str] = Field(default_factory=list)
+    publishing_payload_warnings: list[str] = Field(default_factory=list)
+    publishing_payload_manual_upload_checklist: list[str] = Field(default_factory=list)
 
 
 class OpportunityCreate(BaseModel):

@@ -1235,6 +1235,181 @@ def test_operator_export_includes_generated_thumbnail_path_and_review_status() -
     assert written["thumbnail_review_status"] == "pending"
 
 
+def test_publishing_payload_generate_requires_internal_api_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    channel_id = client.post(
+        "/channels",
+        json={"name": "Payload Key Channel"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()["id"]
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Payload Key Video"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()
+
+    denied = client.post(f"/videos/{video['id']}/publishing-payload/generate")
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        f"/videos/{video['id']}/publishing-payload/generate",
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_publishing_payload_generate_blocked_when_gates_incomplete_and_has_no_side_effects() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Payload Blocked Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Payload Blocked Video"}).json()
+    before = client.get(f"/videos/{video['id']}").json()
+
+    response = client.post(f"/videos/{video['id']}/publishing-payload/generate")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payload_status"] == "blocked"
+    assert body["ready_for_manual_upload"] is False
+    assert body["blockers"]
+    assert body["manual_upload_checklist"]
+    payload_path = Path(body["payload_path"])
+    assert payload_path.exists()
+    assert payload_path.name == "publishing_payload.json"
+    assert str(payload_path).startswith(str(Path(os.environ["OUTPUT_DIR"]).resolve()))
+
+    after = client.get(f"/videos/{video['id']}").json()
+    assert after["approved"] == before["approved"]
+    assert after["preview_reviewed"] == before["preview_reviewed"]
+    assert after["status"] == before["status"]
+    assert client.post(f"/publish/{video['id']}/prepare-youtube-payload").status_code == 409
+
+
+def test_publishing_payload_generate_ready_when_gates_satisfied_and_includes_paths() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Payload Ready Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Payload Ready Video"}).json()
+    video_id = video["id"]
+
+    assert client.post(f"/videos/{video_id}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{video_id}").status_code == 200
+    _write_real_preview_file(video_id)
+    assert client.post(f"/videos/{video_id}/preview/review", json={"reviewed": True}).status_code == 200
+    assert client.post(f"/videos/{video_id}/package").status_code == 200
+    assert client.post(f"/publish/{video_id}/prepare-youtube-payload").status_code == 200
+    thumbnail = client.post(f"/videos/{video_id}/thumbnail/generate")
+    assert thumbnail.status_code == 200
+    thumbnail_path = thumbnail.json()["thumbnail_path"]
+    thumbnail_asset_id = thumbnail.json()["visual_asset_id"]
+    assert client.post(f"/visual-generation/assets/{thumbnail_asset_id}/approve").status_code == 200
+
+    export = client.get(f"/videos/{video_id}/operator-export")
+    assert export.status_code == 200
+    export_path = export.json()["export_path"]
+
+    before = client.get(f"/videos/{video_id}").json()
+    response = client.post(f"/videos/{video_id}/publishing-payload/generate")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready_for_manual_upload"] is True
+    assert body["payload_status"] in {"ready", "regenerated"}
+    assert body["video_file_path"] is not None
+    assert body["thumbnail_image_path"] == thumbnail_path
+    assert body["export_path"] == export_path
+    assert body["manual_upload_checklist"]
+    assert body["next_required_action"]
+    written = json.loads(Path(body["payload_path"]).read_text(encoding="utf-8"))
+    assert written["ready_for_manual_upload"] is True
+    assert written["youtube_payload"]["title"] == before["title"][:100]
+
+    after = client.get(f"/videos/{video_id}").json()
+    assert after["approved"] == before["approved"]
+    assert after["preview_reviewed"] == before["preview_reviewed"]
+    assert after["status"] == before["status"]
+
+
+def test_publishing_payload_read_and_list_filters() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Payload List Channel"}).json()["id"]
+
+    blocked_video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Payload Blocked Queue Video", "content_type": "long"},
+    ).json()
+    ready_video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Payload Ready Queue Video", "content_type": "short"},
+    ).json()
+
+    blocked_generate = client.post(f"/videos/{blocked_video['id']}/publishing-payload/generate")
+    assert blocked_generate.status_code == 200
+
+    assert client.post(f"/videos/{ready_video['id']}/generate", json={"stage": "all"}).status_code == 200
+    assert client.post(f"/videos/{ready_video['id']}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    assert client.post(f"/visual-assets/from-video/{ready_video['id']}").status_code == 200
+    _write_real_preview_file(ready_video["id"])
+    assert client.post(f"/videos/{ready_video['id']}/preview/review", json={"reviewed": True}).status_code == 200
+    assert client.post(f"/videos/{ready_video['id']}/package").status_code == 200
+    assert client.post(f"/publish/{ready_video['id']}/prepare-youtube-payload").status_code == 200
+    ready_generate = client.post(f"/videos/{ready_video['id']}/publishing-payload/generate")
+    assert ready_generate.status_code == 200
+
+    read_response = client.get(f"/videos/{ready_video['id']}/publishing-payload")
+    assert read_response.status_code == 200
+    read_body = read_response.json()
+    assert read_body["video_id"] == ready_video["id"]
+    assert read_body["ready_for_manual_upload"] is True
+
+    missing = client.get("/videos/999999/publishing-payload")
+    assert missing.status_code == 404
+
+    blocked_only = client.get("/publishing-payloads?status=blocked&limit=50")
+    assert blocked_only.status_code == 200
+    blocked_rows = blocked_only.json()
+    assert blocked_rows
+    assert all(row["payload_status"] == "blocked" for row in blocked_rows)
+
+    ready_only = client.get("/publishing-payloads?ready_for_manual_upload=true&limit=50")
+    assert ready_only.status_code == 200
+    ready_rows = ready_only.json()
+    assert ready_rows
+    assert all(row["ready_for_manual_upload"] is True for row in ready_rows)
+
+    short_only = client.get("/publishing-payloads?content_type=short&limit=50")
+    assert short_only.status_code == 200
+    short_rows = short_only.json()
+    assert short_rows
+    assert all(row["content_type"] == "short" for row in short_rows)
+
+    limit_over = client.get("/publishing-payloads?limit=201")
+    assert limit_over.status_code == 422
+
+
+def test_operator_export_includes_latest_publishing_payload_metadata_when_present() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Export Payload Metadata Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Export Payload Metadata Video"}).json()
+    video_id = video["id"]
+
+    base_export = client.get(f"/videos/{video_id}/operator-export")
+    assert base_export.status_code == 200
+    base_body = base_export.json()
+    assert base_body["publishing_payload_path"] is None
+    assert base_body["publishing_payload_status"] is None
+    assert base_body["publishing_payload_manual_upload_checklist"] == []
+
+    assert client.post(f"/videos/{video_id}/publishing-payload/generate").status_code == 200
+    with_payload = client.get(f"/videos/{video_id}/operator-export")
+    assert with_payload.status_code == 200
+    payload = with_payload.json()
+    assert payload["publishing_payload_path"]
+    assert payload["publishing_payload_status"] in {"blocked", "ready", "regenerated", "draft"}
+    assert isinstance(payload["publishing_payload_ready_for_manual_upload"], bool)
+    assert isinstance(payload["publishing_payload_blockers"], list)
+    assert isinstance(payload["publishing_payload_warnings"], list)
+    assert payload["publishing_payload_manual_upload_checklist"]
+
 def test_opportunity_routes_and_promotion_workflow() -> None:
     client = TestClient(app)
 

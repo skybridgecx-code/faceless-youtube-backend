@@ -123,6 +123,10 @@ class Video(Base):
         back_populates="video",
         cascade="all, delete-orphan",
     )
+    publishing_payloads: Mapped[list["PublishingPayload"]] = relationship(
+        back_populates="video",
+        cascade="all, delete-orphan",
+    )
     publish_records: Mapped[list["PublishRecord"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="video", cascade="all, delete-orphan")
     visual_plans: Mapped[list["VisualAssetPlan"]] = relationship(back_populates="video", cascade="all, delete-orphan")
@@ -178,6 +182,33 @@ class VideoPerformanceMetric(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     video: Mapped[Video] = relationship(back_populates="performance_metrics")
+
+
+class PublishingPayload(Base):
+    __tablename__ = "publishing_payloads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"), index=True, unique=True)
+    payload_path: Mapped[str] = mapped_column(Text, default="")
+    payload_status: Mapped[str] = mapped_column(String(40), default="draft", index=True)
+    ready_for_manual_upload: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    title: Mapped[str] = mapped_column(String(240), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags_json: Mapped[str] = mapped_column(Text, default="[]")
+    category_id: Mapped[str] = mapped_column(String(40), default="27")
+    privacy_status: Mapped[str] = mapped_column(String(40), default="private")
+    made_for_kids: Mapped[bool] = mapped_column(Boolean, default=False)
+    video_file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumbnail_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    export_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    blockers_json: Mapped[str] = mapped_column(Text, default="[]")
+    warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    manual_upload_checklist_json: Mapped[str] = mapped_column(Text, default="[]")
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    video: Mapped[Video] = relationship(back_populates="publishing_payloads")
 
 
 class PublishRecord(Base):

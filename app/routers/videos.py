@@ -26,6 +26,7 @@ from app.models import (
     AuditEvent,
     Channel,
     ContentAsset,
+    PublishingPayload,
     PublishRecord,
     Review,
     Video,
@@ -1093,6 +1094,12 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
         .limit(1)
     )
     youtube_payload_ready = youtube_record is not None
+    publishing_payload = db.scalar(
+        select(PublishingPayload)
+        .where(PublishingPayload.video_id == video.id)
+        .order_by(PublishingPayload.generated_at.desc(), PublishingPayload.updated_at.desc())
+        .limit(1)
+    )
 
     scene_number_by_scene_id: dict[int, int] = {}
     for row in visual_manifest.get("scenes", []):
@@ -1170,6 +1177,35 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
     export_dir.mkdir(parents=True, exist_ok=True)
     export_file = export_dir / "operator_export.json"
 
+    publishing_payload_blockers: list[str] = []
+    publishing_payload_warnings: list[str] = []
+    publishing_payload_checklist: list[str] = []
+    publishing_payload_path: str | None = None
+    publishing_payload_status: str | None = None
+    publishing_payload_ready: bool | None = None
+    if publishing_payload is not None:
+        try:
+            parsed_blockers = json.loads(publishing_payload.blockers_json or "[]")
+            if isinstance(parsed_blockers, list):
+                publishing_payload_blockers = [str(item) for item in parsed_blockers if str(item).strip()]
+        except json.JSONDecodeError:
+            publishing_payload_blockers = []
+        try:
+            parsed_warnings = json.loads(publishing_payload.warnings_json or "[]")
+            if isinstance(parsed_warnings, list):
+                publishing_payload_warnings = [str(item) for item in parsed_warnings if str(item).strip()]
+        except json.JSONDecodeError:
+            publishing_payload_warnings = []
+        try:
+            parsed_checklist = json.loads(publishing_payload.manual_upload_checklist_json or "[]")
+            if isinstance(parsed_checklist, list):
+                publishing_payload_checklist = [str(item) for item in parsed_checklist if str(item).strip()]
+        except json.JSONDecodeError:
+            publishing_payload_checklist = []
+        publishing_payload_path = publishing_payload.payload_path
+        publishing_payload_status = publishing_payload.payload_status
+        publishing_payload_ready = bool(publishing_payload.ready_for_manual_upload)
+
     payload = OperatorExport(
         video=video,
         workflow_status=video.status.value,
@@ -1206,6 +1242,12 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
         warnings=warnings,
         export_path=str(export_file),
         youtube_payload_readiness=youtube_payload_readiness,
+        publishing_payload_path=publishing_payload_path,
+        publishing_payload_status=publishing_payload_status,
+        publishing_payload_ready_for_manual_upload=publishing_payload_ready,
+        publishing_payload_blockers=publishing_payload_blockers,
+        publishing_payload_warnings=publishing_payload_warnings,
+        publishing_payload_manual_upload_checklist=publishing_payload_checklist,
     )
     export_file.write_text(
         json.dumps(payload.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
