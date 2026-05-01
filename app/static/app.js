@@ -17,6 +17,10 @@ const app = {
     lastComplianceReportByVideoId: {},
     opportunities: [],
     agents: [],
+    channelStudioAgents: [],
+    channelStudioSelectedAgentId: null,
+    channelStudioScoreboard: null,
+    channelStudioBatchResult: null,
     briefs: [],
     visualPlans: [],
     selectedVisualPlanId: null,
@@ -62,6 +66,7 @@ const app = {
     await this.loadGlobalAudit();
     await this.loadOpportunities();
     await this.loadAgents();
+    await this.loadChannelStudioData();
     await this.loadBriefs();
     await this.loadVisualPlans();
     await this.loadVisualGenerationData();
@@ -132,6 +137,7 @@ const app = {
     }
     if (page === 'agents') {
       this.loadAgents();
+      this.loadChannelStudioData();
     }
     if (page === 'producer') {
       this.loadExecutiveProducerRecommendation();
@@ -1239,6 +1245,317 @@ const app = {
     `).join('');
   },
 
+  getSelectedChannelStudioAgent() {
+    const selectedId = Number(this.state.channelStudioSelectedAgentId || 0);
+    if (!selectedId) return null;
+    return (this.state.channelStudioAgents || []).find(agent => Number(agent.id) === selectedId) || null;
+  },
+
+  async loadChannelStudioData() {
+    await Promise.all([
+      this.loadChannelStudioAgents(),
+      this.loadChannelStudioScoreboard()
+    ]);
+  },
+
+  async loadChannelStudioAgents() {
+    const list = document.getElementById('channelStudioAgentList');
+    try {
+      const res = await fetch('/agents/channel-studio');
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to load channel studio agents');
+      }
+      this.state.channelStudioAgents = Array.isArray(data) ? data : [];
+      if (!this.state.channelStudioSelectedAgentId && this.state.channelStudioAgents.length > 0) {
+        this.state.channelStudioSelectedAgentId = this.state.channelStudioAgents[0].id;
+      }
+      this.renderChannelStudioAgents();
+      this.renderChannelStudioSelectedAgent();
+      return this.state.channelStudioAgents;
+    } catch (err) {
+      this.state.channelStudioAgents = [];
+      this.state.channelStudioSelectedAgentId = null;
+      this.renderChannelStudioAgents();
+      this.renderChannelStudioSelectedAgent();
+      if (list) list.innerHTML = '<div class="empty-state">Failed to load channel studio agents.</div>';
+      this.log(`Channel studio agent load failed: ${err.message}`, 'error');
+      return [];
+    }
+  },
+
+  renderChannelStudioAgents() {
+    const list = document.getElementById('channelStudioAgentList');
+    if (!list) return;
+    const rows = Array.isArray(this.state.channelStudioAgents) ? this.state.channelStudioAgents : [];
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="empty-state">No channel studio agents yet. Seed defaults to begin planning.</div>';
+      return;
+    }
+    list.innerHTML = rows.map(agent => {
+      const selected = Number(this.state.channelStudioSelectedAgentId) === Number(agent.id);
+      return `
+        <article class="video-card ${selected ? 'selected' : ''}" style="padding:0.7rem;" onclick="app.selectChannelStudioAgent(${Number(agent.id)})">
+          <div class="video-header">
+            <div class="video-title">${this.escapeHtml(agent.name || '-')}</div>
+            <div class="video-status ${this.escapeHtml(agent.launch_status || 'planning')}">${this.escapeHtml(agent.launch_status || 'planning')}</div>
+          </div>
+          <div class="meta-row"><span class="meta-label">Niche</span><span class="meta-value">${this.escapeHtml(agent.niche || '-')}</span></div>
+          <div class="meta-row"><span class="meta-label">Launch Wave</span><span class="meta-value">${this.escapeHtml(String(agent.launch_wave || 1))}</span></div>
+        </article>
+      `;
+    }).join('');
+  },
+
+  selectChannelStudioAgent(agentId) {
+    const parsed = Number(agentId);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    this.state.channelStudioSelectedAgentId = parsed;
+    this.renderChannelStudioAgents();
+    this.renderChannelStudioSelectedAgent();
+  },
+
+  renderChannelStudioSelectedAgent() {
+    const agent = this.getSelectedChannelStudioAgent();
+    const panel = document.getElementById('channelStudioSelectedAgentPanel');
+    const batchSummary = document.getElementById('channelStudioBatchSummary');
+    if (!panel || !batchSummary) return;
+    if (!agent) {
+      panel.innerHTML = '<div class="empty-state">Select an agent to edit details and create a shorts batch.</div>';
+      batchSummary.innerHTML = '<div class="empty-state">No batch run yet.</div>';
+      return;
+    }
+
+    const pillars = Array.isArray(agent.content_pillars) ? agent.content_pillars : [];
+    panel.innerHTML = `
+      <div class="meta-row"><span class="meta-label">Agent</span><span class="meta-value">${this.escapeHtml(agent.name || '-')}</span></div>
+      <div class="agent-edit-grid">
+        <label class="agent-field"><span>Name</span><input id="channelStudioName" value="${this.escapeHtml(agent.name || '')}" /></label>
+        <label class="agent-field"><span>Niche</span><input id="channelStudioNiche" value="${this.escapeHtml(agent.niche || '')}" /></label>
+        <label class="agent-field"><span>Target Viewer</span><input id="channelStudioTargetViewer" value="${this.escapeHtml(agent.target_viewer || '')}" /></label>
+        <label class="agent-field"><span>Launch Wave</span><input type="number" min="1" max="12" id="channelStudioLaunchWave" value="${Number(agent.launch_wave || 1)}" /></label>
+        <label class="agent-field">
+          <span>Launch Status</span>
+          <select id="channelStudioLaunchStatus" class="form-select">
+            ${['planning', 'ready_to_launch', 'launched', 'paused', 'killed'].map(value => `<option value="${value}" ${agent.launch_status === value ? 'selected' : ''}>${value}</option>`).join('')}
+          </select>
+        </label>
+        <label class="agent-field"><span>Channel URL (optional)</span><input id="channelStudioChannelUrl" value="${this.escapeHtml(agent.channel_url || '')}" /></label>
+        <label class="agent-field"><span>Channel Handle (optional)</span><input id="channelStudioChannelHandle" value="${this.escapeHtml(agent.channel_handle || '')}" /></label>
+      </div>
+      <label class="agent-field"><span>Content Pillars (comma separated)</span><input id="channelStudioPillars" value="${this.escapeHtml(pillars.join(', '))}" /></label>
+      <label class="agent-field"><span>Title Style</span><textarea id="channelStudioTitleStyle" class="opportunity-input agent-textarea" rows="2">${this.escapeHtml(agent.title_style || '')}</textarea></label>
+      <label class="agent-field"><span>Thumbnail Style</span><textarea id="channelStudioThumbStyle" class="opportunity-input agent-textarea" rows="2">${this.escapeHtml(agent.thumbnail_style || '')}</textarea></label>
+      <label class="agent-field"><span>Script Style</span><textarea id="channelStudioScriptStyle" class="opportunity-input agent-textarea" rows="2">${this.escapeHtml(agent.script_style || '')}</textarea></label>
+      <label class="agent-field"><span>Compliance Notes</span><textarea id="channelStudioComplianceNotes" class="opportunity-input agent-textarea" rows="3">${this.escapeHtml(agent.compliance_notes || '')}</textarea></label>
+      <label class="agent-field"><span>Notes</span><textarea id="channelStudioNotes" class="opportunity-input agent-textarea" rows="2">${this.escapeHtml(agent.notes || '')}</textarea></label>
+      <div class="row-actions" style="margin-top:0.5rem;">
+        <button class="btn success" onclick="app.saveChannelStudioAgent()">Save Agent Profile</button>
+      </div>
+    `;
+
+    const batch = this.state.channelStudioBatchResult;
+    if (!batch || Number(batch.agent_id) !== Number(agent.id)) {
+      batchSummary.innerHTML = '<div class="empty-state">No batch run yet for this agent.</div>';
+      return;
+    }
+    batchSummary.innerHTML = `
+      <div class="meta-row"><span class="meta-label">Requested</span><span class="meta-value">${this.escapeHtml(String(batch.requested_count || 0))}</span></div>
+      <div class="meta-row"><span class="meta-label">Created</span><span class="meta-value">${this.escapeHtml(String(batch.created_count || 0))}</span></div>
+      <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(batch.next_required_action || '-')}</span></div>
+      <div class="meta-row"><span class="meta-label">Warnings</span><span class="meta-value">${this.escapeHtml((batch.warnings || []).join(' | ') || 'None')}</span></div>
+    `;
+  },
+
+  async seedDefaultChannelStudioAgents() {
+    const button = document.getElementById('btnSeedChannelStudioAgents');
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+    }
+    try {
+      const res = await fetch('/agents/seed-default-channel-studio', {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ([]));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to seed channel studio agents');
+      }
+      this.state.channelStudioAgents = Array.isArray(data) ? data : [];
+      if (this.state.channelStudioAgents.length > 0 && !this.state.channelStudioSelectedAgentId) {
+        this.state.channelStudioSelectedAgentId = this.state.channelStudioAgents[0].id;
+      }
+      this.renderChannelStudioAgents();
+      this.renderChannelStudioSelectedAgent();
+      await this.loadChannelStudioScoreboard();
+      this.log(`Seeded channel studio defaults (${this.state.channelStudioAgents.length} agents).`, 'success');
+    } catch (err) {
+      this.log(`Seed channel studio agents failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
+    }
+  },
+
+  async saveChannelStudioAgent() {
+    const agent = this.getSelectedChannelStudioAgent();
+    if (!agent) {
+      this.log('Select a channel studio agent first.', 'error');
+      return;
+    }
+    const launchWave = Number(document.getElementById('channelStudioLaunchWave')?.value || 1);
+    const payload = {
+      name: document.getElementById('channelStudioName')?.value?.trim() || null,
+      niche: document.getElementById('channelStudioNiche')?.value?.trim() || null,
+      target_viewer: document.getElementById('channelStudioTargetViewer')?.value?.trim() || null,
+      content_pillars: (document.getElementById('channelStudioPillars')?.value || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean),
+      title_style: document.getElementById('channelStudioTitleStyle')?.value?.trim() || null,
+      thumbnail_style: document.getElementById('channelStudioThumbStyle')?.value?.trim() || null,
+      script_style: document.getElementById('channelStudioScriptStyle')?.value?.trim() || null,
+      compliance_notes: document.getElementById('channelStudioComplianceNotes')?.value?.trim() || null,
+      launch_wave: Number.isFinite(launchWave) ? Math.max(1, Math.min(12, launchWave)) : 1,
+      launch_status: document.getElementById('channelStudioLaunchStatus')?.value || 'planning',
+      channel_url: document.getElementById('channelStudioChannelUrl')?.value?.trim() || null,
+      channel_handle: document.getElementById('channelStudioChannelHandle')?.value?.trim() || null,
+      notes: document.getElementById('channelStudioNotes')?.value?.trim() || null
+    };
+    try {
+      const res = await fetch(`/agents/channel-studio/${agent.id}`, {
+        method: 'PATCH',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to save channel studio agent');
+      await this.loadChannelStudioAgents();
+      await this.loadChannelStudioScoreboard();
+      this.state.channelStudioSelectedAgentId = data.id;
+      this.renderChannelStudioSelectedAgent();
+      this.log(`Saved channel studio agent: ${data.name}.`, 'success');
+    } catch (err) {
+      this.log(`Save channel studio agent failed: ${err.message}`, 'error');
+    }
+  },
+
+  async generateShortsBatchForSelectedChannelStudioAgent() {
+    const agent = this.getSelectedChannelStudioAgent();
+    if (!agent) {
+      this.log('Select a channel studio agent first.', 'error');
+      return;
+    }
+    const count = Number(document.getElementById('channelStudioBatchCount')?.value || 5);
+    const topicSeed = document.getElementById('channelStudioTopicSeed')?.value?.trim() || null;
+    const autoGenerate = document.getElementById('channelStudioAutoGenerate')?.checked !== false;
+    const button = document.getElementById('btnGenerateChannelStudioShortsBatch');
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+    }
+    try {
+      const res = await fetch(`/agents/${agent.id}/shorts-batch`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          count: Number.isFinite(count) ? count : 5,
+          topic_seed: topicSeed,
+          auto_generate_assets: autoGenerate
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to create agent shorts batch');
+      this.state.channelStudioBatchResult = data;
+      this.renderChannelStudioSelectedAgent();
+      await this.loadVideos();
+      await this.loadChannelStudioScoreboard();
+      this.log(`Created shorts batch for ${data.agent_name} (${data.created_count} videos).`, 'success');
+    } catch (err) {
+      this.log(`Channel studio shorts batch failed: ${err.message}`, 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
+    }
+  },
+
+  async loadChannelStudioScoreboard() {
+    const board = document.getElementById('channelStudioScoreboardList');
+    const waves = document.getElementById('channelStudioLaunchWavesList');
+    try {
+      const res = await fetch('/agents/channel-studio/scoreboard');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load channel studio scoreboard');
+      this.state.channelStudioScoreboard = data;
+      this.renderChannelStudioScoreboard();
+      return data;
+    } catch (err) {
+      this.state.channelStudioScoreboard = null;
+      if (board) board.innerHTML = '<div class="empty-state">Failed to load scoreboard.</div>';
+      if (waves) waves.innerHTML = '<div class="empty-state">Failed to load launch waves.</div>';
+      this.log(`Channel studio scoreboard failed: ${err.message}`, 'error');
+      return null;
+    }
+  },
+
+  renderChannelStudioScoreboard() {
+    const board = document.getElementById('channelStudioScoreboardList');
+    const waves = document.getElementById('channelStudioLaunchWavesList');
+    const note = document.getElementById('channelStudioManualNote');
+    if (!board || !waves || !note) return;
+    const payload = this.state.channelStudioScoreboard;
+    if (!payload) {
+      board.innerHTML = '<div class="empty-state">No scoreboard available.</div>';
+      waves.innerHTML = '<div class="empty-state">No launch wave plan available.</div>';
+      note.textContent = 'Planning/local only - no YouTube channels are created here.';
+      return;
+    }
+    note.textContent = payload.manual_local_note || 'Planning/local only - no YouTube channels are created here.';
+    const rows = Array.isArray(payload.agents) ? payload.agents : [];
+    if (rows.length === 0) {
+      board.innerHTML = '<div class="empty-state">Seed channel studio agents to view readiness scoreboard.</div>';
+    } else {
+      board.innerHTML = rows.map(item => `
+        <article class="video-card" style="padding:0.7rem;">
+          <div class="video-header">
+            <div class="video-title">${this.escapeHtml(item.agent_name || '-')}</div>
+            <div class="video-status ${this.escapeHtml(item.launch_status || 'planning')}">${this.escapeHtml(item.launch_status || 'planning')}</div>
+          </div>
+          <div class="meta-row"><span class="meta-label">Wave</span><span class="meta-value">${this.escapeHtml(String(item.launch_wave || 1))}</span></div>
+          <div class="meta-row"><span class="meta-label">Readiness Score</span><span class="meta-value">${this.escapeHtml(String(item.readiness_score || 0))}/100</span></div>
+          <div class="meta-row"><span class="meta-label">Videos / Shorts</span><span class="meta-value">${this.escapeHtml(String(item.videos_created || 0))} / ${this.escapeHtml(String(item.shorts_created || 0))}</span></div>
+          <div class="meta-row"><span class="meta-label">Approved / Payload Ready</span><span class="meta-value">${this.escapeHtml(String(item.approved_count || 0))} / ${this.escapeHtml(String(item.payload_ready_count || 0))}</span></div>
+          <div class="meta-row"><span class="meta-label">Thumbnail Pending</span><span class="meta-value">${this.escapeHtml(String(item.thumbnail_pending_count || 0))}</span></div>
+          <div class="meta-row"><span class="meta-label">Metrics Sample</span><span class="meta-value">${this.escapeHtml(String(item.metrics_sample_size || 0))}</span></div>
+          <div class="meta-row"><span class="meta-label">Avg CTR / Retention</span><span class="meta-value">${item.average_ctr == null ? '-' : `${item.average_ctr}%`} / ${item.average_retention == null ? '-' : `${item.average_retention}%`}</span></div>
+          <div class="meta-row"><span class="meta-label">Recommended Action</span><span class="meta-value">${this.escapeHtml(item.recommended_action || '-')}</span></div>
+        </article>
+      `).join('');
+    }
+
+    const waveRows = Array.isArray(payload.launch_waves) ? payload.launch_waves : [];
+    if (waveRows.length === 0) {
+      waves.innerHTML = '<div class="empty-state">No wave planning groups yet.</div>';
+      return;
+    }
+    waves.innerHTML = waveRows.map(wave => `
+      <article class="video-card" style="padding:0.7rem;">
+        <div class="video-header">
+          <div class="video-title">Launch Wave ${this.escapeHtml(String(wave.launch_wave || 1))}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Agents</span><span class="meta-value">${this.escapeHtml((wave.agents || []).map(agent => agent.agent_name).join(' | ') || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Readiness Summary</span><span class="meta-value">${this.escapeHtml(wave.readiness_summary || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Blockers</span><span class="meta-value">${this.escapeHtml((wave.blockers || []).join(' | ') || 'None')}</span></div>
+        <div class="meta-row"><span class="meta-label">Recommended Action</span><span class="meta-value">${this.escapeHtml(wave.recommended_action || '-')}</span></div>
+      </article>
+    `).join('');
+  },
+
   async saveAgent(agentId) {
     const focus = document.getElementById(`agentFocus-${agentId}`)?.value?.trim();
     const monetizationFocus = document.getElementById(`agentMonetization-${agentId}`)?.value?.trim();
@@ -1247,7 +1564,7 @@ const app = {
     try {
       const res = await fetch(`/agents/${agentId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           focus: focus ?? null,
           monetization_focus: monetizationFocus ?? null,
@@ -1271,7 +1588,7 @@ const app = {
     try {
       const res = await fetch(`/agents/${agentId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ is_active: !!isActive })
       });
       const data = await res.json().catch(() => ({}));

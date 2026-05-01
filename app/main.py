@@ -17,6 +17,7 @@ from app.db import get_db, init_db
 from app.models import AuditEvent, PublishRecord, Video, VideoStatus, VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
 from app.routers import (
     agents,
+    channel_studio,
     channels,
     command_center,
     executive_producer,
@@ -108,6 +109,7 @@ app.include_router(publishing_payloads.router)
 app.include_router(publish.router)
 app.include_router(opportunities.router)
 app.include_router(performance.router)
+app.include_router(channel_studio.router)
 app.include_router(executive_producer.router)
 app.include_router(agents.router)
 app.include_router(command_center.router)

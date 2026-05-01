@@ -2903,6 +2903,168 @@ def test_patch_agent_updates_editable_fields() -> None:
     assert body["is_active"] is False
 
 
+def test_channel_studio_seed_requires_internal_api_key_and_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    denied = client.post("/agents/seed-default-channel-studio")
+    assert denied.status_code == 401
+
+    first = client.post(
+        "/agents/seed-default-channel-studio",
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert first.status_code == 200
+    first_rows = first.json()
+    assert len(first_rows) == 7
+
+    second = client.post(
+        "/agents/seed-default-channel-studio",
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert second.status_code == 200
+    second_rows = second.json()
+    assert len(second_rows) == 7
+    assert sorted(row["name"] for row in first_rows) == sorted(row["name"] for row in second_rows)
+
+    channels = client.get("/channels").json()
+    assert channels == []
+    assert all((row.get("channel_url") or "") == "" for row in second_rows)
+
+
+def test_channel_studio_list_and_patch_update_fields() -> None:
+    client = TestClient(app)
+    assert client.post("/agents/seed-default-channel-studio").status_code == 200
+
+    listing = client.get("/agents/channel-studio")
+    assert listing.status_code == 200
+    agents = listing.json()
+    assert len(agents) == 7
+    target = agents[0]
+
+    patch = client.patch(
+        f"/agents/channel-studio/{target['id']}",
+        json={
+            "name": "AI Tools / Automation Prime",
+            "niche": "AI tools and automation workflows",
+            "target_viewer": "Ops founders",
+            "content_pillars": ["Tool comparisons", "Automation playbooks", "Prompt systems"],
+            "title_style": "Outcome-first hooks",
+            "thumbnail_style": "Bold contrast style",
+            "script_style": "45-60 second one-point structure",
+            "compliance_notes": "No guarantees",
+            "launch_wave": 2,
+            "launch_status": "ready_to_launch",
+            "channel_url": None,
+            "channel_handle": "@aitoolsprime",
+            "notes": "Planning only",
+        },
+    )
+    assert patch.status_code == 200
+    body = patch.json()
+    assert body["name"] == "AI Tools / Automation Prime"
+    assert body["launch_status"] == "ready_to_launch"
+    assert body["launch_wave"] == 2
+    assert body["content_pillars"] == ["Tool comparisons", "Automation playbooks", "Prompt systems"]
+
+    invalid = client.patch(
+        f"/agents/channel-studio/{target['id']}",
+        json={"launch_status": "invalid_status"},
+    )
+    assert invalid.status_code == 422
+
+
+def test_channel_studio_agent_shorts_batch_requires_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    assert client.post("/agents/seed-default-channel-studio").status_code == 200
+    agent_id = client.get("/agents/channel-studio").json()[0]["id"]
+
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+    denied = client.post(f"/agents/{agent_id}/shorts-batch", json={"count": 2})
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        f"/agents/{agent_id}/shorts-batch",
+        json={"count": 2},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_channel_studio_agent_shorts_batch_caps_count_and_preserves_manual_gates() -> None:
+    client = TestClient(app)
+    assert client.post("/agents/seed-default-channel-studio").status_code == 200
+    agent = client.get("/agents/channel-studio").json()[0]
+
+    response = client.post(
+        f"/agents/{agent['id']}/shorts-batch",
+        json={"count": 12, "topic_seed": "Local operator workflow", "auto_generate_assets": True},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_id"] == agent["id"]
+    assert payload["requested_count"] == 12
+    assert payload["created_count"] == 10
+    assert payload["videos"]
+    assert any("max per batch" in warning.lower() for warning in payload["warnings"])
+
+    first_video_id = payload["videos"][0]["id"]
+    video = client.get(f"/videos/{first_video_id}").json()
+    assert video["channel_studio_agent_id"] == agent["id"]
+    assert video["content_type"] == "short"
+    assert video["approved"] is False
+    assert video["preview_reviewed"] is False
+    assert video["niche"] == agent["niche"]
+    assert video["target_viewer"] == agent["target_viewer"]
+    assert video["notes"]
+    assert "channel studio agent" in video["notes"].lower()
+    assert any(video["pillar"] == pillar for pillar in agent["content_pillars"])
+
+
+def test_channel_studio_scoreboard_has_waves_and_conservative_signals() -> None:
+    client = TestClient(app)
+    assert client.post("/agents/seed-default-channel-studio").status_code == 200
+    agent = client.get("/agents/channel-studio").json()[0]
+
+    empty_scoreboard = client.get("/agents/channel-studio/scoreboard")
+    assert empty_scoreboard.status_code == 200
+    empty_body = empty_scoreboard.json()
+    row_before = next(item for item in empty_body["agents"] if item["agent_id"] == agent["id"])
+    assert row_before["metrics_sample_size"] == 0
+    assert row_before["readiness_score"] >= 0
+    assert row_before["readiness_score"] <= 100
+    assert "guarantee" not in row_before["recommended_action"].lower()
+    assert empty_body["launch_waves"]
+
+    batch = client.post(
+        f"/agents/{agent['id']}/shorts-batch",
+        json={"count": 1, "auto_generate_assets": True},
+    )
+    assert batch.status_code == 200
+    video_id = batch.json()["videos"][0]["id"]
+    thumb = client.post(f"/videos/{video_id}/thumbnail/generate")
+    assert thumb.status_code == 200
+
+    with_pending = client.get("/agents/channel-studio/scoreboard").json()
+    row_pending = next(item for item in with_pending["agents"] if item["agent_id"] == agent["id"])
+    assert row_pending["thumbnail_pending_count"] >= 1
+
+    assert client.post(f"/visual-generation/assets/{thumb.json()['visual_asset_id']}/approve").status_code == 200
+    assert client.post(f"/videos/{video_id}/review", json={"passed": True, "notes": "approved"}).status_code == 200
+    _write_real_preview_file(video_id)
+    assert client.post(f"/videos/{video_id}/preview/review", json={"reviewed": True}).status_code == 200
+    assert client.post(f"/videos/{video_id}/package").status_code == 200
+    assert client.post(f"/publish/{video_id}/prepare-youtube-payload").status_code == 200
+    assert client.post(f"/videos/{video_id}/publishing-payload/generate").status_code == 200
+
+    ready_board = client.get("/agents/channel-studio/scoreboard")
+    assert ready_board.status_code == 200
+    row_ready = next(item for item in ready_board.json()["agents"] if item["agent_id"] == agent["id"])
+    assert row_ready["payload_ready_count"] >= 1
+    assert row_ready["readiness_score"] >= row_pending["readiness_score"]
+    assert row_ready["readiness_score"] <= 100
+
+
 def test_agent_opportunities_and_videos_routes_and_promotion_carry_agent() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Agent Mapping Channel"}).json()["id"]

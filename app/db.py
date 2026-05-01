@@ -32,6 +32,7 @@ def init_db() -> None:
     _apply_sqlite_video_preview_columns()
     _apply_sqlite_video_opportunity_review_columns()
     _apply_sqlite_agent_system_columns()
+    _apply_sqlite_channel_studio_columns()
     _apply_sqlite_production_brief_columns()
     _apply_sqlite_visual_asset_factory_columns()
     _apply_sqlite_visual_generation_queue_columns()
@@ -99,12 +100,39 @@ def _apply_sqlite_agent_system_columns() -> None:
         "videos",
         {
             "assigned_agent_id": "ALTER TABLE videos ADD COLUMN assigned_agent_id INTEGER",
+            "channel_studio_agent_id": "ALTER TABLE videos ADD COLUMN channel_studio_agent_id INTEGER",
         },
     )
     _apply_sqlite_additive_columns(
         "video_opportunities",
         {
             "assigned_agent_id": "ALTER TABLE video_opportunities ADD COLUMN assigned_agent_id INTEGER",
+        },
+    )
+
+
+def _apply_sqlite_channel_studio_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    _apply_sqlite_additive_columns(
+        "channel_studio_agents",
+        {
+            "name": "ALTER TABLE channel_studio_agents ADD COLUMN name TEXT DEFAULT ''",
+            "niche": "ALTER TABLE channel_studio_agents ADD COLUMN niche TEXT DEFAULT ''",
+            "target_viewer": "ALTER TABLE channel_studio_agents ADD COLUMN target_viewer TEXT DEFAULT ''",
+            "content_pillars_json": "ALTER TABLE channel_studio_agents ADD COLUMN content_pillars_json TEXT DEFAULT '[]'",
+            "title_style": "ALTER TABLE channel_studio_agents ADD COLUMN title_style TEXT DEFAULT ''",
+            "thumbnail_style": "ALTER TABLE channel_studio_agents ADD COLUMN thumbnail_style TEXT DEFAULT ''",
+            "script_style": "ALTER TABLE channel_studio_agents ADD COLUMN script_style TEXT DEFAULT ''",
+            "compliance_notes": "ALTER TABLE channel_studio_agents ADD COLUMN compliance_notes TEXT DEFAULT ''",
+            "launch_wave": "ALTER TABLE channel_studio_agents ADD COLUMN launch_wave INTEGER DEFAULT 1",
+            "launch_status": "ALTER TABLE channel_studio_agents ADD COLUMN launch_status TEXT DEFAULT 'planning'",
+            "channel_url": "ALTER TABLE channel_studio_agents ADD COLUMN channel_url TEXT",
+            "channel_handle": "ALTER TABLE channel_studio_agents ADD COLUMN channel_handle TEXT",
+            "notes": "ALTER TABLE channel_studio_agents ADD COLUMN notes TEXT",
+            "created_at": "ALTER TABLE channel_studio_agents ADD COLUMN created_at DATETIME",
+            "updated_at": "ALTER TABLE channel_studio_agents ADD COLUMN updated_at DATETIME",
         },
     )
     _apply_sqlite_additive_columns(

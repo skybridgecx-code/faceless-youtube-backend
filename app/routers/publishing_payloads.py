@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import AssetType, ContentType, PublishingPayload, Video, VisualAssetPlan, VisualGeneratedAsset
+from app.models import AssetType, ChannelStudioAgent, ContentType, PublishingPayload, Video, VisualAssetPlan, VisualGeneratedAsset
 from app.routers.videos import build_readiness, get_video_or_404, latest_asset, package_dir_for, sync_preview_state
 from app.schemas import PublishingPayloadGenerateResponse, PublishingPayloadListItem, PublishingPayloadRead
 from app.services.audit import log_audit_event
@@ -251,6 +251,7 @@ def generate_publishing_payload(video_id: int, db: Session = Depends(get_db)) ->
     existing = db.scalar(select(PublishingPayload).where(PublishingPayload.video_id == video.id).limit(1))
     payload_status = _render_payload_status(existing=existing, blockers=blockers)
     performance_payload = performance_payload_for_video(video.id, latest_performance_for_video(db, video.id))
+    channel_studio_agent = db.get(ChannelStudioAgent, video.channel_studio_agent_id) if video.channel_studio_agent_id else None
 
     payload_document = {
         "video_id": video.id,
@@ -268,6 +269,18 @@ def generate_publishing_payload(video_id: int, db: Session = Depends(get_db)) ->
             "target_viewer": video.target_viewer,
             "publish_status": video.publish_status,
             "publish_date": video.publish_date,
+            "channel_studio_agent": (
+                {
+                    "id": channel_studio_agent.id,
+                    "name": channel_studio_agent.name,
+                    "niche": channel_studio_agent.niche,
+                    "target_viewer": channel_studio_agent.target_viewer,
+                    "launch_wave": channel_studio_agent.launch_wave,
+                    "launch_status": channel_studio_agent.launch_status,
+                }
+                if channel_studio_agent is not None
+                else None
+            ),
         },
         "youtube_payload": {
             "title": video.title[:100],

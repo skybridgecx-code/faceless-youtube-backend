@@ -69,6 +69,7 @@ class VideoRead(BaseModel):
     id: int
     channel_id: int
     assigned_agent_id: int | None = None
+    channel_studio_agent_id: int | None = None
     title: str
     content_type: ContentType
     pillar: str
@@ -617,6 +618,124 @@ class ContentAgentUpdate(BaseModel):
     compliance_notes: str | None = None
     production_rules: str | None = None
     is_active: bool | None = None
+
+
+ChannelStudioLaunchStatus = Literal["planning", "ready_to_launch", "launched", "paused", "killed"]
+
+
+class ChannelStudioAgentRead(BaseModel):
+    id: int
+    name: str
+    niche: str
+    target_viewer: str
+    content_pillars: list[str] = Field(default_factory=list)
+    title_style: str
+    thumbnail_style: str
+    script_style: str
+    compliance_notes: str
+    launch_wave: int = 1
+    launch_status: ChannelStudioLaunchStatus = "planning"
+    channel_url: str | None = None
+    channel_handle: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChannelStudioAgentUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=180)
+    niche: str | None = Field(default=None, max_length=240)
+    target_viewer: str | None = Field(default=None, max_length=240)
+    content_pillars: list[str] | None = None
+    title_style: str | None = None
+    thumbnail_style: str | None = None
+    script_style: str | None = None
+    compliance_notes: str | None = None
+    launch_wave: int | None = Field(default=None, ge=1, le=12)
+    launch_status: ChannelStudioLaunchStatus | None = None
+    channel_url: str | None = None
+    channel_handle: str | None = Field(default=None, max_length=120)
+    notes: str | None = None
+
+    @field_validator(
+        "name",
+        "niche",
+        "target_viewer",
+        "title_style",
+        "thumbnail_style",
+        "script_style",
+        "compliance_notes",
+        "channel_url",
+        "channel_handle",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class ChannelStudioShortsBatchRequest(BaseModel):
+    count: int = Field(default=5, ge=1, le=50)
+    topic_seed: str | None = Field(default=None, max_length=200)
+    auto_generate_assets: bool = True
+
+    @field_validator("topic_seed", mode="before")
+    @classmethod
+    def reject_html_payload(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if re.search(r"<[^>]+>", text) or re.search(r"(?i)<\s*script\b", text):
+            raise ValueError("HTML or script tags are not allowed.")
+        return text
+
+
+class ChannelStudioShortsBatchResponse(BaseModel):
+    agent_id: int
+    agent_name: str
+    requested_count: int
+    created_count: int
+    videos: list[ShortsBatchVideoSummary] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_required_action: str
+
+
+class ChannelStudioScoreboardRow(BaseModel):
+    agent_id: int
+    agent_name: str
+    niche: str
+    launch_status: ChannelStudioLaunchStatus
+    launch_wave: int
+    videos_created: int
+    shorts_created: int
+    approved_count: int
+    payload_ready_count: int
+    thumbnail_pending_count: int
+    metrics_sample_size: int
+    average_ctr: float | None = None
+    average_retention: float | None = None
+    readiness_score: int
+    recommended_action: str
+
+
+class ChannelStudioWaveSummary(BaseModel):
+    launch_wave: int
+    agents: list[ChannelStudioScoreboardRow] = Field(default_factory=list)
+    readiness_summary: str
+    blockers: list[str] = Field(default_factory=list)
+    recommended_action: str
+
+
+class ChannelStudioScoreboardResponse(BaseModel):
+    manual_local_note: str = "Planning/local only - no YouTube channels are created here."
+    agents: list[ChannelStudioScoreboardRow] = Field(default_factory=list)
+    launch_waves: list[ChannelStudioWaveSummary] = Field(default_factory=list)
 
 
 class ExecutiveProducerRecommendationRead(BaseModel):

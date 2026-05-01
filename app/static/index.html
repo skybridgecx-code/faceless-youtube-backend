@@ -516,17 +516,75 @@
         </section>
 
         <section class="page hidden" id="page-agents">
-          <div class="panel">
-            <div class="panel-header">
-              <h2>Content Agents</h2>
-              <div class="header-actions">
-                <button class="btn" onclick="app.loadAgents()">Refresh</button>
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Content Agents</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadAgents()">Refresh</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note">Local deterministic agent-channel system. These are operator-managed profiles, not external analytics.</div>
+                <div id="agentsList" class="agents-grid">
+                  <div class="empty-state">Loading agents...</div>
+                </div>
               </div>
             </div>
-            <div class="panel-body compact-body">
-              <div class="opportunity-note">Local deterministic agent-channel system. These are operator-managed profiles, not external analytics.</div>
-              <div id="agentsList" class="agents-grid">
-                <div class="empty-state">Loading agents...</div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Multi-Agent Channel Studio</h2>
+                <div class="header-actions">
+                  <button class="btn success" id="btnSeedChannelStudioAgents" onclick="app.seedDefaultChannelStudioAgents()">Seed 7 Default Agents</button>
+                  <button class="btn" onclick="app.loadChannelStudioData()">Refresh Studio</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note" id="channelStudioManualNote">Planning/local only - no YouTube channels are created here.</div>
+                <div class="panel-grid split-grid" style="margin-top:0.6rem;">
+                  <div>
+                    <h3 class="subheading">Agent Profiles</h3>
+                    <div id="channelStudioAgentList" class="video-list">
+                      <div class="empty-state">No channel studio agents yet.</div>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 class="subheading">Selected Agent</h3>
+                    <div id="channelStudioSelectedAgentPanel">
+                      <div class="empty-state">Select an agent to edit details and create a shorts batch.</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.75rem;">
+                  <div class="flow-card-title">Generate Shorts Batch For Selected Agent</div>
+                  <div class="agent-edit-grid">
+                    <label class="agent-field"><span>Count</span><input type="number" id="channelStudioBatchCount" min="1" max="10" value="5" /></label>
+                    <label class="agent-field"><span>Topic Seed (optional)</span><input type="text" id="channelStudioTopicSeed" placeholder="missed calls workflow" /></label>
+                  </div>
+                  <label class="check-item" style="margin-top:0.45rem;">
+                    <input type="checkbox" id="channelStudioAutoGenerate" checked />
+                    <span>Auto-generate initial assets</span>
+                  </label>
+                  <div class="settings-actions" style="margin-top:0.5rem;">
+                    <button class="btn primary" id="btnGenerateChannelStudioShortsBatch" onclick="app.generateShortsBatchForSelectedChannelStudioAgent()">Generate Shorts Batch for Agent</button>
+                  </div>
+                  <div id="channelStudioBatchSummary" style="margin-top:0.6rem;">
+                    <div class="empty-state">No batch run yet.</div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.75rem;">
+                  <div class="flow-card-title">Readiness Scoreboard</div>
+                  <div id="channelStudioScoreboardList" class="video-list">
+                    <div class="empty-state">No scoreboard available yet.</div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.75rem;">
+                  <div class="flow-card-title">Launch Wave Planner</div>
+                  <div id="channelStudioLaunchWavesList" class="video-list">
+                    <div class="empty-state">No launch wave plan yet.</div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

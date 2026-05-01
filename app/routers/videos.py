@@ -25,6 +25,7 @@ from app.models import (
     AssetType,
     AuditEvent,
     Channel,
+    ChannelStudioAgent,
     ContentAsset,
     PublishingPayload,
     PublishRecord,
@@ -1094,6 +1095,7 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
         .limit(1)
     )
     youtube_payload_ready = youtube_record is not None
+    channel_studio_agent = db.get(ChannelStudioAgent, video.channel_studio_agent_id) if video.channel_studio_agent_id else None
     publishing_payload = db.scalar(
         select(PublishingPayload)
         .where(PublishingPayload.video_id == video.id)
@@ -1232,6 +1234,18 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
             "script": _latest_asset_reference(video, AssetType.script),
             "youtube_metadata": _latest_asset_reference(video, AssetType.youtube_metadata),
             "description": _latest_asset_reference(video, AssetType.description),
+            "channel_studio_agent": (
+                {
+                    "id": channel_studio_agent.id,
+                    "name": channel_studio_agent.name,
+                    "niche": channel_studio_agent.niche,
+                    "target_viewer": channel_studio_agent.target_viewer,
+                    "launch_wave": channel_studio_agent.launch_wave,
+                    "launch_status": channel_studio_agent.launch_status,
+                }
+                if channel_studio_agent is not None
+                else {"exists": False}
+            ),
         },
         performance=performance_payload,
         thumbnail_image_path=thumbnail_image_path,

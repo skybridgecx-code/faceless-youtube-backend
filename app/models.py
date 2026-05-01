@@ -87,12 +87,38 @@ class ContentAgent(Base):
     channel: Mapped[Channel] = relationship(back_populates="agents")
 
 
+class ChannelStudioAgent(Base):
+    __tablename__ = "channel_studio_agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(180), unique=True, index=True)
+    niche: Mapped[str] = mapped_column(String(240))
+    target_viewer: Mapped[str] = mapped_column(String(240))
+    content_pillars_json: Mapped[str] = mapped_column(Text, default="[]")
+    title_style: Mapped[str] = mapped_column(Text, default="")
+    thumbnail_style: Mapped[str] = mapped_column(Text, default="")
+    script_style: Mapped[str] = mapped_column(Text, default="")
+    compliance_notes: Mapped[str] = mapped_column(Text, default="")
+    launch_wave: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    launch_status: Mapped[str] = mapped_column(String(40), default="planning", index=True)
+    channel_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel_handle: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Video(Base):
     __tablename__ = "videos"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
     assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("content_agents.id"), nullable=True, index=True)
+    channel_studio_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("channel_studio_agents.id"),
+        nullable=True,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(240), index=True)
     content_type: Mapped[ContentType] = mapped_column(SAEnum(ContentType), default=ContentType.long)
     pillar: Mapped[str] = mapped_column(String(120), default="AI call handling")
