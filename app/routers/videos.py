@@ -31,8 +31,10 @@ from app.models import (
     Video,
     VideoStatus,
     VisualAssetPlan,
+    VisualAssetPrompt,
     VisualGeneratedAsset,
     VisualGenerationJob,
+    VisualScene,
 )
 from app.schemas import (
     AssetPreview,
@@ -47,6 +49,7 @@ from app.schemas import (
     PackageResponse,
     PreviewReviewUpdate,
     PreviewStatus,
+    ThumbnailGenerationResponse,
     ReviewCreate,
     ReviewRead,
     VideoBatchCreate,
@@ -70,6 +73,9 @@ from app.services.content_engine import (
 )
 from app.services.package_builder import build_video_package, slugify
 from app.services.preview_visuals import build_preview_visual_manifest, build_visual_asset_review_summary
+from app.services.thumbnail_generation import generate_thumbnail_image
+from app.services.visual_asset_review import asset_review_fields, update_visual_asset_review
+from app.services.visual_assets import build_visual_plan_for_video
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 PREVIEW_FILENAME = "draft.mp4"
@@ -847,6 +853,80 @@ def _latest_asset_reference(video: Video, asset_type: AssetType, preview_chars: 
     }
 
 
+def _latest_visual_plan_for_video(db: Session, video_id: int) -> VisualAssetPlan | None:
+    return db.scalar(
+        select(VisualAssetPlan)
+        .where(VisualAssetPlan.video_id == video_id)
+        .order_by(VisualAssetPlan.updated_at.desc(), VisualAssetPlan.created_at.desc())
+        .limit(1)
+    )
+
+
+def _ensure_visual_plan_for_thumbnail(db: Session, video: Video, thumbnail_prompt: str) -> VisualAssetPlan:
+    plan = _latest_visual_plan_for_video(db, video.id)
+    if plan is not None:
+        return plan
+
+    draft = build_visual_plan_for_video(video)
+    plan = VisualAssetPlan(
+        source_type="video",
+        video_id=video.id,
+        brief_id=None,
+        status="draft",
+        title=draft.title,
+        thumbnail_prompt=thumbnail_prompt or draft.thumbnail_prompt,
+        thumbnail_text=video.thumbnail_text or draft.thumbnail_text,
+        motion_style=draft.motion_style,
+        color_direction=draft.color_direction,
+        plan_notes=draft.plan_notes,
+        safety_notes=draft.safety_notes,
+    )
+    db.add(plan)
+    db.flush()
+
+    db.add(
+        VisualAssetPrompt(
+            plan_id=plan.id,
+            scene_id=None,
+            prompt_type="thumbnail",
+            label="Thumbnail prompt",
+            prompt_text=thumbnail_prompt or draft.thumbnail_prompt,
+        )
+    )
+    for scene in draft.scenes:
+        scene_row = VisualScene(
+            plan_id=plan.id,
+            scene_number=scene.scene_number,
+            scene_title=scene.scene_title,
+            narrative_beat=scene.narrative_beat,
+            on_screen_text=scene.on_screen_text,
+            image_prompt=scene.image_prompt,
+            animation_prompt=scene.animation_prompt,
+            b_roll_prompt=scene.b_roll_prompt,
+            dashboard_demo_prompt=scene.dashboard_demo_prompt,
+            safety_notes=scene.safety_notes,
+        )
+        db.add(scene_row)
+        db.flush()
+        for prompt_type, label, prompt_text in [
+            ("image", "Image prompt", scene.image_prompt),
+            ("animation", "Animation prompt", scene.animation_prompt),
+            ("b_roll", "B-roll prompt", scene.b_roll_prompt),
+            ("dashboard_demo", "Dashboard/demo shot prompt", scene.dashboard_demo_prompt),
+        ]:
+            db.add(
+                VisualAssetPrompt(
+                    plan_id=plan.id,
+                    scene_id=scene_row.id,
+                    prompt_type=prompt_type,
+                    label=f"Scene {scene.scene_number}: {label}",
+                    prompt_text=prompt_text,
+                )
+            )
+    db.flush()
+    return plan
+
+
 @router.post("", response_model=VideoRead)
 def create_video(payload: VideoCreate, db: Session = Depends(get_db)) -> Video:
     channel = db.get(Channel, payload.channel_id)
@@ -1041,11 +1121,25 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
             )
         )
 
+    thumbnail_visual_asset = next((row for row in visual_assets if row.asset_type == "thumbnail"), None)
+    thumbnail_image_path = thumbnail_visual_asset.file_path if thumbnail_visual_asset else None
+    thumbnail_review_status = thumbnail_visual_asset.review_status if thumbnail_visual_asset else None
+
     blockers = list(readiness.blocking_reasons)
     if readiness.preview_has_unapproved_visual_assets:
         blockers.append("Registered visual assets include pending/rejected review states.")
     blockers = _dedupe_messages(blockers)
     warnings = _dedupe_messages(list(readiness.warnings))
+    thumbnail_warning: str | None = None
+    if not thumbnail_image_path:
+        thumbnail_warning = "Thumbnail image is not generated yet."
+        warnings.append(thumbnail_warning)
+    elif thumbnail_review_status != "approved":
+        thumbnail_warning = (
+            f"Thumbnail visual asset review is '{thumbnail_review_status or 'pending'}'; manual approval is still required."
+        )
+        warnings.append(thumbnail_warning)
+    warnings = _dedupe_messages(warnings)
 
     ready_for_manual_upload = len(blockers) == 0
     youtube_payload_readiness = {
@@ -1092,10 +1186,14 @@ def export_operator_summary(video_id: int, db: Session = Depends(get_db)) -> Ope
         content_references={
             "title": video.title,
             "thumbnail_text": video.thumbnail_text,
+            "thumbnail_prompt": _latest_asset_reference(video, AssetType.thumbnail_prompt),
             "script": _latest_asset_reference(video, AssetType.script),
             "youtube_metadata": _latest_asset_reference(video, AssetType.youtube_metadata),
             "description": _latest_asset_reference(video, AssetType.description),
         },
+        thumbnail_image_path=thumbnail_image_path,
+        thumbnail_review_status=thumbnail_review_status,
+        thumbnail_warning=thumbnail_warning,
         ready_for_manual_upload=ready_for_manual_upload,
         blockers=blockers,
         warnings=warnings,
@@ -1503,6 +1601,107 @@ def generate_assets(video_id: int, payload: GenerateRequest = GenerateRequest(),
         metadata={"stage": payload.stage, "asset_types": [asset.asset_type.value for asset in assets], "count": len(assets)},
     )
     return assets
+
+
+@router.post("/{video_id}/thumbnail/generate", response_model=ThumbnailGenerationResponse)
+def generate_thumbnail_image_asset(video_id: int, db: Session = Depends(get_db)) -> ThumbnailGenerationResponse:
+    video = get_video_or_404(db, video_id)
+    thumbnail_prompt_asset = latest_asset(video, AssetType.thumbnail_prompt)
+    prompt_used = (thumbnail_prompt_asset.body if thumbnail_prompt_asset else build_thumbnail_prompt(video)).strip()
+    result = generate_thumbnail_image(video, prompt_used)
+
+    thumbnail_path = Path(result.thumbnail_path).resolve()
+    if not thumbnail_path.is_file():
+        raise HTTPException(status_code=502, detail="Thumbnail generation did not produce a local file.")
+
+    plan = _ensure_visual_plan_for_thumbnail(db, video, result.prompt_used)
+    plan.thumbnail_prompt = result.prompt_used
+    if video.thumbnail_text:
+        plan.thumbnail_text = video.thumbnail_text
+    thumbnail_prompt_row = db.scalar(
+        select(VisualAssetPrompt)
+        .where(VisualAssetPrompt.plan_id == plan.id, VisualAssetPrompt.prompt_type == "thumbnail")
+        .limit(1)
+    )
+    if thumbnail_prompt_row is None:
+        db.add(
+            VisualAssetPrompt(
+                plan_id=plan.id,
+                scene_id=None,
+                prompt_type="thumbnail",
+                label="Thumbnail prompt",
+                prompt_text=result.prompt_used,
+            )
+        )
+    else:
+        thumbnail_prompt_row.prompt_text = result.prompt_used
+
+    thumbnail_asset = db.scalar(
+        select(VisualGeneratedAsset)
+        .where(
+            VisualGeneratedAsset.visual_asset_plan_id == plan.id,
+            VisualGeneratedAsset.asset_type == "thumbnail",
+        )
+        .order_by(VisualGeneratedAsset.created_at.desc())
+        .limit(1)
+    )
+    if thumbnail_asset is None:
+        thumbnail_asset = VisualGeneratedAsset(
+            visual_asset_plan_id=plan.id,
+            visual_scene_id=None,
+            generation_job_id=None,
+            asset_type="thumbnail",
+            file_path=str(thumbnail_path),
+            file_exists=True,
+            mime_type="image/png",
+            notes="Generated by local thumbnail workflow.",
+        )
+        db.add(thumbnail_asset)
+        db.flush()
+    else:
+        thumbnail_asset.file_path = str(thumbnail_path)
+        thumbnail_asset.file_exists = True
+        thumbnail_asset.mime_type = "image/png"
+        thumbnail_asset.notes = "Generated by local thumbnail workflow."
+        db.flush()
+
+    update_visual_asset_review(db, thumbnail_asset, "pending", "Thumbnail requires manual operator review.")
+    db.commit()
+    db.refresh(video)
+    db.refresh(thumbnail_asset)
+
+    readiness = build_readiness(video, db)
+    review_status = str(asset_review_fields(db, thumbnail_asset).get("review_status") or "pending")
+    warnings = list(result.warnings)
+    warnings.append("Thumbnail visual asset requires manual review before final use.")
+    warnings = _dedupe_messages(warnings)
+
+    log_audit_event(
+        db,
+        "thumbnail_image_generated",
+        f"Generated local thumbnail image for: {video.title}",
+        video_id=video.id,
+        metadata={
+            "visual_asset_id": thumbnail_asset.id,
+            "thumbnail_path": str(thumbnail_path),
+            "provider": result.provider,
+            "fallback_used": result.fallback_used,
+            "review_status": review_status,
+            "plan_id": plan.id,
+        },
+    )
+    return ThumbnailGenerationResponse(
+        video_id=video.id,
+        thumbnail_path=str(thumbnail_path),
+        visual_asset_id=thumbnail_asset.id,
+        provider=result.provider,
+        fallback_used=result.fallback_used,
+        generated=result.generated,
+        review_status=review_status,
+        warnings=warnings,
+        next_required_action=readiness.next_required_action,
+        prompt_used=result.prompt_used,
+    )
 
 
 @router.patch("/{video_id}/assets/{asset_type}", response_model=AssetRead)

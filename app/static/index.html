@@ -735,6 +735,7 @@
                 <div class="panel-header">
                   <h2>Visual Asset Plan</h2>
                   <div class="header-actions">
+                    <button class="btn" onclick="app.generateThumbnailImage()">Generate Thumbnail Image</button>
                     <button class="btn" onclick="app.createVisualPlanFromSelectedVideo()">Create Visual Plan</button>
                     <button class="btn success" onclick="app.markSelectedVisualPlanReady()">Mark Plan Ready For Generation</button>
                     <button class="btn" onclick="app.queueVisualGenerationJobs()">Queue Generation Jobs</button>
@@ -773,6 +774,14 @@
                   <div class="flow-card" style="margin-top:0.65rem;">
                     <div class="flow-card-title">Provider Payload (Manual Export)</div>
                     <pre id="visualProviderPayloadPreview" class="json-preview">No payload exported yet.</pre>
+                  </div>
+                  <div class="flow-card" style="margin-top:0.65rem;">
+                    <div class="flow-card-title">Thumbnail Image</div>
+                    <div class="meta-row"><span class="meta-label">Path</span><span class="meta-value" id="thumbnailImagePath">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Provider</span><span class="meta-value" id="thumbnailImageProvider">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Fallback Used</span><span class="meta-value" id="thumbnailImageFallback">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Review Status</span><span class="meta-value" id="thumbnailImageReviewStatus">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Warning</span><span class="meta-value" id="thumbnailImageWarning">Thumbnail needs manual visual asset review when pending/rejected.</span></div>
                   </div>
                   <div class="flow-card" style="margin-top:0.65rem;">
                     <div class="flow-card-title">Generation Jobs</div>

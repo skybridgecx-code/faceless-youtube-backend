@@ -321,6 +321,19 @@ class PreviewReviewUpdate(BaseModel):
     reviewed: bool = True
 
 
+class ThumbnailGenerationResponse(BaseModel):
+    video_id: int
+    thumbnail_path: str
+    visual_asset_id: int
+    provider: str
+    fallback_used: bool = False
+    generated: bool = False
+    review_status: str = "pending"
+    warnings: list[str] = Field(default_factory=list)
+    next_required_action: str = "Complete the next required workflow step."
+    prompt_used: str
+
+
 class YouTubePayloadResponse(BaseModel):
     video_id: int
     title: str
@@ -383,6 +396,9 @@ class OperatorExport(BaseModel):
     preview_path: str | None = None
     visual_assets: list[OperatorExportVisualAsset] = Field(default_factory=list)
     content_references: dict[str, object] = Field(default_factory=dict)
+    thumbnail_image_path: str | None = None
+    thumbnail_review_status: str | None = None
+    thumbnail_warning: str | None = None
     ready_for_manual_upload: bool = False
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

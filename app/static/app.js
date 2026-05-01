@@ -22,6 +22,7 @@ const app = {
     selectedVisualPlanId: null,
     visualGenerationJobs: [],
     visualGeneratedAssets: [],
+    thumbnailGenerationByVideoId: {},
     assetReviewQueue: [],
     assetReviewQueueFilter: 'pending',
     visualProviderPayload: null,
@@ -1603,6 +1604,7 @@ const app = {
       this.renderDashboardVisualAssetStatus();
       this.renderVisualPlanSection();
       this.renderPipelineDaily(this.state.pipelineDaily);
+      this.renderThumbnailImageStatus();
       await this.loadAssetReviewQueue(true);
     } catch (err) {
       this.log(`Error loading visual generation data: ${err.message}`, 'error');
@@ -1610,6 +1612,7 @@ const app = {
       this.state.visualGeneratedAssets = [];
       this.renderDashboardVisualAssetStatus();
       this.renderVisualPlanSection();
+      this.renderThumbnailImageStatus();
       this.state.assetReviewQueue = [];
       this.renderAssetReviewQueue();
     }
@@ -1710,6 +1713,20 @@ const app = {
   getVisualAssetsForPlan(planId) {
     if (!planId) return [];
     return (this.state.visualGeneratedAssets || []).filter(asset => Number(asset.visual_asset_plan_id) === Number(planId));
+  },
+
+  getThumbnailVisualAssetForVideo(videoId) {
+    if (!videoId) return null;
+    const planIds = new Set(this.getVisualPlansForVideo(videoId).map(plan => Number(plan.id)));
+    if (planIds.size === 0) return null;
+    const rows = (this.state.visualGeneratedAssets || [])
+      .filter(asset =>
+        planIds.has(Number(asset.visual_asset_plan_id))
+        && (asset.asset_type || '').toLowerCase() === 'thumbnail'
+        && !!asset.file_exists
+      )
+      .sort((a, b) => Number(b.id) - Number(a.id));
+    return rows[0] || null;
   },
 
   getVisualPlansForBrief(briefId) {
@@ -3125,6 +3142,32 @@ const app = {
     this.renderVisualPlanSection();
   },
 
+  async generateThumbnailImage() {
+    const selected = this.requireSelectedVideo('generate thumbnail image');
+    if (!selected) return;
+    try {
+      const res = await fetch(`/videos/${selected.id}/thumbnail/generate`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to generate thumbnail image');
+      }
+      this.state.thumbnailGenerationByVideoId[selected.id] = data;
+      const fallbackLabel = data.fallback_used ? 'yes' : 'no';
+      this.log(`Generated thumbnail image (${data.provider}, fallback: ${fallbackLabel}).`, 'success');
+      await this.loadVisualPlans();
+      await this.loadVisualGenerationData();
+      await this.loadReadiness();
+      await this.loadPreviewStatus();
+      await this.loadPipelineDaily();
+      this.renderThumbnailImageStatus();
+    } catch (err) {
+      this.log(`Generate thumbnail image failed: ${err.message}`, 'error');
+    }
+  },
+
   setSelectedVisualPlan(planId) {
     this.state.selectedVisualPlanId = Number(planId) || null;
     this.renderVisualPlanSection();
@@ -3151,6 +3194,7 @@ const app = {
       payloadEl.textContent = 'No payload exported yet.';
       this.renderVisualGenerationJobs(null);
       this.renderVisualGeneratedAssets(null);
+      this.renderThumbnailImageStatus();
       return;
     }
 
@@ -3165,6 +3209,7 @@ const app = {
       payloadEl.textContent = 'No payload exported yet.';
       this.renderVisualGenerationJobs(null);
       this.renderVisualGeneratedAssets(null);
+      this.renderThumbnailImageStatus();
       return;
     }
 
@@ -3187,6 +3232,7 @@ const app = {
 
     this.renderVisualGenerationJobs(selectedPlan);
     this.renderVisualGeneratedAssets(selectedPlan);
+    this.renderThumbnailImageStatus();
 
     const scenes = Array.isArray(selectedPlan.scenes) ? [...selectedPlan.scenes].sort((a, b) => (a.scene_number || 0) - (b.scene_number || 0)) : [];
     bodyEl.innerHTML = `
@@ -3218,6 +3264,53 @@ const app = {
         `).join('')}
       </div>
     `;
+  },
+
+  renderThumbnailImageStatus() {
+    const pathEl = document.getElementById('thumbnailImagePath');
+    const providerEl = document.getElementById('thumbnailImageProvider');
+    const fallbackEl = document.getElementById('thumbnailImageFallback');
+    const reviewEl = document.getElementById('thumbnailImageReviewStatus');
+    const warningEl = document.getElementById('thumbnailImageWarning');
+    if (!pathEl || !providerEl || !fallbackEl || !reviewEl || !warningEl) return;
+
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      pathEl.textContent = '-';
+      providerEl.textContent = '-';
+      fallbackEl.textContent = '-';
+      reviewEl.textContent = '-';
+      warningEl.textContent = 'Select a video to generate or inspect thumbnail status.';
+      return;
+    }
+
+    const endpointResult = this.state.thumbnailGenerationByVideoId?.[selected.id] || null;
+    const previewStatus = this.state.previewStatusByVideoId?.[selected.id] || null;
+    const thumbnailAsset = this.getThumbnailVisualAssetForVideo(selected.id);
+
+    const path = thumbnailAsset?.file_path || previewStatus?.visual_thumbnail_path || endpointResult?.thumbnail_path || '-';
+    const provider = endpointResult?.provider || '-';
+    const fallbackUsed = endpointResult ? (endpointResult.fallback_used ? 'yes' : 'no') : '-';
+    const reviewStatus = thumbnailAsset?.review_status || endpointResult?.review_status || '-';
+
+    let warning = 'Thumbnail image not generated yet.';
+    if (path !== '-') {
+      if (reviewStatus !== 'approved') {
+        warning = `Thumbnail review status is ${reviewStatus || 'pending'}; manual approval is required.`;
+      } else {
+        warning = 'Thumbnail visual asset is approved.';
+      }
+    }
+    const endpointWarnings = Array.isArray(endpointResult?.warnings) ? endpointResult.warnings : [];
+    if (endpointWarnings.length > 0) {
+      warning = endpointWarnings.join(' | ');
+    }
+
+    pathEl.textContent = path;
+    providerEl.textContent = provider;
+    fallbackEl.textContent = fallbackUsed;
+    reviewEl.textContent = reviewStatus;
+    warningEl.textContent = warning;
   },
 
   openReviewModal() {
@@ -3440,10 +3533,12 @@ const app = {
       }
       this.state.previewStatusByVideoId[selected.id] = data;
       this.renderPreviewStatus(data);
+      this.renderThumbnailImageStatus();
       return data;
     } catch (err) {
       this.log(`Preview status error: ${err.message}`, 'error');
       this.renderPreviewStatus(null);
+      this.renderThumbnailImageStatus();
       return null;
     }
   },

@@ -1049,6 +1049,13 @@ def test_operator_export_generates_local_file_with_blockers_and_visual_statuses(
     assert payload["blockers"]
     assert payload["video"]["preview_reviewed"] is False
     assert payload["video"]["approved"] is False
+    if payload["thumbnail_image_path"] is None:
+        assert payload["thumbnail_review_status"] is None
+        assert payload["thumbnail_warning"] == "Thumbnail image is not generated yet."
+    else:
+        assert payload["thumbnail_review_status"] in {"pending", "approved", "rejected"}
+        if payload["thumbnail_review_status"] != "approved":
+            assert "manual approval" in (payload["thumbnail_warning"] or "").lower()
     assert payload["export_path"]
     export_path = Path(payload["export_path"])
     assert export_path.exists()
@@ -1076,6 +1083,30 @@ def test_operator_export_generates_local_file_with_blockers_and_visual_statuses(
     assert after_video["preview_reviewed"] == before_video["preview_reviewed"]
     assert after_video["approved"] == before_video["approved"]
     assert pending_asset["id"] in {row["asset_id"] for row in visual_rows}
+
+
+def test_operator_export_includes_generated_thumbnail_path_and_review_status() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Operator Export Thumbnail Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Operator Export Thumbnail Video"}).json()
+    video_id = video["id"]
+
+    thumbnail = client.post(f"/videos/{video_id}/thumbnail/generate")
+    assert thumbnail.status_code == 200
+    thumbnail_body = thumbnail.json()
+    assert thumbnail_body["review_status"] == "pending"
+
+    export_response = client.get(f"/videos/{video_id}/operator-export")
+    assert export_response.status_code == 200
+    payload = export_response.json()
+    assert payload["thumbnail_image_path"] == thumbnail_body["thumbnail_path"]
+    assert payload["thumbnail_review_status"] == "pending"
+    assert "manual approval" in (payload["thumbnail_warning"] or "").lower()
+
+    export_path = Path(payload["export_path"])
+    written = json.loads(export_path.read_text(encoding="utf-8"))
+    assert written["thumbnail_image_path"] == thumbnail_body["thumbnail_path"]
+    assert written["thumbnail_review_status"] == "pending"
 
 
 def test_opportunity_routes_and_promotion_workflow() -> None:
@@ -1626,6 +1657,69 @@ def test_visual_generation_write_routes_require_internal_api_key_when_configured
         headers={"X-Internal-API-Key": "test-internal-key"},
     )
     assert allowed.status_code == 200
+
+
+def test_thumbnail_generate_endpoint_requires_internal_api_key_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "internal_api_key", "test-internal-key")
+
+    channel_id = client.post(
+        "/channels",
+        json={"name": "Thumbnail Key Channel"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()["id"]
+    video = client.post(
+        "/videos",
+        json={"channel_id": channel_id, "title": "Thumbnail Key Video"},
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    ).json()
+
+    denied = client.post(f"/videos/{video['id']}/thumbnail/generate")
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        f"/videos/{video['id']}/thumbnail/generate",
+        headers={"X-Internal-API-Key": "test-internal-key"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_thumbnail_generate_endpoint_creates_asset_and_keeps_manual_gates() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Thumbnail Generate Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Thumbnail Generate Video"}).json()
+
+    response = client.post(f"/videos/{video['id']}/thumbnail/generate")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["video_id"] == video["id"]
+    assert payload["fallback_used"] is True
+    assert payload["provider"] == "placeholder"
+    assert payload["review_status"] == "pending"
+    assert payload["visual_asset_id"] > 0
+    assert payload["prompt_used"]
+    thumbnail_path = Path(payload["thumbnail_path"])
+    assert thumbnail_path.exists()
+    assert thumbnail_path.is_file()
+
+    visual_asset = client.get(f"/visual-generation/assets/{payload['visual_asset_id']}").json()
+    assert visual_asset["asset_type"] == "thumbnail"
+    assert visual_asset["file_exists"] is True
+    assert visual_asset["file_path"] == str(thumbnail_path)
+    queue_rows = client.get(
+        f"/visual-generation/assets/review-queue?review_status=pending&video_id={video['id']}"
+    ).json()
+    assert any(row["id"] == payload["visual_asset_id"] and row["review_status"] == "pending" for row in queue_rows)
+
+    refreshed_video = client.get(f"/videos/{video['id']}").json()
+    assert refreshed_video["approved"] is False
+    assert refreshed_video["preview_reviewed"] is False
+
+
+def test_thumbnail_generate_endpoint_missing_video_returns_404() -> None:
+    client = TestClient(app)
+    response = client.post("/videos/999999/thumbnail/generate")
+    assert response.status_code == 404
 
 
 def test_visual_generation_asset_review_queue_defaults_to_pending_and_includes_context() -> None:

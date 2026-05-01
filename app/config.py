@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     rate_limit_write_per_minute: int = 60
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    image_generation_provider: str = "placeholder"
+    image_generation_api_key: str | None = None
+    image_generation_model: str = "gpt-image-1"
     youtube_data_api_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -52,6 +55,14 @@ class Settings(BaseSettings):
             raise RuntimeError("OPENAI_MODEL must not be empty.")
         if not re.fullmatch(r"[A-Za-z0-9._:-]+", model_name):
             raise RuntimeError("OPENAI_MODEL contains invalid characters.")
+        image_provider = self.image_generation_provider.strip().lower()
+        if not image_provider:
+            raise RuntimeError("IMAGE_GENERATION_PROVIDER must not be empty.")
+        image_model = self.image_generation_model.strip()
+        if not image_model:
+            raise RuntimeError("IMAGE_GENERATION_MODEL must not be empty.")
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+", image_model):
+            raise RuntimeError("IMAGE_GENERATION_MODEL contains invalid characters.")
 
     @property
     def output_path(self) -> Path:
