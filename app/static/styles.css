@@ -5,8 +5,8 @@
   --studio-elev: #222222;
   --studio-border: #323232;
   --studio-hover: #2a2a2a;
-  --studio-blue: #3ea6ff;
-  --studio-blue-deep: #0b84f3;
+  --studio-blue: #9b5cff;
+  --studio-blue-deep: #7a2aff;
   --studio-text: #f1f1f1;
   --studio-muted: #a8a8a8;
   --studio-dim: #6f6f6f;
@@ -82,7 +82,7 @@ body {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: #ff3d3d;
+  background: var(--studio-blue);
   display: inline-flex;
   align-items: center;
   justify-content: center;

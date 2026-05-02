@@ -3013,8 +3013,13 @@ const app = {
 
       row.innerHTML = `
         <td>
-          <div class="video-title-main">${this.escapeHtml(video.title || 'Untitled')}</div>
-          <div class="video-meta-line">${this.escapeHtml(video.pillar || 'No pillar')} • ${this.escapeHtml(video.pain_point || 'No pain point')}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="font-size:12px;color:var(--studio-muted);border:1px solid var(--studio-border);padding:4px 8px;border-radius:6px;background:#0f0f0f;">#${this.escapeHtml(String(video.id || '-'))}</div>
+            <div>
+              <div class="video-title-main">${this.escapeHtml(video.title || 'Untitled')}</div>
+              <div class="video-meta-line">${this.escapeHtml(video.pillar || 'No pillar')} • ${this.escapeHtml(video.pain_point || 'No pain point')}</div>
+            </div>
+          </div>
         </td>
         <td><span class="video-status ${workflowStatus}">${this.escapeHtml(workflowStatus)}</span></td>
         <td><span class="video-status ${publishStatus}">${this.escapeHtml(publishStatus)}</span></td>
@@ -3081,11 +3086,12 @@ const app = {
     }
 
     const selectedVideoTitle = document.getElementById('selectedVideoTitle');
-    if (selectedVideoTitle) selectedVideoTitle.textContent = `Selected Video: ${video.title}`;
+    const titleWithId = `Selected video #${video.id} — ${video.title}`;
+    if (selectedVideoTitle) selectedVideoTitle.textContent = titleWithId;
     const previewSelectedVideoTitle = document.getElementById('previewSelectedVideoTitle');
-    if (previewSelectedVideoTitle) previewSelectedVideoTitle.textContent = video.title;
+    if (previewSelectedVideoTitle) previewSelectedVideoTitle.textContent = `#${video.id} — ${video.title}`;
     const complianceSelected = document.getElementById('complianceSelectedVideo');
-    if (complianceSelected) complianceSelected.textContent = video.title;
+    if (complianceSelected) complianceSelected.textContent = `#${video.id} — ${video.title}`;
 
     const selectedVideoActions = document.getElementById('selectedVideoActions');
     const metadataDisplay = document.getElementById('metadataDisplay');
@@ -3474,11 +3480,35 @@ const app = {
     this.actionWrapper(
       'btnDynamic',
       'Generate All Assets',
-      { method: 'POST' },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'metadata' }) },
       id => `/videos/${id}/generate`,
       () => 'Generated all assets.',
       { reloadAssets: true, keepComplianceReport: false }
     );
+  },
+
+  async generateMetadata() {
+    const selected = this.requireSelectedVideo('generate metadata');
+    if (!selected) return;
+    const btn = document.getElementById('btnDynamic');
+    if (btn) { btn.classList.add('loading'); btn.disabled = true; }
+    try {
+      const res = await fetch(`/videos/${selected.id}/generate`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ stage: 'metadata' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to generate metadata');
+      this.log('Metadata generation requested.', 'success');
+      await this.refreshAfterMutation({ reloadAssets: false, reloadCalendar: false, reloadAudit: true });
+      return data;
+    } catch (err) {
+      this.log(`Generate metadata failed: ${err.message}`, 'error');
+      return null;
+    } finally {
+      if (btn) { btn.classList.remove('loading'); btn.disabled = false; }
+    }
   },
 
   async loadAssets() {
@@ -4729,7 +4759,15 @@ const app = {
       list.innerHTML = '<div class="empty-state">No publishing payload records found for current filters.</div>';
       return;
     }
-    list.innerHTML = rows.map(item => `
+
+    // Only show truly ready-for-manual-upload items (Phase 29 rule)
+    const readyRows = rows.filter(item => item.ready_for_manual_upload === true && Number(item.blockers_count || 0) === 0);
+    const draftOnlyRows = rows.filter(item => (item.preview_rendered || item.preview_path) && !item.ready_for_manual_upload);
+
+    if (readyRows.length === 0) {
+      list.innerHTML = '<div class="empty-state">No approved packages ready for manual upload. Complete Final Approval and ensure final production export is ready.</div>';
+    } else {
+      list.innerHTML = readyRows.map(item => `
       <article class="video-card" style="padding:0.7rem;">
         <div class="video-header">
           <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
@@ -4746,6 +4784,20 @@ const app = {
         </div>
       </article>
     `).join('');
+    }
+
+    if (draftOnlyRows.length > 0) {
+      // Inform operator that these are draft-preview-only and not final-production-ready
+      const draftNote = document.createElement('div');
+      draftNote.className = 'flow-card';
+      draftNote.style.marginTop = '10px';
+      draftNote.innerHTML = `
+        <div class="flow-card-title">Draft-only previews (not YouTube-ready)</div>
+        <div class="flow-card-body">These items have draft previews but final production export/payload is not ready. Do NOT upload draft previews to YouTube.</div>
+        <div style="margin-top:8px;">${draftOnlyRows.map(i => `<div class="meta-row"><span class="meta-label">#${Number(i.video_id)}</span><span class="meta-value">${this.escapeHtml(i.title || '-')}</span> — <em style="color:var(--studio-muted);">${this.escapeHtml(i.next_required_action || 'Final export required')}</em></div>`).join('')}</div>
+      `;
+      list.appendChild(draftNote);
+    }
   },
 
   async openPublishingPayloadVideo(videoId) {
