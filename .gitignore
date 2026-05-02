@@ -6,3 +6,5 @@ content_factory.db
 test_content_factory.db
 out/
 .pytest_cache/
+
+.claude/
