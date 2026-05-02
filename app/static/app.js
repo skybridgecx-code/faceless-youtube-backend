@@ -68,6 +68,8 @@ const app = {
     await this.loadAutopilotFinalApprovalQueue();
     await this.loadPublishingPayloadQueue();
     await this.loadGlobalAudit();
+    await this.loadPipelineDaily();
+    this.renderExecutiveDashboard();
   },
 
   setupNavigation() {
@@ -94,6 +96,16 @@ const app = {
     });
   },
 
+  async refreshExecutiveDashboard() {
+    await this.loadVideos();
+    await this.loadAutopilotRuns();
+    await this.loadAutopilotFinalApprovalQueue();
+    await this.loadPublishingPayloadQueue();
+    await this.loadPipelineDaily();
+    await this.loadGlobalAudit();
+    this.renderExecutiveDashboard();
+  },
+
   setActivePage(page) {
     this.state.activePage = page;
     document.querySelectorAll('.page').forEach(section => section.classList.add('hidden'));
@@ -107,9 +119,9 @@ const app = {
     });
 
     const titleMap = {
-      dashboard: 'Dashboard',
+      dashboard: 'Executive Dashboard',
       'review-prep': 'Review Prep',
-      'final-approval': 'Final Approval',
+      'final-approval': 'Final Production',
       'manual-upload': 'Manual Upload',
       advanced: 'Advanced / Debug',
       opportunities: 'Opportunities',
@@ -119,7 +131,7 @@ const app = {
       briefs: 'Briefs',
       pipeline: 'Pipeline',
       content: 'Content',
-      assets: 'Assets',
+      assets: 'Preview / Assets',
       publishing: 'Publishing',
       compliance: 'Compliance',
       audit: 'Audit'
@@ -153,10 +165,15 @@ const app = {
     if (page === 'dashboard') {
       this.loadAutopilotRuns();
       this.loadAutopilotFinalApprovalQueue();
+      this.loadPublishingPayloadQueue();
+      this.loadPipelineDaily();
+      this.loadGlobalAudit();
+      this.renderExecutiveDashboard();
     }
     if (page === 'review-prep') {
       this.loadAutopilotRuns();
       this.loadAutopilotFinalApprovalQueue();
+      this.setActivePage('dashboard');
     }
     if (page === 'final-approval') {
       this.loadAutopilotFinalApprovalQueue();
@@ -298,6 +315,7 @@ const app = {
       this.renderVideoList();
       this.updateKPIs();
       this.renderDashboardVisualAssetStatus();
+      this.renderPipelineVideoRows();
       if (this.state.pipelineSummary) {
         this.renderGuidedFlow(this.state.pipelineSummary);
       }
@@ -659,6 +677,105 @@ const app = {
         <div class="meta-row"><span class="meta-label">Blocked</span><span class="meta-value">${this.escapeHtml(String(item.blocked_count || 0))}</span></div>
       </article>
     `).join('');
+    this.renderExecutiveDashboard();
+  },
+
+  getVideoDisplayTitle(videoId, title) {
+    const id = Number(videoId);
+    const safeId = Number.isFinite(id) ? id : '-';
+    const label = title && String(title).trim() ? String(title).trim() : `Video #${safeId}`;
+    return `#${safeId} — ${label}`;
+  },
+
+  getPublishingPayloadRowByVideoId(videoId) {
+    const id = Number(videoId);
+    if (!Number.isFinite(id)) return null;
+    const rows = Array.isArray(this.state.publishingPayloadQueue) ? this.state.publishingPayloadQueue : [];
+    return rows.find(row => Number(row.video_id) === id) || null;
+  },
+
+  getFinalQueueBlockAssessment(item) {
+    const blockersCount = Number(item?.blockers_count || 0);
+    const readinessStatus = String(item?.readiness_status || '').toLowerCase();
+    const nextAction = String(item?.next_required_action || '').toLowerCase();
+    const payloadStatus = String(item?.publishing_payload_status || '').toLowerCase();
+    const livePayload = this.getPublishingPayloadRowByVideoId(item?.video_id);
+    const livePayloadStatus = String(livePayload?.payload_status || '').toLowerCase();
+    const livePayloadReady = livePayload?.ready_for_manual_upload === true;
+    const livePayloadBlockers = Number(livePayload?.blockers_count || 0);
+    const missingSignal = nextAction.includes('missing');
+    const blockedSignal = blockersCount > 0 || readinessStatus === 'blocked' || missingSignal;
+    const stalePacket = !!item?.final_review_packet_path && (
+      blockedSignal
+      || payloadStatus === 'blocked'
+      || livePayloadStatus === 'blocked'
+      || livePayloadBlockers > 0
+      || (livePayload && !livePayloadReady)
+    );
+    const blocked = blockedSignal || payloadStatus === 'blocked' || livePayloadStatus === 'blocked' || livePayloadBlockers > 0;
+    const canApprove = !!item?.final_review_packet_path && !blocked && readinessStatus !== 'needs_human_fix' && !missingSignal;
+    return { blocked, canApprove, stalePacket, livePayload };
+  },
+
+  renderExecutiveDashboard() {
+    const blockedEl = document.getElementById('kpiBlockedVideos');
+    const draftReadyEl = document.getElementById('kpiDraftPreviewsReady');
+    const finalReadyEl = document.getElementById('kpiFinalProductionReady');
+    const manualReadyEl = document.getElementById('kpiManualUploadReady');
+    if (!blockedEl || !draftReadyEl || !finalReadyEl || !manualReadyEl) return;
+
+    const videos = Array.isArray(this.state.videos) ? this.state.videos : [];
+    const finalQueue = Array.isArray(this.state.autopilotFinalApprovalQueue) ? this.state.autopilotFinalApprovalQueue : [];
+    const payloadRows = Array.isArray(this.state.publishingPayloadQueue) ? this.state.publishingPayloadQueue : [];
+
+    const blockedCount = finalQueue.filter(item => this.getFinalQueueBlockAssessment(item).blocked).length;
+    const finalReadyCount = finalQueue.filter(item => this.getFinalQueueBlockAssessment(item).canApprove).length;
+    const manualReadyCount = payloadRows.filter(item => item.ready_for_manual_upload === true && Number(item.blockers_count || 0) === 0).length;
+    const manualReadyVideoIds = new Set(
+      payloadRows
+        .filter(item => item.ready_for_manual_upload === true && Number(item.blockers_count || 0) === 0)
+        .map(item => Number(item.video_id))
+        .filter(Number.isFinite)
+    );
+    const draftPreviewCount = videos.filter(video => !!video.rendered_preview_path && !manualReadyVideoIds.has(Number(video.id))).length;
+
+    blockedEl.textContent = String(blockedCount);
+    finalReadyEl.textContent = String(finalReadyCount);
+    manualReadyEl.textContent = String(manualReadyCount);
+    draftReadyEl.textContent = String(draftPreviewCount);
+    this.renderExecutivePriorityQueue();
+  },
+
+  renderExecutivePriorityQueue() {
+    const container = document.getElementById('executivePriorityActionQueue');
+    if (!container) return;
+    const queue = Array.isArray(this.state.autopilotFinalApprovalQueue) ? this.state.autopilotFinalApprovalQueue : [];
+    const blockedRows = queue.filter(item => this.getFinalQueueBlockAssessment(item).blocked);
+    const reviewRows = queue.filter(item => !this.getFinalQueueBlockAssessment(item).blocked && !this.getFinalQueueBlockAssessment(item).canApprove);
+    const readyRows = queue.filter(item => this.getFinalQueueBlockAssessment(item).canApprove);
+    const topRows = [...blockedRows, ...reviewRows, ...readyRows].slice(0, 8);
+    if (topRows.length === 0) {
+      container.innerHTML = '<div class="empty-state">No final-production actions pending.</div>';
+      return;
+    }
+
+    container.innerHTML = topRows.map(item => {
+      const assessment = this.getFinalQueueBlockAssessment(item);
+      const statusClass = assessment.canApprove ? 'approved' : (assessment.blocked ? 'blocked' : 'needs_human_fix');
+      return `
+      <article class="video-card executive-card ${assessment.blocked ? 'executive-blocked' : ''}" style="padding:0.75rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(this.getVideoDisplayTitle(item.video_id, item.title))}</div>
+          <div class="video-status ${this.escapeHtml(statusClass)}">${this.escapeHtml(assessment.canApprove ? 'ready_for_final_approval' : (assessment.blocked ? 'blocked' : 'needs_human_fix'))}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Next Action</span><span class="meta-value">${this.escapeHtml(item.next_required_action || 'Open video and continue workflow.')}</span></div>
+        <div class="row-actions" style="margin-top:0.55rem;">
+          <button class="btn" onclick="app.openAutopilotFinalQueueVideo(${Number(item.video_id)})">Open Video</button>
+          <button class="btn ${assessment.blocked ? 'warning' : 'success'}" onclick="app.setActivePage('final-approval')">${assessment.blocked ? 'View Blockers' : 'Open Final Production'}</button>
+        </div>
+      </article>
+      `;
+    }).join('');
   },
 
   async loadAutopilotFinalApprovalQueue() {
@@ -670,11 +787,13 @@ const app = {
       }
       this.state.autopilotFinalApprovalQueue = Array.isArray(data) ? data : [];
       this.renderAutopilotFinalApprovalQueue();
+      this.renderExecutiveDashboard();
       return data;
     } catch (err) {
       this.log(`Final approval queue load failed: ${err.message}`, 'error');
       this.state.autopilotFinalApprovalQueue = [];
       this.renderAutopilotFinalApprovalQueue();
+      this.renderExecutiveDashboard();
       return [];
     }
   },
@@ -687,35 +806,92 @@ const app = {
       container.innerHTML = '<div class="empty-state">No review prep packets in final review queue.</div>';
       return;
     }
-    container.innerHTML = rows.map(item => `
-      <article class="video-card" style="padding:0.75rem;">
+    container.innerHTML = rows.map(item => {
+      const assessment = this.getFinalQueueBlockAssessment(item);
+      const livePayload = assessment.livePayload;
+      const statusClass = assessment.canApprove ? 'approved' : (assessment.blocked ? 'blocked' : 'needs_human_fix');
+      const payloadStatus = livePayload?.payload_status || item.publishing_payload_status || '-';
+      const finalExportStatus = livePayload?.payload_path ? 'export_written' : 'export_missing';
+      const finalVoiceStatus = item.preview_path ? 'draft_voice_render_available' : 'missing_preview_render';
+      const finalVisualsStatus = item.thumbnail_path ? 'thumbnail_visual_present' : 'thumbnail_visual_missing';
+      const metadataCleanupStatus = payloadStatus === 'ready' ? 'metadata_ready' : 'metadata_needs_cleanup';
+      const staleWarning = assessment.stalePacket
+        ? '<div class="flow-item pending">• Stale or blocked final review packet — not production ready.</div>'
+        : '';
+      const blockers = Number(item.blockers_count || 0);
+      const warnings = Number(item.warnings_count || 0);
+      const blockedActions = assessment.blocked
+        ? `<button class="btn warning" onclick="app.openFinalQueueBlockers(${Number(item.video_id)})">View Blockers</button>`
+        : '';
+      const approveButton = assessment.canApprove
+        ? `<button class="btn success" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'approve')">Approve Final Package</button>`
+        : `<button class="btn success" disabled>Approve Final Package</button>`;
+      return `
+      <article class="video-card executive-card ${assessment.blocked ? 'executive-blocked' : 'executive-ready'}" style="padding:0.75rem;">
         <div class="video-header">
-          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
-          <div class="video-status ${this.escapeHtml(item.readiness_status || 'needs_human_fix')}">${this.escapeHtml(item.readiness_status || 'needs_human_fix')}</div>
+          <div class="video-title">${this.escapeHtml(this.getVideoDisplayTitle(item.video_id, item.title))}</div>
+          <div class="video-status ${this.escapeHtml(statusClass)}">${this.escapeHtml(assessment.canApprove ? 'ready_for_final_approval' : (assessment.blocked ? 'blocked' : (item.readiness_status || 'needs_human_fix')))}</div>
         </div>
+        ${staleWarning}
         <div class="meta-row"><span class="meta-label">Agent</span><span class="meta-value">${this.escapeHtml(item.agent_name || '-')}</span></div>
         <div class="meta-row"><span class="meta-label">Type</span><span class="meta-value">${this.escapeHtml(item.content_type || '-')}</span></div>
         <div class="meta-row"><span class="meta-label">Compliance</span><span class="meta-value">${this.escapeHtml(item.compliance_status || 'untested')}</span></div>
-        <div class="meta-row"><span class="meta-label">Payload Status</span><span class="meta-value">${this.escapeHtml(item.publishing_payload_status || '-')}</span></div>
+        <div class="meta-row"><span class="meta-label">Final Export Status</span><span class="meta-value">${this.escapeHtml(finalExportStatus)}</span></div>
+        <div class="meta-row"><span class="meta-label">Final Voice Status</span><span class="meta-value">${this.escapeHtml(finalVoiceStatus)}</span></div>
+        <div class="meta-row"><span class="meta-label">Final Visuals Status</span><span class="meta-value">${this.escapeHtml(finalVisualsStatus)}</span></div>
+        <div class="meta-row"><span class="meta-label">Metadata Cleanup Status</span><span class="meta-value">${this.escapeHtml(metadataCleanupStatus)}</span></div>
+        <div class="meta-row"><span class="meta-label">Payload Status</span><span class="meta-value">${this.escapeHtml(payloadStatus)}</span></div>
         <div class="meta-row"><span class="meta-label">Final Packet</span><span class="meta-value">${this.escapeHtml(item.final_review_packet_path || '-')}</span></div>
         <div class="meta-row"><span class="meta-label">Preview Path</span><span class="meta-value">${this.escapeHtml(item.preview_path || '-')}</span></div>
         <div class="meta-row"><span class="meta-label">Thumbnail Path</span><span class="meta-value">${this.escapeHtml(item.thumbnail_path || '-')}</span></div>
-        <div class="meta-row"><span class="meta-label">Blockers / Warnings</span><span class="meta-value">${this.escapeHtml(String(item.blockers_count || 0))} / ${this.escapeHtml(String(item.warnings_count || 0))}</span></div>
+        <div class="meta-row"><span class="meta-label">Blockers / Warnings</span><span class="meta-value">${blockers} / ${warnings}</span></div>
         <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(item.next_required_action || '-')}</span></div>
         <div class="row-actions" style="margin-top:0.6rem;">
           <button class="btn" onclick="app.openAutopilotFinalQueueVideo(${Number(item.video_id)})">Open Video</button>
-          <button class="btn success" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'approve')">Approve Final Package</button>
+          ${blockedActions}
+          <button class="btn" onclick="app.regenerateFinalQueuePayload(${Number(item.video_id)})">Regenerate/Check Payload</button>
+          ${approveButton}
           <button class="btn warning" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'needs_changes')">Needs Changes</button>
           <button class="btn danger" onclick="app.submitAutopilotFinalDecision(${Number(item.video_id)}, 'reject')">Reject</button>
         </div>
       </article>
-    `).join('');
+    `;
+    }).join('');
   },
 
   async openAutopilotFinalQueueVideo(videoId) {
     if (!videoId || !Number.isFinite(Number(videoId))) return;
     await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
     this.setActivePage('assets');
+  },
+
+  async regenerateFinalQueuePayload(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) {
+      this.log('Invalid video id for payload generation.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch(`/videos/${Number(videoId)}/publishing-payload/generate`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to regenerate publishing payload');
+      }
+      this.log(`Publishing payload refreshed for video #${videoId}.`, 'success');
+      await this.loadPublishingPayloadQueue();
+      await this.loadAutopilotFinalApprovalQueue();
+      await this.loadGlobalAudit();
+    } catch (err) {
+      this.log(`Payload regeneration failed: ${err.message}`, 'error');
+    }
+  },
+
+  async openFinalQueueBlockers(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) return;
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('publishing');
   },
 
   async submitAutopilotFinalDecision(videoId, decision) {
@@ -874,7 +1050,8 @@ const app = {
     const nextText = document.getElementById('pipelineNextStepText');
     const nextButton = document.getElementById('pipelineNextStepButton');
     const stagesList = document.getElementById('pipelineStagesList');
-    if (!nextText || !nextButton || !stagesList) return;
+    const pipelineRows = document.getElementById('pipelineVideoRows');
+    if (!nextText || !nextButton || !stagesList || !pipelineRows) return;
 
     if (!data) {
       nextText.textContent = 'Unable to load pipeline state.';
@@ -882,8 +1059,11 @@ const app = {
       nextButton.disabled = true;
       nextButton.onclick = null;
       stagesList.innerHTML = '<div class="empty-state">Pipeline data unavailable.</div>';
+      pipelineRows.innerHTML = '<div class="empty-state">Pipeline videos unavailable.</div>';
       return;
     }
+
+    this.renderPipelineVideoRows();
 
     const nextStep = data.next_step || {};
     nextText.textContent = nextStep.label ? `${nextStep.label} — ${nextStep.reason || ''}` : 'No urgent actions.';
@@ -1003,6 +1183,49 @@ const app = {
         this.setActivePage(stage.targetPage);
       };
     });
+  },
+
+  renderPipelineVideoRows() {
+    const container = document.getElementById('pipelineVideoRows');
+    if (!container) return;
+    const videos = Array.isArray(this.state.videos) ? [...this.state.videos] : [];
+    const payloadRows = Array.isArray(this.state.publishingPayloadQueue) ? this.state.publishingPayloadQueue : [];
+    if (videos.length === 0) {
+      container.innerHTML = '<div class="empty-state">No videos in pipeline yet.</div>';
+      return;
+    }
+    const payloadByVideoId = new Map(payloadRows.map(row => [Number(row.video_id), row]));
+    videos.sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+    container.innerHTML = videos.slice(0, 60).map(video => {
+      const payload = payloadByVideoId.get(Number(video.id)) || null;
+      const previewStatus = video.rendered_preview_path
+        ? (video.preview_reviewed ? 'preview_reviewed' : 'preview_rendered_unreviewed')
+        : 'preview_missing';
+      const productionReadiness = payload?.ready_for_manual_upload === true && Number(payload?.blockers_count || 0) === 0
+        ? 'final_ready'
+        : (payload?.payload_status || 'draft');
+      const title = this.getVideoDisplayTitle(video.id, video.title);
+      return `
+      <article class="video-card executive-card ${productionReadiness === 'final_ready' ? 'executive-ready' : ''}" style="padding:0.78rem;">
+        <div class="video-header">
+          <div class="video-title">${this.escapeHtml(title)}</div>
+          <div class="video-status ${this.escapeHtml(video.status || 'idea')}">${this.escapeHtml(video.status || 'idea')}</div>
+        </div>
+        <div class="meta-row"><span class="meta-label">Preview Status</span><span class="meta-value">${this.escapeHtml(previewStatus)}</span></div>
+        <div class="meta-row"><span class="meta-label">Production Readiness</span><span class="meta-value">${this.escapeHtml(productionReadiness)}</span></div>
+        <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value">${this.escapeHtml(video.next_required_action || payload?.next_required_action || '-')}</span></div>
+        <div class="row-actions" style="margin-top:0.55rem;">
+          <button class="btn" onclick="app.openPipelineVideo(${Number(video.id)})">Open Video</button>
+        </div>
+      </article>
+      `;
+    }).join('');
+  },
+
+  async openPipelineVideo(videoId) {
+    if (!videoId || !Number.isFinite(Number(videoId))) return;
+    await this.selectVideo(Number(videoId), { fetchAssets: true, clearCompliance: false });
+    this.setActivePage('assets');
   },
 
   renderPipelineStage(stage, items) {
@@ -1367,11 +1590,15 @@ const app = {
     let approved = this.state.videos.filter(v => v.approved).length;
     let generated = this.state.videos.filter(v => ['needs_review', 'approved', 'packaged', 'publish_ready', 'published'].includes(v.status)).length;
     let packages = this.state.videos.filter(v => ['packaged', 'publish_ready', 'published'].includes(v.status)).length;
-
-    document.getElementById('kpiTotalIdeas').textContent = ideas;
-    document.getElementById('kpiGeneratedAssets').textContent = generated;
-    document.getElementById('kpiApprovedVideos').textContent = approved;
-    document.getElementById('kpiPackagesCreated').textContent = packages;
+    const totalEl = document.getElementById('kpiTotalIdeas');
+    const generatedEl = document.getElementById('kpiGeneratedAssets');
+    const approvedEl = document.getElementById('kpiApprovedVideos');
+    const packagesEl = document.getElementById('kpiPackagesCreated');
+    if (totalEl) totalEl.textContent = String(ideas);
+    if (generatedEl) generatedEl.textContent = String(generated);
+    if (approvedEl) approvedEl.textContent = String(approved);
+    if (packagesEl) packagesEl.textContent = String(packages);
+    this.renderExecutiveDashboard();
   },
 
   getAgentById(agentId) {
@@ -3170,7 +3397,7 @@ const app = {
     this.state.selectedAssetType = null;
     this.state.videoAuditEvents = [];
     const selectedVideoTitle = document.getElementById('selectedVideoTitle');
-    if (selectedVideoTitle) selectedVideoTitle.textContent = 'Selected Video: None';
+    if (selectedVideoTitle) selectedVideoTitle.textContent = 'Selected video #—';
     const complianceSelected = document.getElementById('complianceSelectedVideo');
     if (complianceSelected) complianceSelected.textContent = 'None selected';
     const selectedVideoActions = document.getElementById('selectedVideoActions');
@@ -4732,10 +4959,14 @@ const app = {
       }
       this.state.publishingPayloadQueue = Array.isArray(data) ? data : [];
       this.renderPublishingPayloadQueue();
+      this.renderAutopilotFinalApprovalQueue();
+      this.renderExecutiveDashboard();
       return this.state.publishingPayloadQueue;
     } catch (err) {
       this.state.publishingPayloadQueue = [];
       this.renderPublishingPayloadQueue();
+      this.renderAutopilotFinalApprovalQueue();
+      this.renderExecutiveDashboard();
       this.log(`Publishing payload queue failed: ${err.message}`, 'error');
       return [];
     }
@@ -4765,12 +4996,12 @@ const app = {
     const draftOnlyRows = rows.filter(item => (item.preview_rendered || item.preview_path) && !item.ready_for_manual_upload);
 
     if (readyRows.length === 0) {
-      list.innerHTML = '<div class="empty-state">No approved packages ready for manual upload. Complete Final Approval and ensure final production export is ready.</div>';
+      list.innerHTML = '<div class="empty-state">No final-production-ready packages yet.</div>';
     } else {
       list.innerHTML = readyRows.map(item => `
       <article class="video-card" style="padding:0.7rem;">
         <div class="video-header">
-          <div class="video-title">${this.escapeHtml(item.title || `Video #${item.video_id}`)}</div>
+          <div class="video-title">${this.escapeHtml(this.getVideoDisplayTitle(item.video_id, item.title))}</div>
           <div class="video-status ${this.escapeHtml(item.payload_status || 'draft')}">${this.escapeHtml(item.payload_status || 'draft')}</div>
         </div>
         <div class="meta-row"><span class="meta-label">Video</span><span class="meta-value">#${Number(item.video_id)}</span></div>
@@ -4787,14 +5018,13 @@ const app = {
     }
 
     if (draftOnlyRows.length > 0) {
-      // Inform operator that these are draft-preview-only and not final-production-ready
       const draftNote = document.createElement('div');
-      draftNote.className = 'flow-card';
+      draftNote.className = 'flow-card manual-upload-draft-warning';
       draftNote.style.marginTop = '10px';
       draftNote.innerHTML = `
-        <div class="flow-card-title">Draft-only previews (not YouTube-ready)</div>
-        <div class="flow-card-body">These items have draft previews but final production export/payload is not ready. Do NOT upload draft previews to YouTube.</div>
-        <div style="margin-top:8px;">${draftOnlyRows.map(i => `<div class="meta-row"><span class="meta-label">#${Number(i.video_id)}</span><span class="meta-value">${this.escapeHtml(i.title || '-')}</span> — <em style="color:var(--studio-muted);">${this.escapeHtml(i.next_required_action || 'Final export required')}</em></div>`).join('')}</div>
+        <div class="flow-card-title">Draft previews are not upload-ready.</div>
+        <div class="flow-card-body">These videos have draft outputs but are still blocked for final production. Keep them out of manual upload until blockers are cleared.</div>
+        <div style="margin-top:8px;">${draftOnlyRows.map(i => `<div class="meta-row"><span class="meta-label">${this.escapeHtml(this.getVideoDisplayTitle(i.video_id, i.title))}</span><span class="meta-value">${this.escapeHtml(i.next_required_action || 'Final export required')}</span></div>`).join('')}</div>
       `;
       list.appendChild(draftNote);
     }

@@ -18,9 +18,10 @@
       </div>
 
       <nav class="sidebar-nav" id="sidebarNav">
-        <button class="nav-item active" data-page="dashboard">Dashboard</button>
-        <button class="nav-item" data-page="review-prep">Review Prep</button>
-        <button class="nav-item" data-page="final-approval">Final Approval</button>
+        <button class="nav-item active" data-page="dashboard">Executive Dashboard</button>
+        <button class="nav-item" data-page="pipeline">Pipeline</button>
+        <button class="nav-item" data-page="assets">Preview / Assets</button>
+        <button class="nav-item" data-page="final-approval">Final Production</button>
         <button class="nav-item" data-page="manual-upload">Manual Upload</button>
         <button class="nav-item" data-page="advanced">Advanced / Debug</button>
       </nav>
@@ -32,7 +33,7 @@
 
     <div class="studio-main">
       <header class="studio-topnav">
-        <h1 id="topNavTitle">Dashboard</h1>
+        <h1 id="topNavTitle">Executive Dashboard</h1>
         <div class="topnav-tools">
           <input type="search" id="workspaceSearch" placeholder="Search workspace" aria-label="Search workspace" />
           <div class="health-pill" id="healthPill">
@@ -46,29 +47,94 @@
         <section class="page active" id="page-dashboard">
           <div class="panel">
             <div class="panel-header">
-              <h2>Daily Workflow</h2>
+              <h2>Executive Production Overview</h2>
+              <div class="header-actions">
+                <button class="btn" onclick="app.refreshExecutiveDashboard()">Refresh Dashboard</button>
+              </div>
             </div>
             <div class="panel-body compact-body">
-              <div class="sim-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
-                <div class="sim-card" onclick="app.setActivePage('review-prep')" style="cursor: pointer; padding: 1.5rem; border: 2px solid var(--primary); border-radius: 12px; background: rgba(100, 150, 255, 0.05); transition: all 0.2s;">
-                  <div style="font-size: 2rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem;">Step 1</div>
-                  <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Review Prep</div>
-                  <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 1rem;">Generate and review content packages with one-click prep</div>
-                  <button class="btn primary" style="width: 100%;">Go to Review Prep →</button>
+              <div class="opportunity-note">Local production control room. Draft previews are internal only and are never treated as final upload assets.</div>
+              <div class="kpi-grid executive-kpi-grid">
+                <div class="kpi-card executive-kpi-card">
+                  <div class="kpi-title">Total Videos</div>
+                  <div class="kpi-value" id="kpiTotalIdeas">0</div>
                 </div>
-
-                <div class="sim-card" onclick="app.setActivePage('final-approval')" style="cursor: pointer; padding: 1.5rem; border: 2px solid var(--primary); border-radius: 12px; background: rgba(100, 150, 255, 0.05); transition: all 0.2s;">
-                  <div style="font-size: 2rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem;">Step 2</div>
-                  <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Final Approval</div>
-                  <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 1rem;">Review and approve generated packages before upload</div>
-                  <button class="btn primary" style="width: 100%;">Go to Final Approval →</button>
+                <div class="kpi-card executive-kpi-card kpi-blocked">
+                  <div class="kpi-title">Blocked Videos</div>
+                  <div class="kpi-value" id="kpiBlockedVideos">0</div>
                 </div>
+                <div class="kpi-card executive-kpi-card">
+                  <div class="kpi-title">Draft Previews Ready</div>
+                  <div class="kpi-value" id="kpiDraftPreviewsReady">0</div>
+                </div>
+                <div class="kpi-card executive-kpi-card">
+                  <div class="kpi-title">Final-Production Ready</div>
+                  <div class="kpi-value" id="kpiFinalProductionReady">0</div>
+                </div>
+                <div class="kpi-card executive-kpi-card kpi-success">
+                  <div class="kpi-title">Manual-Upload Ready</div>
+                  <div class="kpi-value" id="kpiManualUploadReady">0</div>
+                </div>
+                <div class="kpi-card executive-kpi-card">
+                  <div class="kpi-title">Generated Content</div>
+                  <div class="kpi-value" id="kpiGeneratedAssets">0</div>
+                </div>
+                <div class="kpi-card executive-kpi-card">
+                  <div class="kpi-title">Approved Videos</div>
+                  <div class="kpi-value" id="kpiApprovedVideos">0</div>
+                </div>
+                <div class="kpi-card executive-kpi-card">
+                  <div class="kpi-title">Packaged Videos</div>
+                  <div class="kpi-value" id="kpiPackagesCreated">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-                <div class="sim-card" onclick="app.setActivePage('manual-upload')" style="cursor: pointer; padding: 1.5rem; border: 2px solid var(--primary); border-radius: 12px; background: rgba(100, 150, 255, 0.05); transition: all 0.2s;">
-                  <div style="font-size: 2rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem;">Step 3</div>
-                  <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Manual Upload</div>
-                  <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 1rem;">Download approved packages for manual YouTube upload</div>
-                  <button class="btn primary" style="width: 100%;">Go to Manual Upload →</button>
+          <div class="panel-grid split-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>One-Click Prep</h2>
+                <div class="header-actions">
+                  <button class="btn" onclick="app.loadAutopilotRuns()">Refresh Runs</button>
+                  <button class="btn success" id="btnRunAutopilotBatch" onclick="app.runAutopilotBatch()">Run One-Click Prep Batch</button>
+                </div>
+              </div>
+              <div class="panel-body compact-body">
+                <div class="opportunity-note">One-Click Prep generates local draft packages only. Final approval and manual upload stay human-controlled.</div>
+                <div class="agent-edit-grid">
+                  <label class="agent-field"><span>Agent</span><select id="autopilotAgentSelect" class="form-select"><option value="">No specific agent</option></select></label>
+                  <label class="agent-field"><span>Content Type</span><select id="autopilotContentType" class="form-select"><option value="short" selected>short</option><option value="long">long</option></select></label>
+                  <label class="agent-field"><span>Count</span><input type="number" id="autopilotCount" min="1" max="5" value="1" /></label>
+                  <label class="agent-field"><span>Topic Seed (optional)</span><input type="text" id="autopilotTopicSeed" placeholder="local ops workflow" /></label>
+                </div>
+                <div class="agent-edit-grid" style="margin-top:0.55rem;">
+                  <label class="check-item"><input type="checkbox" id="autopilotAutoPlaceholders" checked /><span>Auto-generate placeholder visuals</span></label>
+                  <label class="check-item"><input type="checkbox" id="autopilotAutoRenderPreview" checked /><span>Auto-render draft preview</span></label>
+                  <label class="check-item"><input type="checkbox" id="autopilotAutoGeneratePayload" checked /><span>Auto-generate publishing payload summary</span></label>
+                </div>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Latest Prep Run</div>
+                  <div id="autopilotRunSummary">
+                    <div class="empty-state">No review prep run yet.</div>
+                  </div>
+                </div>
+                <div class="flow-card" style="margin-top:0.7rem;">
+                  <div class="flow-card-title">Recent Prep Runs</div>
+                  <div id="autopilotRecentRuns" class="video-list">
+                    <div class="empty-state">No runs yet.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Priority Action Queue</h2>
+              </div>
+              <div class="panel-body compact-body">
+                <div id="executivePriorityActionQueue" class="video-list">
+                  <div class="empty-state">Loading queue...</div>
                 </div>
               </div>
             </div>
@@ -304,13 +370,16 @@
         <section class="page hidden" id="page-pipeline">
           <div class="panel">
             <div class="panel-header">
-              <h2>Daily Production Pipeline</h2>
+              <h2>Pipeline Control Board</h2>
               <div class="header-actions">
                 <button class="btn" onclick="app.loadPipelineDaily()">Refresh</button>
               </div>
             </div>
             <div class="panel-body compact-body">
-              <div class="opportunity-note">Read-only deterministic pipeline view. No automatic approval, packaging, payload prep, or publishing actions are performed here.</div>
+              <div class="opportunity-note">Each row is a real video record with internal workflow status only. IDs are shown prominently for unambiguous execution.</div>
+              <div id="pipelineVideoRows" class="video-list">
+                <div class="empty-state">Loading pipeline videos...</div>
+              </div>
               <div class="flow-card">
                 <div class="flow-card-title">Next Step</div>
                 <div class="flow-card-body" id="pipelineNextStepText">Loading next step...</div>
@@ -485,7 +554,7 @@
         <section class="page hidden" id="page-assets">
           <div class="panel">
               <div class="panel-header">
-                <h2 id="selectedVideoTitle">Selected video: None</h2>
+                <h2 id="selectedVideoTitle">Selected video #—</h2>
               <div class="header-actions" id="selectedVideoActions" style="display: none;">
                 <button class="btn" onclick="app.openExportModal()">Generate Local Export Summary</button>
                 <button class="btn" onclick="app.openEditModal()">Edit</button>
@@ -494,6 +563,7 @@
             </div>
 
             <div class="panel-body selected-video-panel">
+              <div class="opportunity-note">INTERNAL DRAFT PREVIEW workspace. Draft previews are for operator review only and are never upload-ready production exports.</div>
               <div class="metadata-display hidden" id="metadataDisplay">
                 <div class="meta-row"><span class="meta-label">Niche</span><span id="metaNiche" class="meta-value"></span></div>
                 <div class="meta-row"><span class="meta-label">Target Audience</span><span id="metaAudience" class="meta-value"></span></div>
@@ -532,7 +602,7 @@
 
               <div class="preview-panel hidden" id="previewPanel">
                 <div class="panel-header">
-                  <h2>Draft Preview</h2>
+                  <h2>Internal Draft Preview</h2>
                   <div class="header-actions">
                     <button class="btn" onclick="app.refreshPreviewStatus()">Refresh Preview</button>
                     <button class="btn" id="btnRenderDraftPreview" onclick="app.renderDraftPreview()">Render Draft Preview</button>
@@ -925,38 +995,11 @@
         <section class="page hidden" id="page-review-prep">
           <div class="panel">
             <div class="panel-header">
-              <h2>Step 1: Review Prep</h2>
-              <div class="header-actions">
-                <button class="btn" onclick="app.loadAutopilotRuns()">Refresh Runs</button>
-                <button class="btn" onclick="app.loadAutopilotFinalApprovalQueue()">Refresh Queue</button>
-                <button class="btn success" id="btnRunAutopilotBatch" onclick="app.runAutopilotBatch()">Run Review Prep Batch</button>
-              </div>
+              <h2>Review Prep (Legacy Alias)</h2>
             </div>
             <div class="panel-body compact-body">
-              <div class="opportunity-note">Review Prep prepares local packages only. You still manually approve and manually upload.</div>
-              <div class="agent-edit-grid">
-                <label class="agent-field"><span>Agent</span><select id="autopilotAgentSelect" class="form-select"><option value="">No specific agent</option></select></label>
-                <label class="agent-field"><span>Content Type</span><select id="autopilotContentType" class="form-select"><option value="short" selected>short</option><option value="long">long</option></select></label>
-                <label class="agent-field"><span>Count</span><input type="number" id="autopilotCount" min="1" max="5" value="1" /></label>
-                <label class="agent-field"><span>Topic Seed (optional)</span><input type="text" id="autopilotTopicSeed" placeholder="local ops workflow" /></label>
-              </div>
-              <div class="agent-edit-grid" style="margin-top:0.55rem;">
-                <label class="check-item"><input type="checkbox" id="autopilotAutoPlaceholders" checked /><span>Auto-generate placeholder visuals</span></label>
-                <label class="check-item"><input type="checkbox" id="autopilotAutoRenderPreview" checked /><span>Auto-render preview when renderer is available</span></label>
-                <label class="check-item"><input type="checkbox" id="autopilotAutoGeneratePayload" checked /><span>Auto-generate publishing payload summary</span></label>
-              </div>
-              <div class="flow-card" style="margin-top:0.7rem;">
-                <div class="flow-card-title">Latest Run Summary</div>
-                <div id="autopilotRunSummary">
-                  <div class="empty-state">No review prep run yet.</div>
-                </div>
-              </div>
-              <div class="flow-card" style="margin-top:0.7rem;">
-                <div class="flow-card-title">Recent Runs</div>
-                <div id="autopilotRecentRuns" class="video-list">
-                  <div class="empty-state">No runs yet.</div>
-                </div>
-              </div>
+              <div class="opportunity-note">Use Executive Dashboard → One-Click Prep for active controls. This legacy route remains for compatibility only.</div>
+              <button class="btn primary" onclick="app.setActivePage('dashboard')">Open Executive Dashboard</button>
             </div>
           </div>
         </section>
@@ -964,15 +1007,15 @@
         <section class="page hidden" id="page-final-approval">
           <div class="panel">
             <div class="panel-header">
-              <h2>Step 2: Final Approval</h2>
+              <h2>Final Production Gate</h2>
               <div class="header-actions">
                 <button class="btn" onclick="app.loadAutopilotFinalApprovalQueue()">Refresh Queue</button>
               </div>
             </div>
             <div class="panel-body compact-body">
-              <div class="opportunity-note">Review and approve generated packages before manual upload.</div>
+              <div class="opportunity-note">Final-production validation before Manual Upload. Blocked or stale review packets cannot be approved until blockers are cleared.</div>
               <div class="flow-card">
-                <div class="flow-card-title">Final Approval Queue</div>
+                <div class="flow-card-title">Final Production Queue</div>
                 <div id="autopilotFinalApprovalQueueList" class="video-list">
                   <div class="empty-state">No review prep packets in final review queue.</div>
                 </div>
@@ -984,7 +1027,7 @@
         <section class="page hidden" id="page-manual-upload">
           <div class="panel">
             <div class="panel-header">
-              <h2>Step 3: Manual Upload</h2>
+              <h2>Manual Upload Center</h2>
               <div class="header-actions">
                 <button class="btn" onclick="app.loadPublishingPayloadQueue()">Refresh Queue</button>
               </div>
@@ -993,10 +1036,11 @@
               <div class="opportunity-note" style="background: rgba(100, 150, 255, 0.1); padding: 1rem; border-radius: 6px; border: 1px solid rgba(100, 150, 255, 0.3); margin-bottom: 1rem;">
                 <strong>This app does not upload to YouTube.</strong> Download your approved packages below and upload them manually using YouTube Studio.
               </div>
+              <div class="flow-item pending" style="margin-bottom:0.75rem;">• Draft previews are not upload-ready.</div>
               <div class="flow-card">
-                <div class="flow-card-title">Approved Packages Ready for Upload</div>
+                <div class="flow-card-title">Final-Production-Ready Packages</div>
                 <div id="publishingPayloadQueueList" class="video-list">
-                  <div class="empty-state">No approved packages yet. Complete Review Prep and Final Approval first.</div>
+                  <div class="empty-state">No final-production-ready packages yet.</div>
                 </div>
               </div>
             </div>
