@@ -48,6 +48,38 @@ def _write_real_preview_file(video_id: int) -> Path:
     return preview_path
 
 
+def _write_render_meta_production(video_id: int) -> None:
+    output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
+    meta_path = output_dir / "previews" / str(video_id) / "render_meta.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps({"provider": "openai", "audio_generated": True}))
+
+
+def _write_final_export_file(video_id: int) -> Path:
+    output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
+    final_path = output_dir / "final_exports" / f"video_{video_id}" / "final.mp4"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    final_path.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
+    return final_path
+
+
+def _write_clean_description_asset(video_id: int) -> None:
+    """Insert a clean description asset so the Phase 30 metadata gate passes."""
+    from app.models import ContentAsset
+    from app.models import AssetType as _AT
+    from app.db import SessionLocal as _SL
+    db = _SL()
+    try:
+        db.add(ContentAsset(
+            video_id=video_id,
+            asset_type=_AT.description,
+            body="A production-ready educational video about AI automation. Subscribe for more.",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+
 def _write_real_visual_asset_file(name: str = "visual_asset.png") -> Path:
     output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
     asset_path = output_dir / "generated" / name
@@ -1304,6 +1336,11 @@ def test_publishing_payload_generate_ready_when_gates_satisfied_and_includes_pat
     thumbnail_asset_id = thumbnail.json()["visual_asset_id"]
     assert client.post(f"/visual-generation/assets/{thumbnail_asset_id}/approve").status_code == 200
 
+    # Phase 30: production gate requires final export + production voice + approved visuals + clean metadata
+    _write_render_meta_production(video_id)
+    _write_clean_description_asset(video_id)
+    final_export_path = _write_final_export_file(video_id)
+
     export = client.get(f"/videos/{video_id}/operator-export")
     assert export.status_code == 200
     export_path = export.json()["export_path"]
@@ -1315,6 +1352,7 @@ def test_publishing_payload_generate_ready_when_gates_satisfied_and_includes_pat
     assert body["ready_for_manual_upload"] is True
     assert body["payload_status"] in {"ready", "regenerated"}
     assert body["video_file_path"] is not None
+    assert "final_exports" in body["video_file_path"]
     assert body["thumbnail_image_path"] == thumbnail_path
     assert body["export_path"] == export_path
     assert body["manual_upload_checklist"]
@@ -1352,6 +1390,13 @@ def test_publishing_payload_read_and_list_filters() -> None:
     assert client.post(f"/videos/{ready_video['id']}/preview/review", json={"reviewed": True}).status_code == 200
     assert client.post(f"/videos/{ready_video['id']}/package").status_code == 200
     assert client.post(f"/publish/{ready_video['id']}/prepare-youtube-payload").status_code == 200
+    # Phase 30: production gate requires thumbnail approved + production voice + clean metadata + final export
+    thumb = client.post(f"/videos/{ready_video['id']}/thumbnail/generate")
+    assert thumb.status_code == 200
+    assert client.post(f"/visual-generation/assets/{thumb.json()['visual_asset_id']}/approve").status_code == 200
+    _write_render_meta_production(ready_video["id"])
+    _write_clean_description_asset(ready_video["id"])
+    _write_final_export_file(ready_video["id"])
     ready_generate = client.post(f"/videos/{ready_video['id']}/publishing-payload/generate")
     assert ready_generate.status_code == 200
 
@@ -3055,6 +3100,10 @@ def test_channel_studio_scoreboard_has_waves_and_conservative_signals() -> None:
     assert client.post(f"/videos/{video_id}/preview/review", json={"reviewed": True}).status_code == 200
     assert client.post(f"/videos/{video_id}/package").status_code == 200
     assert client.post(f"/publish/{video_id}/prepare-youtube-payload").status_code == 200
+    # Phase 30: set up production-ready state before generating payload
+    _write_render_meta_production(video_id)
+    _write_clean_description_asset(video_id)
+    _write_final_export_file(video_id)
     assert client.post(f"/videos/{video_id}/publishing-payload/generate").status_code == 200
 
     ready_board = client.get("/agents/channel-studio/scoreboard")

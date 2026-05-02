@@ -22,6 +22,7 @@ from app.routers import (
     channels,
     command_center,
     executive_producer,
+    final_production,
     opportunities,
     performance,
     pipeline,
@@ -106,6 +107,7 @@ def health() -> dict[str, object]:
 
 app.include_router(channels.router)
 app.include_router(videos.router)
+app.include_router(final_production.router)
 app.include_router(publishing_payloads.router)
 app.include_router(publish.router)
 app.include_router(opportunities.router)

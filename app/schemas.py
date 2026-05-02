@@ -1431,3 +1431,23 @@ class DailyPipelineRead(BaseModel):
     completed_payloads: list[PipelineVideoItem]
     summary_counts: PipelineSummaryCounts
     next_step: PipelineNextStep
+
+
+class FinalProductionStatus(BaseModel):
+    video_id: int
+    production_ready: bool
+    final_export_ready: bool
+    final_voice_ready: bool
+    final_visuals_ready: bool
+    final_metadata_ready: bool
+    final_export_path: str | None
+    blockers: list[str]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FinalProductionExportResponse(BaseModel):
+    video_id: int
+    production_ready: bool
+    final_export_path: str | None
+    blockers: list[str]
+    status: str

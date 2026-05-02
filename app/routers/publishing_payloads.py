@@ -15,6 +15,7 @@ from app.routers.videos import build_readiness, get_video_or_404, latest_asset, 
 from app.schemas import PublishingPayloadGenerateResponse, PublishingPayloadListItem, PublishingPayloadRead
 from app.services.audit import log_audit_event
 from app.services.content_engine import DEFAULT_TAGS
+from app.services.final_production import assess_final_production
 from app.services.performance_feedback import latest_performance_for_video, performance_payload_for_video
 from app.services.visual_asset_review import asset_review_fields
 
@@ -220,8 +221,13 @@ def generate_publishing_payload(video_id: int, db: Session = Depends(get_db)) ->
     preview_path = sync_preview_state(video)
     blockers, warnings, readiness_action = _readiness_blockers(video, db)
 
+    final_status = assess_final_production(video, db)
+    for b in final_status.blockers:
+        if b not in blockers:
+            blockers.append(b)
+
     package_dir = package_dir_for(video)
-    video_file_path = _latest_existing_video_file(video, package_dir)
+    video_file_path = final_status.final_export_path
     thumbnail_image_path, thumbnail_review_status = _latest_thumbnail_asset(video.id, db)
     export_path = _export_path_for_video(video.id)
     visual_assets = _existing_visual_assets_for_video(video.id, db)
