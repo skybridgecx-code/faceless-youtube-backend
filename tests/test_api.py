@@ -48,11 +48,13 @@ def _write_real_preview_file(video_id: int) -> Path:
     return preview_path
 
 
-def _write_render_meta_production(video_id: int) -> None:
+def _write_final_voiceover_production(video_id: int) -> None:
     output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
-    meta_path = output_dir / "previews" / str(video_id) / "render_meta.json"
-    meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(json.dumps({"provider": "openai", "audio_generated": True}))
+    voiceover_dir = output_dir / "final_voiceovers" / f"video_{video_id}"
+    voiceover_dir.mkdir(parents=True, exist_ok=True)
+    (voiceover_dir / "voiceover.mp3").write_bytes(b"\xff\xfb\x90\x00" * 16)
+    meta = {"provider": "openai", "voice": "onyx", "model": "gpt-4o-mini-tts", "status": "complete"}
+    (voiceover_dir / "voiceover_meta.json").write_text(json.dumps(meta))
 
 
 def _write_final_export_file(video_id: int) -> Path:
@@ -1337,7 +1339,7 @@ def test_publishing_payload_generate_ready_when_gates_satisfied_and_includes_pat
     assert client.post(f"/visual-generation/assets/{thumbnail_asset_id}/approve").status_code == 200
 
     # Phase 30: production gate requires final export + production voice + approved visuals + clean metadata
-    _write_render_meta_production(video_id)
+    _write_final_voiceover_production(video_id)
     _write_clean_description_asset(video_id)
     final_export_path = _write_final_export_file(video_id)
 
@@ -1394,7 +1396,7 @@ def test_publishing_payload_read_and_list_filters() -> None:
     thumb = client.post(f"/videos/{ready_video['id']}/thumbnail/generate")
     assert thumb.status_code == 200
     assert client.post(f"/visual-generation/assets/{thumb.json()['visual_asset_id']}/approve").status_code == 200
-    _write_render_meta_production(ready_video["id"])
+    _write_final_voiceover_production(ready_video["id"])
     _write_clean_description_asset(ready_video["id"])
     _write_final_export_file(ready_video["id"])
     ready_generate = client.post(f"/videos/{ready_video['id']}/publishing-payload/generate")
@@ -3101,7 +3103,7 @@ def test_channel_studio_scoreboard_has_waves_and_conservative_signals() -> None:
     assert client.post(f"/videos/{video_id}/package").status_code == 200
     assert client.post(f"/publish/{video_id}/prepare-youtube-payload").status_code == 200
     # Phase 30: set up production-ready state before generating payload
-    _write_render_meta_production(video_id)
+    _write_final_voiceover_production(video_id)
     _write_clean_description_asset(video_id)
     _write_final_export_file(video_id)
     assert client.post(f"/videos/{video_id}/publishing-payload/generate").status_code == 200

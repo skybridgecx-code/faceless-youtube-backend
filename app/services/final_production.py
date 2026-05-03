@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -9,25 +8,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import AssetType, ContentAsset, Video, VisualAssetPlan, VisualGeneratedAsset
 from app.schemas import FinalProductionStatus
+from app.services.final_voiceover import assess_final_voiceover
 from app.services.visual_asset_review import asset_review_fields
 
-_DRAFT_VOICE_PROVIDERS = {"macos", "silent", "fallback", "local", "placeholder", "none", ""}
 _PLACEHOLDER_PATTERNS = ["[INSERT LINK]", "How to I Built", "Draft Preview"]
 
 
 def final_export_path_for_video(video_id: int) -> Path:
     return get_settings().output_path / "final_exports" / f"video_{video_id}" / "final.mp4"
-
-
-def _read_preview_meta(video_id: int) -> dict[str, object]:
-    meta_path = get_settings().output_path / "previews" / str(video_id) / "render_meta.json"
-    if not meta_path.is_file():
-        return {}
-    try:
-        raw = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -42,10 +30,9 @@ def _dedupe(values: list[str]) -> list[str]:
 
 
 def final_voice_ready_for_video(video_id: int) -> tuple[bool, list[str]]:
-    meta = _read_preview_meta(video_id)
-    provider = str(meta.get("provider", "")).lower().strip()
-    if provider in _DRAFT_VOICE_PROVIDERS:
-        return False, ["Final voiceover must use a production voice provider"]
+    status = assess_final_voiceover(video_id)
+    if not status.voiceover_ready:
+        return False, status.blockers
     return True, []
 
 

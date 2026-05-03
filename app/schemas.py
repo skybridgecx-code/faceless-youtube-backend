@@ -1451,3 +1451,25 @@ class FinalProductionExportResponse(BaseModel):
     final_export_path: str | None
     blockers: list[str]
     status: str
+
+
+class FinalVoiceoverStatus(BaseModel):
+    video_id: int
+    voiceover_ready: bool
+    voiceover_exists: bool
+    meta_exists: bool
+    provider: str | None
+    voice: str | None
+    model: str | None
+    voiceover_path: str | None
+    blockers: list[str]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FinalVoiceoverGenerateResponse(BaseModel):
+    video_id: int
+    status: str  # "generated" | "blocked" | "skipped"
+    voiceover_path: str | None
+    provider: str | None
+    voice: str | None
+    blockers: list[str]
