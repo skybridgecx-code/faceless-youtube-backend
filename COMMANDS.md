@@ -12,6 +12,16 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
+## Database migrations
+
+```bash
+# Upgrade to latest migration
+alembic upgrade head
+
+# Generate new migration after model changes
+alembic revision --autogenerate -m "description of changes"
+```
+
 ## Check health
 
 ```bash
