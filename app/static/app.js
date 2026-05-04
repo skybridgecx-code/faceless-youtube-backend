@@ -57,6 +57,15 @@ const app = {
     }
   },
 
+  escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  },
+
   async init() {
     this.setupNavigation();
     this.setupWorkspaceSearch();
@@ -3330,10 +3339,10 @@ const app = {
     const metaAudience = document.getElementById('metaAudience');
     const metaAngle = document.getElementById('metaAngle');
     const metaNotes = document.getElementById('metaNotes');
-    if (metaNiche) metaNiche.innerHTML = video.niche || emptyText;
-    if (metaAudience) metaAudience.innerHTML = video.target_audience || emptyText;
-    if (metaAngle) metaAngle.innerHTML = video.angle || emptyText;
-    if (metaNotes) metaNotes.innerHTML = video.notes || emptyText;
+    if (metaNiche) metaNiche.innerHTML = video.niche ? this.escapeHtml(video.niche) : emptyText;
+    if (metaAudience) metaAudience.innerHTML = video.target_audience ? this.escapeHtml(video.target_audience) : emptyText;
+    if (metaAngle) metaAngle.innerHTML = video.angle ? this.escapeHtml(video.angle) : emptyText;
+    if (metaNotes) metaNotes.innerHTML = video.notes ? this.escapeHtml(video.notes) : emptyText;
 
     const readinessPanel = document.getElementById('readinessPanel');
     const publishingSettings = document.getElementById('publishingSettings');
