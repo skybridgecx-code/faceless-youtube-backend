@@ -4,6 +4,7 @@ __pycache__/
 .env
 content_factory.db
 test_content_factory.db
+test_*.db
 out/
 .pytest_cache/
 

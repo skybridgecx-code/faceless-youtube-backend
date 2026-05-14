@@ -1,79 +1,94 @@
 # Faceless YouTube Backend
 
-A runnable backend for a faceless YouTube content factory focused on original, reviewable local-business AI automation content.
+A local-first, review-gated backend for a faceless YouTube content factory focused on original, reviewable AI automation content.
 
-It manages channel profiles, video ideas, scripts, Shorts, descriptions, thumbnail prompts, review gates, exportable production packages, and publish-ready metadata.
+It manages channel profiles, video ideas, scripts, Shorts, descriptions, thumbnail prompts, review gates, visual asset workflows, voiceover generation, exportable production packages, and publish-ready metadata.
 
-It intentionally does **not** blindly upload unreviewed AI content. YouTube publishing is kept behind an approval gate and a stub so you can connect OAuth safely later.
+It intentionally does **not** blindly upload unreviewed AI content. Every gate must be satisfied by a human operator before production artifacts are created. YouTube publishing is always manual.
+
+See [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) for full setup, workflow, and safety details.
 
 ## Stack
 
 - FastAPI
-- SQLAlchemy
-- SQLite by default
+- SQLAlchemy + Alembic
+- SQLite by default (Postgres-ready)
 - Pydantic settings
 - Pytest
 
 ## Quick start
 
 ```bash
-cd faceless_youtube_backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env          # edit as needed
+alembic upgrade head
+python -m app.seed            # optional
 uvicorn app.main:app --reload
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-## Seed the first channel and ideas
-
-```bash
-python -m app.seed
-```
+Dashboard: `http://127.0.0.1:8000/`
+API docs: `http://127.0.0.1:8000/docs`
 
 ## Run tests
 
 ```bash
-pytest -q
+python3 -m pytest -q
+node --check app/static/app.js
 ```
 
 ## Main workflow
 
 1. Create or seed a channel.
 2. Create video ideas.
-3. Generate assets for each video.
-4. Review the assets.
-5. Approve the video.
-6. Render and review a local draft preview.
-7. Build a production package.
-8. Prepare YouTube metadata.
-9. Upload manually or connect the YouTube adapter later.
+3. Generate assets for each video (LLM or local templates).
+4. Review and approve the assets.
+5. Create a visual asset plan and queue generation jobs.
+6. Run local generation (`/run-local`) and manually approve each visual asset.
+7. Render and review a local draft preview.
+8. Build a production package.
+9. Generate final production voiceover (cloud TTS required).
+10. Run the final export — creates `final.mp4`, `final_video_stub.mp4`, and `final_export_manifest.json`.
+11. Prepare YouTube metadata payload.
+12. Upload manually via YouTube Studio.
+13. Mark published.
 
-## Important endpoints
+## Review gates
+
+No gate can be bypassed. Each must be satisfied by a human operator:
+
+| Gate | Endpoint |
+|---|---|
+| Asset review | `POST /videos/{id}/review` |
+| Preview review | `POST /videos/{id}/preview/review` |
+| Visual asset approval | `POST /visual-generation/assets/{id}/approve` |
+| Final voiceover (cloud TTS only) | `POST /videos/{id}/final-voiceover/generate` |
+| Metadata cleanup | Edit video title/description |
+| Final export | `POST /videos/{id}/final-production/export` |
+
+## Key endpoints
 
 ```text
 GET    /health
 POST   /channels
-GET    /channels
-POST   /videos
 GET    /videos
-GET    /videos/{video_id}
-POST   /videos/{video_id}/generate
-POST   /videos/{video_id}/review
-GET    /videos/{video_id}/preview/status
-GET    /videos/{video_id}/preview
-POST   /videos/{video_id}/preview/render-draft
-POST   /videos/{video_id}/preview/review
-POST   /videos/{video_id}/package
-GET    /videos/{video_id}/assets
-POST   /publish/{video_id}/prepare-youtube-payload
-POST   /publish/{video_id}/mark-published
+POST   /videos
+POST   /videos/{id}/generate
+POST   /videos/{id}/review
+POST   /videos/{id}/preview/render-draft
+POST   /videos/{id}/preview/review
+POST   /videos/{id}/package
+POST   /videos/{id}/final-voiceover/generate
+GET    /videos/{id}/final-production/status
+POST   /videos/{id}/final-production/export
+POST   /visual-assets/from-video/{id}
+POST   /visual-generation/plans/{id}/queue
+POST   /visual-generation/jobs/{id}/run-local
+POST   /visual-generation/assets/{id}/approve
+POST   /visual-generation/assets/{id}/reject
+POST   /publish/{id}/prepare-youtube-payload
+POST   /publish/{id}/mark-published
 ```
 
 ## Environment
@@ -81,57 +96,17 @@ POST   /publish/{video_id}/mark-published
 ```text
 DATABASE_URL=sqlite:///./content_factory.db
 OUTPUT_DIR=./out
-CHANNEL_DEFAULT_NAME=Local AI Operator
+APP_ENV=development
 REQUIRE_HUMAN_REVIEW=true
 ENABLE_YOUTUBE_UPLOADS=false
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.5
+INTERNAL_API_KEY=                # required when APP_ENV=production
+OPENAI_API_KEY=                  # for LLM and TTS
+OPENAI_MODEL=gpt-4o-mini
+IMAGE_GENERATION_PROVIDER=placeholder
 ```
 
-The backend works without an OpenAI key using deterministic local templates. Add an LLM provider later by replacing `app/services/content_engine.py` internals.
+The system works without an OpenAI key using deterministic local templates and placeholder visuals.
 
-## Data model
+## Safety boundary
 
-- `Channel`: channel positioning and style guide
-- `Video`: idea, content pillar, type, status, review state
-- `ContentAsset`: generated script, shorts, description, thumbnail prompt, package manifest
-- `Review`: approval/rejection notes
-- `PublishRecord`: prepared/published metadata
-
-## Review gate
-
-A video cannot be packaged or marked publish-ready until it has a passing review and a manually reviewed local draft preview. Draft previews are expected at:
-
-`out/previews/{video_id}/draft.mp4`
-
-If no local renderer is configured, place a real draft MP4 at that path before packaging/payload preparation.
-
-`POST /videos/{video_id}/preview/render-draft` now builds a watchable local draft preview from generated script/title data using ffmpeg slide rendering. On macOS it uses `say` for local voiceover when available; otherwise it generates a clearly labeled silent draft preview.
-
-Premium cloud voiceover provider order:
-1. ElevenLabs
-2. OpenAI TTS
-3. macOS `say`
-4. Silent fallback
-
-Configure with:
-
-```text
-PREVIEW_TTS_PROVIDER=auto
-ELEVENLABS_API_KEY=
-ELEVENLABS_VOICE_ID=
-ELEVENLABS_MODEL_ID=eleven_multilingual_v2
-OPENAI_API_KEY=
-OPENAI_TTS_MODEL=gpt-4o-mini-tts
-OPENAI_TTS_VOICE=marin
-PREVIEW_TTS_RATE=
-```
-
-## Next integrations to add
-
-- Google OAuth + YouTube Data API upload
-- ElevenLabs/PlayHT voiceover generation
-- Canva/thumbnail generation
-- CapCut/Descript export automation
-- Queue worker with Redis/RQ or Celery
-- Postgres for production
+This system **never** automatically uploads to YouTube. Upload is always manual. No automated upload path exists. The `ENABLE_YOUTUBE_UPLOADS` flag is enforced as `false` in all production gates and requires deliberate code changes to alter.

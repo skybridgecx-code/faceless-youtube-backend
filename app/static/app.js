@@ -207,7 +207,7 @@ const app = {
     entry.className = `log-entry ${type}`;
     
     const time = new Date().toLocaleTimeString();
-    entry.innerHTML = `<span class="log-time">[${time}]</span><span class="log-msg">${msg}</span>`;
+    entry.innerHTML = `<span class="log-time">[${this.escapeHtml(time)}]</span><span class="log-msg">${this.escapeHtml(msg)}</span>`;
     
     logContainer.appendChild(entry);
     logContainer.scrollTop = logContainer.scrollHeight;
@@ -284,13 +284,13 @@ const app = {
 
       card.innerHTML = `
         <div class="video-header">
-          <div class="video-title">${video.title}</div>
-          <div class="video-status ${statusLabel}">${statusLabel}</div>
+          <div class="video-title">${this.escapeHtml(video.title || '')}</div>
+          <div class="video-status ${this.escapeHtml(statusLabel)}">${this.escapeHtml(statusLabel)}</div>
         </div>
         <div class="video-details" style="margin-top: 0.5rem;">
           <div class="detail-item" style="grid-column: span 2;">
             <span class="detail-label">Publish Date</span>
-            <span class="detail-value" style="color: var(--primary);">${pubDateStr}</span>
+            <span class="detail-value" style="color: var(--primary);">${this.escapeHtml(pubDateStr)}</span>
           </div>
         </div>
       `;

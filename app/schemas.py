@@ -1451,6 +1451,8 @@ class FinalProductionExportResponse(BaseModel):
     final_export_path: str | None
     blockers: list[str]
     status: str
+    final_video_stub_path: str | None = None
+    manifest_path: str | None = None
 
 
 class FinalVoiceoverStatus(BaseModel):

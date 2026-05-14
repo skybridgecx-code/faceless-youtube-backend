@@ -30,6 +30,7 @@ from app.services.visual_generation import (
     job_type_for_prompt_type,
     payload_json,
     recompute_plan_generation_status,
+    run_local_generation_job,
 )
 
 router = APIRouter(prefix="/visual-generation", tags=["visual-generation"])
@@ -286,6 +287,25 @@ def export_visual_generation_payload(job_id: int, db: Session = Depends(get_db))
         "job": VisualGenerationJobRead.model_validate(job).model_dump(),
         "provider_payload": provider_payload,
     }
+
+
+@router.post("/jobs/{job_id}/run-local")
+def run_visual_generation_job_local(job_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Run a queued visual generation job locally using a deterministic placeholder asset.
+
+    The generated asset is created on disk and registered in the database.
+    Review status is set to pending — manual approval is always required.
+    """
+    job = get_job_or_404(db, job_id)
+    result = run_local_generation_job(job, db)
+    log_audit_event(
+        db,
+        "visual_generation_job_run_local",
+        f"Ran local generation for visual generation job #{job_id}",
+        video_id=job.plan.video_id,
+        metadata={"job_id": job_id, "asset_id": result.get("asset_id"), "status": result.get("status")},
+    )
+    return result
 
 
 @router.post("/jobs/{job_id}/register-output", response_model=VisualGeneratedAssetRead)
