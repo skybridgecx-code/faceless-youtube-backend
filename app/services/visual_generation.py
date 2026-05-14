@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
-from app.models import VisualAssetPlan, VisualGenerationJob
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.models import VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
+
+# Minimal valid 1×1 white PNG for local placeholder stubs.
+_PNG_PLACEHOLDER = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
+    b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 ACTIVE_JOB_STATUSES = {"queued", "exported", "imported"}
 
@@ -99,3 +112,83 @@ def recompute_plan_generation_status(plan: VisualAssetPlan) -> dict[str, int]:
 
 def payload_json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, default=str, sort_keys=True)
+
+
+def _local_asset_path(video_id: int, job_id: int, job_type: str) -> Path:
+    output_dir = get_settings().output_path / "visual_assets" / f"video_{video_id}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"job_{job_id}_{job_type}_placeholder.png"
+
+
+def run_local_generation_job(job: VisualGenerationJob, db: Session) -> dict[str, Any]:
+    """Run a queued job locally using a deterministic placeholder asset.
+
+    Leaves the generated asset in pending review — never auto-approves.
+    Provider failures become structured warnings, not crashes.
+    """
+    if job.status not in {"queued", "exported"}:
+        return {
+            "job_id": job.id,
+            "status": job.status,
+            "warning": f"Job is already in status '{job.status}'; skipped.",
+            "asset_id": None,
+        }
+
+    plan = job.plan
+    video_id = plan.video_id
+
+    try:
+        asset_path = _local_asset_path(video_id, job.id, job.job_type)
+        asset_path.write_bytes(_PNG_PLACEHOLDER)
+    except OSError as exc:
+        job.status = "failed"
+        job.failure_reason = f"Local placeholder write failed: {exc}"
+        db.commit()
+        return {
+            "job_id": job.id,
+            "status": "failed",
+            "warning": job.failure_reason,
+            "asset_id": None,
+        }
+
+    existing_asset = db.scalar(
+        select(VisualGeneratedAsset).where(VisualGeneratedAsset.generation_job_id == job.id).limit(1)
+    )
+    if existing_asset is None:
+        asset = VisualGeneratedAsset(
+            visual_asset_plan_id=job.visual_asset_plan_id,
+            visual_scene_id=job.visual_scene_id,
+            generation_job_id=job.id,
+            asset_type=job.job_type,
+            file_path=str(asset_path),
+            file_exists=True,
+            mime_type="image/png",
+        )
+        db.add(asset)
+        db.flush()
+    else:
+        existing_asset.file_path = str(asset_path)
+        existing_asset.file_exists = True
+        existing_asset.mime_type = "image/png"
+        asset = existing_asset
+
+    job.output_path = str(asset_path)
+    job.status = "imported"
+    job.failure_reason = None
+
+    if job.scene is not None:
+        job.scene.asset_status = "generated"
+        job.scene.generated_asset_path = str(asset_path)
+
+    recompute_plan_generation_status(plan)
+    db.commit()
+    db.refresh(asset)
+
+    return {
+        "job_id": job.id,
+        "status": "imported",
+        "asset_id": asset.id,
+        "file_path": str(asset_path),
+        "review_status": "pending",
+        "warning": None,
+    }
