@@ -379,3 +379,74 @@ def test_publishing_payload_never_uses_draft_preview_path() -> None:
     # Verify draft preview is not used in written JSON payload either
     written = json.loads(Path(body["payload_path"]).read_text(encoding="utf-8"))
     assert written["paths"]["video_file_path"] != draft_preview_str
+
+
+# ---------------------------------------------------------------------------
+# Phase 35 tests — local export artifact creation
+# ---------------------------------------------------------------------------
+
+def test_export_creates_local_artifacts() -> None:
+    """When voice, visuals, and metadata are ready, export creates all three local files."""
+    client = TestClient(app)
+    ctx = _full_workflow(client, "Artifact Export Video")
+    video_id = ctx["video_id"]
+    plan_id = ctx["plan_id"]
+
+    _create_and_approve_visual_asset(client, video_id, plan_id)
+    _write_final_voiceover(video_id, provider="openai")
+    _write_clean_description(video_id)
+
+    export_dir = get_settings().output_path / "final_exports" / f"video_{video_id}"
+    assert not (export_dir / "final.mp4").exists()
+
+    resp = client.post(f"/videos/{video_id}/final-production/export")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "production_ready"
+    assert body["production_ready"] is True
+    assert body["blockers"] == []
+    assert body["final_export_path"] is not None
+    assert "final_exports" in body["final_export_path"]
+
+    assert (export_dir / "final.mp4").exists()
+    assert (export_dir / "final.mp4").stat().st_size > 0
+    assert (export_dir / "final_video_stub.mp4").exists()
+    assert (export_dir / "final_video_stub.mp4").stat().st_size > 0
+    assert (export_dir / "final_export_manifest.json").exists()
+
+    manifest = json.loads((export_dir / "final_export_manifest.json").read_text())
+    assert manifest["video_id"] == video_id
+    assert "title" in manifest
+    assert "generated_at" in manifest
+    assert "final_voiceover_path" in manifest
+    assert "visual_asset_summary" in manifest
+    assert manifest["visual_asset_summary"]["approved"] >= 1
+    assert manifest["readiness_status"] == "production_ready"
+    assert "final_export_path" in manifest
+    assert "final_video_stub_path" in manifest
+    assert "not been uploaded to YouTube" in manifest["note"]
+
+
+def test_status_sees_final_export_after_export() -> None:
+    """After a successful export call, final-production/status reflects final_export_ready=True."""
+    client = TestClient(app)
+    ctx = _full_workflow(client, "Status After Export Video")
+    video_id = ctx["video_id"]
+    plan_id = ctx["plan_id"]
+
+    _create_and_approve_visual_asset(client, video_id, plan_id)
+    _write_final_voiceover(video_id, provider="openai")
+    _write_clean_description(video_id)
+
+    status_before = client.get(f"/videos/{video_id}/final-production/status").json()
+    assert status_before["final_export_ready"] is False
+    assert status_before["production_ready"] is False
+
+    export_resp = client.post(f"/videos/{video_id}/final-production/export")
+    assert export_resp.status_code == 200
+    assert export_resp.json()["status"] == "production_ready"
+
+    status_after = client.get(f"/videos/{video_id}/final-production/status").json()
+    assert status_after["final_export_ready"] is True
+    assert status_after["production_ready"] is True
+    assert status_after["blockers"] == []
