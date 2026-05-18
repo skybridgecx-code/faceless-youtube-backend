@@ -1449,10 +1449,12 @@ class FinalProductionExportResponse(BaseModel):
     video_id: int
     production_ready: bool
     final_export_path: str | None
+    manifest_path: str | None = None
+    render_plan_path: str | None = None
+    render_command_path: str | None = None
+    renderer: str = "ffmpeg"
     blockers: list[str]
     status: str
-    final_video_stub_path: str | None = None
-    manifest_path: str | None = None
 
 
 class FinalVoiceoverStatus(BaseModel):

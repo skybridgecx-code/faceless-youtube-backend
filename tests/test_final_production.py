@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -105,6 +106,29 @@ def _write_clean_description(video_id: int) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _install_fake_ffmpeg_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import final_renderer as final_renderer_module
+
+    real_which = shutil.which
+
+    def fake_which(binary: str) -> str | None:
+        if binary == "ffmpeg":
+            return "/usr/bin/ffmpeg"
+        if binary == "ffprobe":
+            return None
+        return real_which(binary)
+
+    def fake_run(command: list[str], capture_output: bool = True, text: bool = True) -> subprocess.CompletedProcess[str]:
+        out_path = Path(command[-1]) if command else None
+        if out_path and out_path.suffix.lower() == ".mp4":
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isomFAKE")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(final_renderer_module.shutil, "which", fake_which)
+    monkeypatch.setattr(final_renderer_module.subprocess, "run", fake_run)
 
 
 def _full_workflow(client: TestClient, title: str) -> dict[str, object]:
@@ -306,8 +330,8 @@ def test_post_final_production_export_refuses_when_blockers() -> None:
     assert not final_path.exists()
 
 
-def test_full_production_ready_state() -> None:
-    """With all 4 checks satisfied, production_ready becomes True."""
+def test_full_production_ready_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With all gates satisfied and renderer available, production_ready becomes True after export."""
     client = TestClient(app)
     ctx = _full_workflow(client, "Full Production Video")
     video_id = ctx["video_id"]
@@ -316,7 +340,25 @@ def test_full_production_ready_state() -> None:
     _create_and_approve_visual_asset(client, video_id, plan_id)
     _write_final_voiceover(video_id, provider="openai")
     _write_clean_description(video_id)
-    final_path = _write_final_export(video_id)
+
+    pre = client.get(f"/videos/{video_id}/final-production/status")
+    assert pre.status_code == 200
+    pre_body = pre.json()
+    assert pre_body["production_ready"] is False
+    assert pre_body["final_export_ready"] is False
+
+    _install_fake_ffmpeg_pipeline(monkeypatch)
+    export_resp = client.post(f"/videos/{video_id}/final-production/export")
+    assert export_resp.status_code == 200
+    export_body = export_resp.json()
+    assert export_body["status"] == "production_ready"
+    assert export_body["production_ready"] is True
+    assert export_body["renderer"] == "ffmpeg"
+    assert export_body["final_export_path"] is not None
+    assert export_body["manifest_path"] is not None
+    assert export_body["render_plan_path"] is not None
+    assert export_body["render_command_path"] is not None
+    assert export_body["blockers"] == []
 
     resp = client.get(f"/videos/{video_id}/final-production/status")
     assert resp.status_code == 200
@@ -329,13 +371,6 @@ def test_full_production_ready_state() -> None:
     assert body["final_export_path"] is not None
     assert "final_exports" in body["final_export_path"]
     assert body["blockers"] == []
-
-    export_resp = client.post(f"/videos/{video_id}/final-production/export")
-    assert export_resp.status_code == 200
-    export_body = export_resp.json()
-    assert export_body["status"] == "production_ready"
-    assert export_body["production_ready"] is True
-    assert export_body["blockers"] == []
 
 
 def test_publishing_payload_uses_final_export_path_when_production_ready() -> None:
@@ -385,8 +420,8 @@ def test_publishing_payload_never_uses_draft_preview_path() -> None:
 # Phase 35 tests — local export artifact creation
 # ---------------------------------------------------------------------------
 
-def test_export_creates_local_artifacts() -> None:
-    """When voice, visuals, and metadata are ready, export creates all three local files."""
+def test_export_creates_local_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When voice, visuals, and metadata are ready, export creates final mp4 + manifest + plan artifacts."""
     client = TestClient(app)
     ctx = _full_workflow(client, "Artifact Export Video")
     video_id = ctx["video_id"]
@@ -395,6 +430,7 @@ def test_export_creates_local_artifacts() -> None:
     _create_and_approve_visual_asset(client, video_id, plan_id)
     _write_final_voiceover(video_id, provider="openai")
     _write_clean_description(video_id)
+    _install_fake_ffmpeg_pipeline(monkeypatch)
 
     export_dir = get_settings().output_path / "final_exports" / f"video_{video_id}"
     assert not (export_dir / "final.mp4").exists()
@@ -407,27 +443,34 @@ def test_export_creates_local_artifacts() -> None:
     assert body["blockers"] == []
     assert body["final_export_path"] is not None
     assert "final_exports" in body["final_export_path"]
+    assert body["manifest_path"] is not None
+    assert body["render_plan_path"] is not None
+    assert body["render_command_path"] is not None
+    assert body["renderer"] == "ffmpeg"
 
     assert (export_dir / "final.mp4").exists()
     assert (export_dir / "final.mp4").stat().st_size > 0
-    assert (export_dir / "final_video_stub.mp4").exists()
-    assert (export_dir / "final_video_stub.mp4").stat().st_size > 0
     assert (export_dir / "final_export_manifest.json").exists()
+    assert (export_dir / "render_plan.json").exists()
+    assert (export_dir / "render_command.json").exists()
+    assert (export_dir / "slides_concat.txt").exists()
 
     manifest = json.loads((export_dir / "final_export_manifest.json").read_text())
     assert manifest["video_id"] == video_id
     assert "title" in manifest
     assert "generated_at" in manifest
     assert "final_voiceover_path" in manifest
-    assert "visual_asset_summary" in manifest
-    assert manifest["visual_asset_summary"]["approved"] >= 1
-    assert manifest["readiness_status"] == "production_ready"
+    assert "approved_visual_assets_used" in manifest
+    assert manifest["visual_asset_count"] >= 1
     assert "final_export_path" in manifest
-    assert "final_video_stub_path" in manifest
+    assert "render_plan_path" in manifest
+    assert "render_command_path" in manifest
+    assert manifest["renderer"] == "ffmpeg"
+    assert manifest["ffmpeg_available"] is True
     assert "not been uploaded to YouTube" in manifest["note"]
 
 
-def test_status_sees_final_export_after_export() -> None:
+def test_status_sees_final_export_after_export(monkeypatch: pytest.MonkeyPatch) -> None:
     """After a successful export call, final-production/status reflects final_export_ready=True."""
     client = TestClient(app)
     ctx = _full_workflow(client, "Status After Export Video")
@@ -437,6 +480,7 @@ def test_status_sees_final_export_after_export() -> None:
     _create_and_approve_visual_asset(client, video_id, plan_id)
     _write_final_voiceover(video_id, provider="openai")
     _write_clean_description(video_id)
+    _install_fake_ffmpeg_pipeline(monkeypatch)
 
     status_before = client.get(f"/videos/{video_id}/final-production/status").json()
     assert status_before["final_export_ready"] is False
@@ -450,3 +494,35 @@ def test_status_sees_final_export_after_export() -> None:
     assert status_after["final_export_ready"] is True
     assert status_after["production_ready"] is True
     assert status_after["blockers"] == []
+
+
+def test_export_refuses_when_ffmpeg_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Export must return blocked with clear blocker when ffmpeg is not installed."""
+    from app.services import final_renderer as final_renderer_module
+
+    client = TestClient(app)
+    ctx = _full_workflow(client, "FFmpeg Missing Video")
+    video_id = ctx["video_id"]
+    plan_id = ctx["plan_id"]
+
+    _create_and_approve_visual_asset(client, video_id, plan_id)
+    _write_final_voiceover(video_id, provider="openai")
+    _write_clean_description(video_id)
+
+    real_which = shutil.which
+
+    def fake_which(binary: str) -> str | None:
+        if binary == "ffmpeg":
+            return None
+        return real_which(binary)
+
+    monkeypatch.setattr(final_renderer_module.shutil, "which", fake_which)
+
+    export_dir = get_settings().output_path / "final_exports" / f"video_{video_id}"
+    resp = client.post(f"/videos/{video_id}/final-production/export")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "blocked"
+    assert body["production_ready"] is False
+    assert any("ffmpeg is required for final render" in blocker for blocker in body["blockers"])
+    assert not (export_dir / "final.mp4").exists()

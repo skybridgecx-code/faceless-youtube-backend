@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.routers.videos import get_video_or_404
 from app.schemas import FinalProductionExportResponse, FinalProductionStatus
+from app.services.final_renderer import render_final_video_with_ffmpeg
 from app.services.final_production import (
     assess_final_production,
     assess_preexport_readiness,
-    build_local_export_artifacts,
 )
 
 router = APIRouter(prefix="/videos", tags=["final-production"])
@@ -30,16 +30,36 @@ def run_final_production_export(video_id: int, db: Session = Depends(get_db)) ->
             video_id=video_id,
             production_ready=False,
             final_export_path=None,
+            manifest_path=None,
+            render_plan_path=None,
+            render_command_path=None,
+            renderer="ffmpeg",
             blockers=pre_blockers,
             status="blocked",
         )
-    artifacts = build_local_export_artifacts(video, db)
+    render_result = render_final_video_with_ffmpeg(video, db)
+    if render_result.get("status") != "rendered":
+        return FinalProductionExportResponse(
+            video_id=video_id,
+            production_ready=False,
+            final_export_path=None,
+            manifest_path=render_result.get("manifest_path"),
+            render_plan_path=render_result.get("render_plan_path"),
+            render_command_path=render_result.get("render_command_path"),
+            renderer=str(render_result.get("renderer") or "ffmpeg"),
+            blockers=list(render_result.get("blockers") or ["Final render failed"]),
+            status="blocked",
+        )
+
+    final_status = assess_final_production(video, db)
     return FinalProductionExportResponse(
         video_id=video_id,
-        production_ready=True,
-        final_export_path=artifacts["final_export_path"],
-        blockers=[],
-        status="production_ready",
-        final_video_stub_path=artifacts["final_video_stub_path"],
-        manifest_path=artifacts["manifest_path"],
+        production_ready=final_status.production_ready,
+        final_export_path=final_status.final_export_path,
+        manifest_path=render_result.get("manifest_path"),
+        render_plan_path=render_result.get("render_plan_path"),
+        render_command_path=render_result.get("render_command_path"),
+        renderer=str(render_result.get("renderer") or "ffmpeg"),
+        blockers=final_status.blockers,
+        status="production_ready" if final_status.production_ready else "blocked",
     )

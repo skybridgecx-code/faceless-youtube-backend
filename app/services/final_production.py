@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import AssetType, ContentAsset, PublishingPayload, Video, VisualAssetPlan, VisualGeneratedAsset
+from app.models import AssetType, ContentAsset, Video, VisualAssetPlan, VisualGeneratedAsset
 from app.schemas import FinalProductionStatus
 from app.services.final_voiceover import assess_final_voiceover
 from app.services.visual_asset_review import asset_review_fields
 
 _PLACEHOLDER_PATTERNS = ["[INSERT LINK]", "How to I Built", "Draft Preview"]
-
-# Minimal valid MP4 ftyp box used for local placeholder stubs.
-_MP4_STUB_HEADER = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 
 
 def _export_dir_for_video(video_id: int) -> Path:
@@ -105,66 +100,6 @@ def assess_preexport_readiness(video: Video, db: Session) -> tuple[bool, list[st
     all_blockers = _dedupe(voice_blockers + visual_blockers + meta_blockers)
     ready = voice_ready and visuals_ready and not meta_blockers
     return ready, all_blockers
-
-
-def build_local_export_artifacts(video: Video, db: Session) -> dict[str, str]:
-    """Create deterministic local export stubs and manifest. Returns artifact paths."""
-    video_id = video.id
-    export_dir = _export_dir_for_video(video_id)
-    export_dir.mkdir(parents=True, exist_ok=True)
-
-    final_path = export_dir / "final.mp4"
-    stub_path = export_dir / "final_video_stub.mp4"
-    manifest_path = export_dir / "final_export_manifest.json"
-
-    final_path.write_bytes(_MP4_STUB_HEADER + b"FINAL_LOCAL_EXPORT")
-    stub_path.write_bytes(_MP4_STUB_HEADER + b"STUB_LOCAL_EXPORT")
-
-    voiceover_status = assess_final_voiceover(video_id)
-    voiceover_path = voiceover_status.voiceover_path
-
-    payload_row = db.scalar(
-        select(PublishingPayload).where(PublishingPayload.video_id == video_id)
-    )
-    publishing_payload_path = (
-        payload_row.payload_path if payload_row and payload_row.payload_path else None
-    )
-
-    vis_rows = list(
-        db.scalars(
-            select(VisualGeneratedAsset)
-            .join(VisualAssetPlan, VisualAssetPlan.id == VisualGeneratedAsset.visual_asset_plan_id)
-            .where(
-                VisualAssetPlan.video_id == video_id,
-                VisualGeneratedAsset.file_exists.is_(True),
-            )
-        )
-    )
-    approved_count = sum(
-        1
-        for row in vis_rows
-        if str(asset_review_fields(db, row).get("review_status") or "pending") == "approved"
-    )
-
-    manifest: dict = {
-        "video_id": video_id,
-        "title": video.title or "",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "final_voiceover_path": voiceover_path,
-        "publishing_payload_path": publishing_payload_path,
-        "visual_asset_summary": {"total": len(vis_rows), "approved": approved_count},
-        "readiness_status": "production_ready",
-        "final_export_path": str(final_path.resolve()),
-        "final_video_stub_path": str(stub_path.resolve()),
-        "note": "This is a local export artifact. It has not been uploaded to YouTube.",
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-    return {
-        "final_export_path": str(final_path.resolve()),
-        "final_video_stub_path": str(stub_path.resolve()),
-        "manifest_path": str(manifest_path.resolve()),
-    }
 
 
 def assess_final_production(video: Video, db: Session) -> FinalProductionStatus:
