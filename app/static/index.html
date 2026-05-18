@@ -704,7 +704,23 @@
                   <div class="meta-row"><span class="meta-label">Final Export Ready</span><span class="meta-value" id="workflowFinalExportReady">No</span></div>
                   <div class="meta-row"><span class="meta-label">Final Production Blockers</span><span class="meta-value pre-wrap" id="workflowFinalBlockers">-</span></div>
                   <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value" id="workflowNextAction">Select a video to continue workflow.</span></div>
-                  <div class="flow-item pending">• Final voiceover readiness is shown for visibility. OpenAI/ElevenLabs production voice setup remains intentionally deferred in this phase.</div>
+                  <div class="flow-item pending" id="workflowVoiceDeferredNote">• Production voiceover requires OpenAI or ElevenLabs and is intentionally deferred.</div>
+
+                  <div class="flow-card" style="margin-top:0.45rem;">
+                    <div class="flow-card-title">Workflow Blocker Chain</div>
+                    <div id="workflowBlockerChain" class="workflow-step-list"></div>
+                  </div>
+
+                  <div class="flow-card" style="margin-top:0.45rem;">
+                    <div class="flow-card-title">Workflow Paths</div>
+                    <div class="meta-row"><span class="meta-label">Preview URL</span><a class="meta-value workflow-path-link" id="workflowPreviewUrlLink" href="#" target="_blank" rel="noopener noreferrer">-</a></div>
+                    <div class="meta-row"><span class="meta-label">Preview File Path</span><span class="meta-value pre-wrap" id="workflowPreviewPath">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Package Directory</span><span class="meta-value pre-wrap" id="workflowPackagePath">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Publishing Payload Path</span><span class="meta-value pre-wrap" id="workflowPublishingPayloadPath">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Final Voiceover Path</span><span class="meta-value pre-wrap" id="workflowFinalVoicePath">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Final Export Path</span><span class="meta-value pre-wrap" id="workflowFinalExportPath">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Final Export Manifest Path</span><span class="meta-value pre-wrap" id="workflowFinalManifestPath">-</span></div>
+                  </div>
 
                   <div class="workflow-actions-grid">
                     <button class="btn" id="workflowBtnApprovePendingAssets" onclick="app.approveAllPendingVisualAssets()">Approve All Pending Visual Assets</button>

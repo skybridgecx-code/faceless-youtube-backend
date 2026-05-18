@@ -44,6 +44,9 @@ const app = {
     performanceSummary: null,
     publishingPayloadByVideoId: {},
     finalProductionByVideoId: {},
+    finalVoiceoverByVideoId: {},
+    workflowExportAttemptByVideoId: {},
+    operatorExportByVideoId: {},
     publishingPayloadQueue: [],
     publishingPayloadQueueStatusFilter: 'all',
     publishingPayloadQueueReadyFilter: 'all',
@@ -3400,6 +3403,8 @@ const app = {
     await this.loadSelectedVideoPerformance();
     await this.loadPublishingPayloadForSelectedVideo();
     await this.loadFinalProductionStatus();
+    await this.loadFinalVoiceoverStatus();
+    await this.loadOperatorExportForSelectedVideo();
     if (reloadAudit) {
       await this.loadVideoAudit();
     }
@@ -4713,6 +4718,7 @@ const app = {
         btn.classList.remove('loading');
         btn.disabled = false;
       }
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 
@@ -4745,6 +4751,7 @@ const app = {
         btn.classList.remove('loading');
         btn.disabled = false;
       }
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 
@@ -4895,6 +4902,7 @@ const app = {
         button.disabled = false;
         button.classList.remove('loading');
       });
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 
@@ -4908,6 +4916,7 @@ const app = {
     try {
       const res = await fetch(`/videos/${selected.id}/publishing-payload`);
       if (res.status === 404) {
+        this.state.publishingPayloadByVideoId[selected.id] = null;
         this.renderPublishingPayloadSummary(null);
         this.renderWorkflowControlPanel();
         return null;
@@ -4920,6 +4929,7 @@ const app = {
       return data;
     } catch (err) {
       this.log(`Load publishing payload failed: ${err.message}`, 'error');
+      this.state.publishingPayloadByVideoId[selected.id] = null;
       this.renderPublishingPayloadSummary(null);
       this.renderWorkflowControlPanel();
       return null;
@@ -4947,6 +4957,91 @@ const app = {
     }
   },
 
+  async loadFinalVoiceoverStatus() {
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      this.renderWorkflowControlPanel();
+      return null;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/final-voiceover/status`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load final voiceover status');
+      this.state.finalVoiceoverByVideoId[selected.id] = data;
+      this.renderWorkflowControlPanel();
+      return data;
+    } catch (err) {
+      this.log(`Final voiceover status failed: ${err.message}`, 'error');
+      this.state.finalVoiceoverByVideoId[selected.id] = null;
+      this.renderWorkflowControlPanel();
+      return null;
+    }
+  },
+
+  async loadOperatorExportForSelectedVideo() {
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      this.renderWorkflowControlPanel();
+      return null;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/operator-export`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load operator export details');
+      this.state.operatorExportByVideoId[selected.id] = data;
+      this.renderWorkflowControlPanel();
+      return data;
+    } catch (_) {
+      this.state.operatorExportByVideoId[selected.id] = null;
+      this.renderWorkflowControlPanel();
+      return null;
+    }
+  },
+
+  workflowStatusToClass(status) {
+    if (status === 'Complete') return 'workflow-status-complete';
+    if (status === 'Ready') return 'workflow-status-ready';
+    if (status === 'Blocked') return 'workflow-status-blocked';
+    if (status === 'Needs review') return 'workflow-status-needs-review';
+    return 'workflow-status-deferred';
+  },
+
+  setWorkflowPathText(elementId, value) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.textContent = value || '-';
+  },
+
+  setWorkflowPathLink(elementId, hrefValue) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (!hrefValue) {
+      el.textContent = '-';
+      el.removeAttribute('href');
+      el.classList.add('is-empty');
+      return;
+    }
+    el.textContent = hrefValue;
+    el.setAttribute('href', hrefValue);
+    el.classList.remove('is-empty');
+  },
+
+  workflowHasBlocker(blockers, pattern) {
+    return Array.isArray(blockers) && blockers.some(item => pattern.test(String(item || '')));
+  },
+
+  applyWorkflowActionButtonState(buttonId, enabled, blocked, reason) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+    btn.disabled = !enabled;
+    btn.classList.toggle('blocked-action', !!blocked);
+    if (reason) {
+      btn.title = reason;
+    } else {
+      btn.removeAttribute('title');
+    }
+  },
+
   renderWorkflowControlPanel() {
     const selected = this.getSelectedVideo();
     const videoLabelEl = document.getElementById('workflowVideoLabel');
@@ -4962,10 +5057,12 @@ const app = {
     const finalExportEl = document.getElementById('workflowFinalExportReady');
     const blockersEl = document.getElementById('workflowFinalBlockers');
     const nextActionEl = document.getElementById('workflowNextAction');
+    const blockerChainEl = document.getElementById('workflowBlockerChain');
+    const voiceDeferredNoteEl = document.getElementById('workflowVoiceDeferredNote');
     if (
       !videoLabelEl || !visualReviewCountsEl || !videoApprovalEl || !previewExistsEl || !previewReviewedEl
       || !packageExistsEl || !payloadStatusEl || !finalVisualsEl || !finalMetadataEl || !finalVoiceEl
-      || !finalExportEl || !blockersEl || !nextActionEl
+      || !finalExportEl || !blockersEl || !nextActionEl || !blockerChainEl || !voiceDeferredNoteEl
     ) {
       return;
     }
@@ -4984,6 +5081,24 @@ const app = {
       finalExportEl.textContent = 'No';
       blockersEl.textContent = '-';
       nextActionEl.textContent = 'Select a video to continue workflow.';
+      blockerChainEl.textContent = '';
+      this.setWorkflowPathLink('workflowPreviewUrlLink', null);
+      this.setWorkflowPathText('workflowPreviewPath', null);
+      this.setWorkflowPathText('workflowPackagePath', null);
+      this.setWorkflowPathText('workflowPublishingPayloadPath', null);
+      this.setWorkflowPathText('workflowFinalVoicePath', null);
+      this.setWorkflowPathText('workflowFinalExportPath', null);
+      this.setWorkflowPathText('workflowFinalManifestPath', null);
+      voiceDeferredNoteEl.textContent = '• Production voiceover requires OpenAI or ElevenLabs and is intentionally deferred.';
+      this.applyWorkflowActionButtonState('workflowBtnApprovePendingAssets', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnApproveVideo', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnRenderPreview', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnMarkPreviewReviewed', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnBuildPackage', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnPreparePayload', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnGeneratePublishingPayload', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnCheckFinalProduction', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnRunFinalExport', false, false, 'Select a video first.');
       return;
     }
 
@@ -4991,25 +5106,202 @@ const app = {
     const preview = this.state.previewStatusByVideoId?.[selected.id] || null;
     const payload = this.state.publishingPayloadByVideoId?.[selected.id] || null;
     const finalStatus = this.state.finalProductionByVideoId?.[selected.id] || null;
-    const blockers = Array.isArray(finalStatus?.blockers) ? finalStatus.blockers : [];
+    const finalVoiceStatus = this.state.finalVoiceoverByVideoId?.[selected.id] || null;
+    const exportAttempt = this.state.workflowExportAttemptByVideoId?.[selected.id] || null;
+    const operatorExport = this.state.operatorExportByVideoId?.[selected.id] || null;
+    const blockers = Array.isArray(finalStatus?.blockers) ? [...finalStatus.blockers] : [];
+    const exportAttemptBlockers = Array.isArray(exportAttempt?.blockers) ? exportAttempt.blockers : [];
+    exportAttemptBlockers.forEach((item) => {
+      const text = String(item || '').trim();
+      if (text && !blockers.includes(text)) blockers.push(text);
+    });
+    const visualApproved = Number(preview?.visual_assets_approved_count || readiness?.visual_assets_approved_count || 0);
+    const visualPending = Number(preview?.visual_assets_pending_count || readiness?.visual_assets_pending_count || 0);
+    const visualRejected = Number(preview?.visual_assets_rejected_count || readiness?.visual_assets_rejected_count || 0);
+    const visualTotal = Number(preview?.visual_assets_registered_count || readiness?.visual_assets_registered_count || 0);
+    const videoApproved = !!selected.approved;
+    const previewExists = !!preview?.preview_exists;
+    const previewReviewed = !!preview?.preview_reviewed;
+    const packageExists = !!readiness?.package_created;
+    const youtubePayloadPrepared = !!readiness?.youtube_metadata_prepared;
+    const finalMetadataReady = !!finalStatus?.final_metadata_ready;
+    const finalVoiceReady = !!finalStatus?.final_voice_ready;
+    const finalExportReady = !!finalStatus?.final_export_ready;
+    const ffmpegBlocked = this.workflowHasBlocker(blockers, /ffmpeg/i);
+    const finalVoiceDeferred = !finalVoiceReady && !finalVoiceStatus?.voiceover_ready;
 
     videoLabelEl.textContent = `#${selected.id} — ${selected.title || ''}`;
-    visualReviewCountsEl.textContent = `${Number(preview?.visual_assets_approved_count || readiness?.visual_assets_approved_count || 0)} / ${Number(preview?.visual_assets_pending_count || readiness?.visual_assets_pending_count || 0)} / ${Number(preview?.visual_assets_rejected_count || readiness?.visual_assets_rejected_count || 0)}`;
-    videoApprovalEl.textContent = selected.approved ? 'Yes' : 'No';
-    previewExistsEl.textContent = preview?.preview_exists ? 'Yes' : 'No';
-    previewReviewedEl.textContent = preview?.preview_reviewed ? 'Yes' : 'No';
-    packageExistsEl.textContent = readiness?.package_created ? 'Yes' : 'No';
+    visualReviewCountsEl.textContent = `${visualApproved} / ${visualPending} / ${visualRejected}`;
+    videoApprovalEl.textContent = videoApproved ? 'Yes' : 'No';
+    previewExistsEl.textContent = previewExists ? 'Yes' : 'No';
+    previewReviewedEl.textContent = previewReviewed ? 'Yes' : 'No';
+    packageExistsEl.textContent = packageExists ? 'Yes' : 'No';
     payloadStatusEl.textContent = payload?.payload_status || 'Not generated';
     finalVisualsEl.textContent = finalStatus?.final_visuals_ready ? 'Yes' : 'No';
-    finalMetadataEl.textContent = finalStatus?.final_metadata_ready ? 'Yes' : 'No';
-    finalVoiceEl.textContent = finalStatus?.final_voice_ready ? 'Yes' : 'No';
-    finalExportEl.textContent = finalStatus?.final_export_ready ? 'Yes' : 'No';
+    finalMetadataEl.textContent = finalMetadataReady ? 'Yes' : 'No';
+    finalVoiceEl.textContent = finalVoiceReady ? 'Yes' : 'No';
+    finalExportEl.textContent = finalExportReady ? 'Yes' : 'No';
     blockersEl.textContent = blockers.length ? blockers.join(' | ') : 'None';
     nextActionEl.textContent = (
       (blockers.length ? blockers[0] : null)
       || payload?.next_required_action
       || readiness?.next_required_action
       || 'Continue the next local workflow step.'
+    );
+
+    if (finalVoiceReady) {
+      voiceDeferredNoteEl.textContent = '• Final production voiceover is present and accepted by the production gate.';
+    } else {
+      voiceDeferredNoteEl.textContent = '• Production voiceover requires OpenAI or ElevenLabs and is intentionally deferred.';
+    }
+
+    const previewUrl = preview?.preview_url || null;
+    const previewAbsoluteUrl = previewUrl
+      ? (previewUrl.startsWith('http') ? previewUrl : `${window.location.origin}${previewUrl}`)
+      : null;
+    this.setWorkflowPathLink('workflowPreviewUrlLink', previewAbsoluteUrl);
+    this.setWorkflowPathText('workflowPreviewPath', preview?.preview_path || operatorExport?.preview_path || null);
+    this.setWorkflowPathText(
+      'workflowPackagePath',
+      this.state.packageDirsByVideoId?.[selected.id] || operatorExport?.package_dir || null
+    );
+    this.setWorkflowPathText('workflowPublishingPayloadPath', payload?.payload_path || operatorExport?.publishing_payload_path || null);
+    this.setWorkflowPathText('workflowFinalVoicePath', finalVoiceStatus?.voiceover_path || null);
+    this.setWorkflowPathText('workflowFinalExportPath', finalStatus?.final_export_path || exportAttempt?.final_export_path || null);
+    this.setWorkflowPathText('workflowFinalManifestPath', exportAttempt?.manifest_path || null);
+
+    const stepRows = [
+      {
+        label: 'Visual assets',
+        status: (visualApproved > 0 && visualPending === 0 && visualRejected === 0)
+          ? 'Complete'
+          : (visualPending > 0 || visualRejected > 0 ? 'Needs review' : 'Blocked'),
+        detail: (visualApproved > 0 && visualPending === 0 && visualRejected === 0)
+          ? `${visualApproved} approved`
+          : (visualPending > 0 || visualRejected > 0
+            ? `${visualApproved} approved, ${visualPending} pending, ${visualRejected} rejected`
+            : (visualTotal > 0 ? 'No approved visuals yet' : 'No visual assets registered')),
+      },
+      {
+        label: 'Video approval',
+        status: videoApproved ? 'Complete' : 'Blocked',
+        detail: videoApproved ? 'Video approved' : 'Run manual video approval',
+      },
+      {
+        label: 'Preview render',
+        status: previewExists ? 'Complete' : (videoApproved ? 'Ready' : 'Blocked'),
+        detail: previewExists ? 'Draft preview exists' : (videoApproved ? 'Ready to render draft preview' : 'Blocked until video approval'),
+      },
+      {
+        label: 'Preview review',
+        status: previewReviewed ? 'Complete' : (previewExists ? 'Needs review' : 'Blocked'),
+        detail: previewReviewed ? 'Preview reviewed' : (previewExists ? 'Mark preview reviewed' : 'Preview missing'),
+      },
+      {
+        label: 'Package',
+        status: packageExists ? 'Complete' : (previewReviewed ? 'Ready' : 'Blocked'),
+        detail: packageExists ? 'Package created' : (previewReviewed ? 'Ready to build package' : 'Blocked until preview is reviewed'),
+      },
+      {
+        label: 'YouTube payload',
+        status: youtubePayloadPrepared ? 'Complete' : (packageExists ? 'Ready' : 'Blocked'),
+        detail: youtubePayloadPrepared ? 'Prepared via /publish/{id}/prepare-youtube-payload' : (packageExists ? 'Ready to prepare payload' : 'Blocked until package exists'),
+      },
+      {
+        label: 'Final metadata',
+        status: finalMetadataReady ? 'Complete' : 'Blocked',
+        detail: finalMetadataReady ? 'Metadata clean for production' : 'Metadata cleanup still required',
+      },
+      {
+        label: 'Final voiceover',
+        status: finalVoiceReady ? 'Complete' : 'Deferred',
+        detail: finalVoiceReady
+          ? 'Production voiceover present'
+          : 'Production voiceover requires OpenAI or ElevenLabs and is intentionally deferred.',
+      },
+      {
+        label: 'Final export',
+        status: finalExportReady
+          ? 'Complete'
+          : (ffmpegBlocked ? 'Blocked' : (finalVoiceReady ? 'Ready' : 'Deferred')),
+        detail: finalExportReady
+          ? 'Final export generated'
+          : (ffmpegBlocked
+            ? 'ffmpeg is required for final render'
+            : (finalVoiceReady ? 'Ready to run final export' : 'Locked until production voiceover exists')),
+      },
+    ];
+
+    blockerChainEl.textContent = '';
+    stepRows.forEach((row) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'workflow-step-row';
+
+      const labelEl = document.createElement('div');
+      labelEl.className = 'workflow-step-label';
+      labelEl.textContent = row.label;
+
+      const statusEl = document.createElement('div');
+      statusEl.className = `workflow-step-status ${this.workflowStatusToClass(row.status)}`;
+      statusEl.textContent = row.status;
+
+      const detailEl = document.createElement('div');
+      detailEl.className = 'workflow-step-detail';
+      detailEl.textContent = row.detail;
+
+      rowEl.appendChild(labelEl);
+      rowEl.appendChild(statusEl);
+      rowEl.appendChild(detailEl);
+      blockerChainEl.appendChild(rowEl);
+    });
+
+    this.applyWorkflowActionButtonState(
+      'workflowBtnApprovePendingAssets',
+      visualPending > 0,
+      visualPending === 0,
+      visualPending > 0 ? '' : 'No pending visual assets to approve.'
+    );
+    this.applyWorkflowActionButtonState(
+      'workflowBtnApproveVideo',
+      !videoApproved,
+      videoApproved,
+      videoApproved ? 'Video is already approved.' : ''
+    );
+    this.applyWorkflowActionButtonState(
+      'workflowBtnRenderPreview',
+      videoApproved,
+      !videoApproved,
+      videoApproved ? '' : 'Blocked until video is approved.'
+    );
+    this.applyWorkflowActionButtonState(
+      'workflowBtnMarkPreviewReviewed',
+      previewExists && !previewReviewed,
+      !previewExists,
+      !previewExists ? 'Preview must be rendered before review.' : (previewReviewed ? 'Preview already reviewed.' : '')
+    );
+    this.applyWorkflowActionButtonState(
+      'workflowBtnBuildPackage',
+      true,
+      !previewReviewed,
+      previewReviewed ? '' : 'Blocked until draft preview is reviewed.'
+    );
+    this.applyWorkflowActionButtonState(
+      'workflowBtnPreparePayload',
+      true,
+      !packageExists,
+      packageExists ? '' : 'Blocked until package exists.'
+    );
+    this.applyWorkflowActionButtonState('workflowBtnGeneratePublishingPayload', true, false, '');
+    this.applyWorkflowActionButtonState('workflowBtnCheckFinalProduction', true, false, '');
+    this.applyWorkflowActionButtonState(
+      'workflowBtnRunFinalExport',
+      true,
+      !finalVoiceReady || ffmpegBlocked,
+      ffmpegBlocked
+        ? 'ffmpeg is required for final render.'
+        : (!finalVoiceReady
+          ? 'Locked until production voiceover exists.'
+          : '')
     );
   },
 
@@ -5026,6 +5318,8 @@ const app = {
       await this.loadPreviewStatus();
       await this.loadPublishingPayloadForSelectedVideo();
       await this.loadFinalProductionStatus();
+      await this.loadFinalVoiceoverStatus();
+      await this.loadOperatorExportForSelectedVideo();
       await this.loadVisualGenerationData();
       this.renderWorkflowControlPanel();
       this.log('Selected video workflow status refreshed.', 'success');
@@ -5079,6 +5373,7 @@ const app = {
         btn.classList.remove('loading');
         btn.disabled = false;
       }
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 
@@ -5104,7 +5399,7 @@ const app = {
       if (!res.ok) throw new Error(data.detail || 'Failed to approve video');
       this.log('Video approved for packaging.', 'success');
       await this.refreshAfterMutation({ reloadAssets: true, reloadCalendar: false, reloadAudit: true, keepComplianceReport: false });
-      this.renderWorkflowControlPanel();
+      await this.refreshSelectedWorkflowStatus();
     } catch (err) {
       this.log(`Approve video failed: ${err.message}`, 'error');
     } finally {
@@ -5112,11 +5407,12 @@ const app = {
         btn.classList.remove('loading');
         btn.disabled = false;
       }
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 
-  buildPackageForWorkflow() {
-    this.actionWrapper(
+  async buildPackageForWorkflow() {
+    await this.actionWrapper(
       'workflowBtnBuildPackage',
       'Build Package',
       { method: 'POST', headers: this.buildWriteHeaders() },
@@ -5129,10 +5425,11 @@ const app = {
       },
       { reloadAssets: true, reloadCalendar: false, reloadAudit: true, keepComplianceReport: false }
     );
+    await this.refreshSelectedWorkflowStatus();
   },
 
-  prepareYoutubePayloadForWorkflow() {
-    this.actionWrapper(
+  async prepareYoutubePayloadForWorkflow() {
+    await this.actionWrapper(
       'workflowBtnPreparePayload',
       'Prepare YouTube Payload',
       { method: 'POST', headers: this.buildWriteHeaders() },
@@ -5140,6 +5437,7 @@ const app = {
       () => 'YouTube payload prepared successfully.',
       { reloadAssets: false, reloadCalendar: false, reloadAudit: true, keepComplianceReport: true }
     );
+    await this.refreshSelectedWorkflowStatus();
   },
 
   async checkFinalProductionForWorkflow() {
@@ -5159,6 +5457,8 @@ const app = {
       } else {
         this.log('Final production check passed with no blockers.', 'success');
       }
+      await this.loadFinalVoiceoverStatus();
+      await this.loadOperatorExportForSelectedVideo();
       this.renderWorkflowControlPanel();
     } catch (err) {
       this.log(`Check final production failed: ${err.message}`, 'error');
@@ -5167,6 +5467,7 @@ const app = {
         btn.classList.remove('loading');
         btn.disabled = false;
       }
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 
@@ -5185,9 +5486,16 @@ const app = {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Failed to run final export');
+      this.state.workflowExportAttemptByVideoId[selected.id] = data;
       const blockers = Array.isArray(data.blockers) ? data.blockers : [];
       if (data.status === 'production_ready') {
         this.log('Final export completed and production gate is ready.', 'success');
+        if (data.final_export_path) {
+          this.log(`Final export path: ${data.final_export_path}`, 'success');
+        }
+        if (data.manifest_path) {
+          this.log(`Final export manifest: ${data.manifest_path}`, 'success');
+        }
       } else if (blockers.length > 0) {
         this.log(`Final export blocked: ${blockers[0]}`, 'error');
       } else {
@@ -5201,6 +5509,7 @@ const app = {
         btn.classList.remove('loading');
         btn.disabled = false;
       }
+      await this.refreshSelectedWorkflowStatus();
     }
   },
 

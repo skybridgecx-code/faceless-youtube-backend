@@ -933,6 +933,61 @@ body {
   justify-content: center;
 }
 
+.workflow-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workflow-step-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(110px, 140px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.workflow-step-label {
+  color: var(--textSecondary);
+  font-size: 12px;
+}
+
+.workflow-step-status {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workflow-step-detail {
+  color: var(--textMuted);
+  font-size: 12px;
+}
+
+.workflow-status-complete { color: var(--success); }
+.workflow-status-ready { color: #38bdf8; }
+.workflow-status-blocked { color: var(--danger); }
+.workflow-status-needs-review { color: var(--warning); }
+.workflow-status-deferred { color: #f59e0b; }
+
+.workflow-path-link {
+  text-decoration: underline;
+  color: var(--primary);
+  word-break: break-all;
+}
+
+.workflow-path-link.is-empty {
+  text-decoration: none;
+  color: var(--textMuted);
+  pointer-events: none;
+}
+
+.btn.blocked-action {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fecaca;
+}
+
 .metadata-display {
   border: 1px solid var(--studio-border);
   border-radius: 10px;
