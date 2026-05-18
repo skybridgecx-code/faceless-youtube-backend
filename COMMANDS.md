@@ -25,6 +25,12 @@ node --check app/static/app.js
 git status -sb
 ```
 
+## Local renderer prerequisite
+
+```bash
+ffmpeg -version
+```
+
 ## Database migrations
 
 ```bash
@@ -130,9 +136,28 @@ curl -X POST http://127.0.0.1:8000/videos/1/final-voiceover/generate \
 # Check final production readiness
 curl http://127.0.0.1:8000/videos/1/final-production/status
 
-# Create final export artifacts (runs when all gates pass)
+# Create final export artifacts with ffmpeg (runs when all gates pass)
 curl -X POST http://127.0.0.1:8000/videos/1/final-production/export
 ```
+
+Note: production voiceover setup (OpenAI/ElevenLabs credentials and quota handling) may be deferred. In that case final export remains correctly blocked until `final_voice_ready=true`.
+
+## Dashboard workflow controls (selected video)
+
+Use the dashboard panel `Selected Video Workflow Controls` for these actions without curl:
+
+- Refresh selected video status
+- Approve all pending visual assets
+- Approve video
+- Render draft preview
+- Mark preview reviewed
+- Build package
+- Prepare YouTube payload
+- Generate publishing payload
+- Check final production
+- Run final export
+
+Curl fallback commands remain the source of truth when scripting or troubleshooting.
 
 ## Prepare YouTube payload for video 1
 

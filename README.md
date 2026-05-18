@@ -31,6 +31,8 @@ uvicorn app.main:app --reload
 Dashboard: `http://127.0.0.1:8000/`
 API docs: `http://127.0.0.1:8000/docs`
 
+`ffmpeg` must be installed locally for draft preview rendering and final production export rendering.
+
 ## Run tests
 
 ```bash
@@ -49,7 +51,7 @@ node --check app/static/app.js
 7. Render and review a local draft preview.
 8. Build a production package.
 9. Generate final production voiceover (cloud TTS required).
-10. Run the final export — creates `final.mp4`, `final_video_stub.mp4`, and `final_export_manifest.json`.
+10. Run the final export — creates `final.mp4`, `final_export_manifest.json`, `render_plan.json`, and `render_command.json`.
 11. Prepare YouTube metadata payload.
 12. Upload manually via YouTube Studio.
 13. Mark published.
@@ -110,3 +112,19 @@ The system works without an OpenAI key using deterministic local templates and p
 ## Safety boundary
 
 This system **never** automatically uploads to YouTube. Upload is always manual. No automated upload path exists. The `ENABLE_YOUTUBE_UPLOADS` flag is enforced as `false` in all production gates and requires deliberate code changes to alter.
+
+## Operator dashboard workflow controls
+
+The selected-video panel in the dashboard includes workflow controls for:
+
+- Approve all pending visual assets
+- Approve video
+- Render draft preview
+- Mark preview reviewed
+- Build package
+- Prepare YouTube payload
+- Generate publishing payload
+- Check final production
+- Run final export
+
+These controls call the same backend endpoints as the curl flow and do not bypass review or production gates. Final export still blocks until production voiceover is present.
