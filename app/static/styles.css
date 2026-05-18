@@ -915,6 +915,24 @@ body {
   gap: 12px;
 }
 
+.workflow-control-panel .panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workflow-actions-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.workflow-actions-grid .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .metadata-display {
   border: 1px solid var(--studio-border);
   border-radius: 10px;

@@ -682,6 +682,44 @@
                 </div>
               </div>
 
+              <div class="panel workflow-control-panel hidden" id="workflowControlPanel" style="margin-top:0.8rem;">
+                <div class="panel-header">
+                  <h2>Selected Video Workflow Controls</h2>
+                  <div class="header-actions">
+                    <button class="btn" id="workflowBtnRefreshStatus" onclick="app.refreshSelectedWorkflowStatus()">Refresh Selected Video Status</button>
+                  </div>
+                </div>
+                <div class="panel-body compact-body">
+                  <div class="opportunity-note">Operator control room for local workflow steps. Review gates remain enforced; this panel does not bypass them.</div>
+                  <div class="meta-row"><span class="meta-label">Video</span><span class="meta-value" id="workflowVideoLabel">None selected</span></div>
+                  <div class="meta-row"><span class="meta-label">Visual Assets (Approved/Pending/Rejected)</span><span class="meta-value" id="workflowVisualReviewCounts">0 / 0 / 0</span></div>
+                  <div class="meta-row"><span class="meta-label">Video Approval</span><span class="meta-value" id="workflowVideoApprovalStatus">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Preview Exists</span><span class="meta-value" id="workflowPreviewExists">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Preview Reviewed</span><span class="meta-value" id="workflowPreviewReviewed">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Package Exists</span><span class="meta-value" id="workflowPackageExists">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Publishing Payload</span><span class="meta-value" id="workflowPublishingPayloadStatus">Not generated</span></div>
+                  <div class="meta-row"><span class="meta-label">Final Visuals Ready</span><span class="meta-value" id="workflowFinalVisualsReady">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Final Metadata Ready</span><span class="meta-value" id="workflowFinalMetadataReady">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Final Voice Ready</span><span class="meta-value" id="workflowFinalVoiceReady">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Final Export Ready</span><span class="meta-value" id="workflowFinalExportReady">No</span></div>
+                  <div class="meta-row"><span class="meta-label">Final Production Blockers</span><span class="meta-value pre-wrap" id="workflowFinalBlockers">-</span></div>
+                  <div class="meta-row"><span class="meta-label">Next Required Action</span><span class="meta-value" id="workflowNextAction">Select a video to continue workflow.</span></div>
+                  <div class="flow-item pending">• Final voiceover readiness is shown for visibility. OpenAI/ElevenLabs production voice setup remains intentionally deferred in this phase.</div>
+
+                  <div class="workflow-actions-grid">
+                    <button class="btn" id="workflowBtnApprovePendingAssets" onclick="app.approveAllPendingVisualAssets()">Approve All Pending Visual Assets</button>
+                    <button class="btn" id="workflowBtnApproveVideo" onclick="app.approveVideoForWorkflow()">Approve Video</button>
+                    <button class="btn" id="workflowBtnRenderPreview" onclick="app.renderDraftPreview()">Render Draft Preview</button>
+                    <button class="btn" id="workflowBtnMarkPreviewReviewed" onclick="app.markPreviewReviewed()">Mark Preview Reviewed</button>
+                    <button class="btn" id="workflowBtnBuildPackage" onclick="app.buildPackageForWorkflow()">Build Package</button>
+                    <button class="btn" id="workflowBtnPreparePayload" onclick="app.prepareYoutubePayloadForWorkflow()">Prepare YouTube Payload</button>
+                    <button class="btn" id="workflowBtnGeneratePublishingPayload" onclick="app.generatePublishingPayload()">Generate Publishing Payload</button>
+                    <button class="btn" id="workflowBtnCheckFinalProduction" onclick="app.checkFinalProductionForWorkflow()">Check Final Production</button>
+                    <button class="btn success" id="workflowBtnRunFinalExport" onclick="app.runFinalExportForWorkflow()">Run Final Export</button>
+                  </div>
+                </div>
+              </div>
+
               <div class="panel" style="margin-top:0.8rem;">
                 <div class="panel-header">
                   <h2>Performance Feedback</h2>
