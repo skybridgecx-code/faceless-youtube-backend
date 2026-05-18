@@ -163,6 +163,20 @@ The dashboard includes `Selected Video Workflow Controls` so operators can compl
 
 The panel surfaces final-production blockers directly and does not bypass any gate.
 
+### One-command smoke test (no live server required)
+
+```bash
+python scripts/local_workflow_smoke.py
+```
+
+What it validates:
+- Video + asset generation, visual placeholder registration, manual approval gates, preview/package/payload steps.
+- Metadata blocker detection + cleanup.
+- Final export refusal when production voiceover is missing.
+- No automatic publish/upload behavior.
+
+The script uses an isolated temporary SQLite DB and output root so it does not touch existing local operator data.
+
 ### Curl fallback commands
 
 ```bash

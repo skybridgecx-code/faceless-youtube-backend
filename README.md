@@ -40,6 +40,16 @@ python3 -m pytest -q
 node --check app/static/app.js
 ```
 
+## Local workflow smoke test
+
+Run the full local review-gated workflow (with an isolated temp DB/output path) in one command:
+
+```bash
+python scripts/local_workflow_smoke.py
+```
+
+The smoke script intentionally expects final export to remain blocked until a real production voiceover exists.
+
 ## Main workflow
 
 1. Create or seed a channel.

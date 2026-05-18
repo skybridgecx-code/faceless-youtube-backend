@@ -25,6 +25,17 @@ node --check app/static/app.js
 git status -sb
 ```
 
+## One-command local workflow smoke test
+
+```bash
+python scripts/local_workflow_smoke.py
+```
+
+Notes:
+- Uses isolated temporary SQLite DB + `OUTPUT_DIR` by default (no live uvicorn required).
+- Verifies review gates end-to-end.
+- Expected final result is blocked final export when production voiceover is missing.
+
 ## Local renderer prerequisite
 
 ```bash
