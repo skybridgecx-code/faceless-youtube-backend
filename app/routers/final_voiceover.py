@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.routers.videos import get_video_or_404
-from app.schemas import FinalVoiceoverGenerateResponse, FinalVoiceoverStatus
+from app.schemas import FinalVoiceoverGenerateResponse, FinalVoiceoverStatus, ProductionVoiceoverReadiness
 from app.services.final_voiceover import assess_final_voiceover, generate_final_voiceover
+from app.services.voiceover_readiness import assess_production_voiceover_readiness
 
 router = APIRouter(prefix="/videos", tags=["final-voiceover"])
 
@@ -22,6 +23,12 @@ class FinalVoiceoverGenerateRequest(BaseModel):
 def get_final_voiceover_status(video_id: int, db: Session = Depends(get_db)) -> FinalVoiceoverStatus:
     get_video_or_404(db, video_id)
     return assess_final_voiceover(video_id)
+
+
+@router.get("/{video_id}/final-voiceover/readiness", response_model=ProductionVoiceoverReadiness)
+def get_final_voiceover_readiness(video_id: int, db: Session = Depends(get_db)) -> ProductionVoiceoverReadiness:
+    get_video_or_404(db, video_id)
+    return assess_production_voiceover_readiness(video_id)
 
 
 @router.post("/{video_id}/final-voiceover/generate", response_model=FinalVoiceoverGenerateResponse)

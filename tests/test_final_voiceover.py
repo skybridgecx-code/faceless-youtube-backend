@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import tempfile
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,92 @@ def test_missing_final_voiceover_blocks() -> None:
     assert body["voiceover_ready"] is False
     assert body["voiceover_exists"] is False
     assert any("voiceover" in b.lower() or "generated" in b.lower() for b in body["blockers"])
+
+
+def test_readiness_endpoint_exposes_provider_booleans_without_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Readiness endpoint reports provider booleans and does not expose secret values."""
+    client = TestClient(app)
+    video = _create_video(client, "Readiness No Secrets")
+    video_id = video["id"]
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai-secret")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "el-test-secret")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice_abc")
+
+    resp = client.get(f"/videos/{video_id}/final-voiceover/readiness")
+    assert resp.status_code == 200
+    body = resp.json()
+    rendered_text = resp.text
+
+    assert "sk-test-openai-secret" not in rendered_text
+    assert "el-test-secret" not in rendered_text
+    assert body["video_id"] == video_id
+    assert "providers" in body and isinstance(body["providers"], list)
+    assert "available_providers" in body and isinstance(body["available_providers"], list)
+    assert "blocked_providers" in body and isinstance(body["blocked_providers"], list)
+    assert "current_final_voiceover_status" in body
+    assert "safety_note" in body
+    assert "local" in body["safety_note"].lower()
+    assert "gate_explanation" in body
+    assert "never call external apis" in body["gate_explanation"].lower()
+    assert all("api_key_configured" in item for item in body["providers"])
+
+
+def test_readiness_openai_absent_key_reports_blocker(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Readiness OpenAI Missing Key")
+    video_id = video["id"]
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_TTS_MODEL", "")
+    monkeypatch.setenv("OPENAI_TTS_VOICE", "")
+
+    resp = client.get(f"/videos/{video_id}/final-voiceover/readiness")
+    assert resp.status_code == 200
+    providers = {item["provider"]: item for item in resp.json()["providers"]}
+    openai = providers["openai"]
+    assert openai["api_key_configured"] is False
+    assert openai["model_configured"] is True
+    assert openai["voice_configured"] is True
+    assert openai["configured"] is False
+    assert any("OPENAI_API_KEY" in b for b in openai["blockers"])
+
+
+def test_readiness_elevenlabs_absent_key_and_voice_report_blockers(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Readiness ElevenLabs Missing Key Voice")
+    video_id = video["id"]
+
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "")
+
+    resp = client.get(f"/videos/{video_id}/final-voiceover/readiness")
+    assert resp.status_code == 200
+    providers = {item["provider"]: item for item in resp.json()["providers"]}
+    eleven = providers["elevenlabs"]
+    assert eleven["api_key_configured"] is False
+    assert eleven["voice_configured"] is False
+    assert eleven["model_configured"] is True
+    assert eleven["configured"] is False
+    assert any("ELEVENLABS_API_KEY" in b for b in eleven["blockers"])
+    assert any("ELEVENLABS_VOICE_ID" in b for b in eleven["blockers"])
+
+
+def test_readiness_endpoint_does_not_call_external_apis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Readiness checks must be local-only and never invoke network calls."""
+    client = TestClient(app)
+    video = _create_video(client, "Readiness No External Calls")
+    video_id = video["id"]
+
+    def fail_urlopen(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("readiness endpoint should not call urllib.request.urlopen")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_urlopen)
+    resp = client.get(f"/videos/{video_id}/final-voiceover/readiness")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["video_id"] == video_id
 
 
 def test_empty_mp3_blocks() -> None:

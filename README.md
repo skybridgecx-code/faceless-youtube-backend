@@ -49,6 +49,7 @@ python scripts/local_workflow_smoke.py
 ```
 
 The smoke script intentionally expects final export to remain blocked until a real production voiceover exists.
+It now includes a production voiceover readiness check that is local-only and does not call external APIs.
 
 ## Main workflow
 
@@ -60,11 +61,12 @@ The smoke script intentionally expects final export to remain blocked until a re
 6. Run local generation (`/run-local`) and manually approve each visual asset.
 7. Render and review a local draft preview.
 8. Build a production package.
-9. Generate final production voiceover (cloud TTS required).
-10. Run the final export — creates `final.mp4`, `final_export_manifest.json`, `render_plan.json`, and `render_command.json`.
-11. Prepare YouTube metadata payload.
-12. Upload manually via YouTube Studio.
-13. Mark published.
+9. Check production voiceover readiness (`GET /videos/{id}/final-voiceover/readiness`) — local-only, no API calls.
+10. Generate final production voiceover (cloud TTS required, done later when you are ready to spend API credits).
+11. Run the final export — creates `final.mp4`, `final_export_manifest.json`, `render_plan.json`, and `render_command.json`.
+12. Prepare YouTube metadata payload.
+13. Upload manually via YouTube Studio.
+14. Mark published.
 
 ## Review gates
 
@@ -75,6 +77,7 @@ No gate can be bypassed. Each must be satisfied by a human operator:
 | Asset review | `POST /videos/{id}/review` |
 | Preview review | `POST /videos/{id}/preview/review` |
 | Visual asset approval | `POST /visual-generation/assets/{id}/approve` |
+| Voiceover readiness | `GET /videos/{id}/final-voiceover/readiness` |
 | Final voiceover (cloud TTS only) | `POST /videos/{id}/final-voiceover/generate` |
 | Metadata cleanup | Edit video title/description |
 | Final export | `POST /videos/{id}/final-production/export` |
@@ -94,6 +97,7 @@ POST   /videos/{id}/package
 POST   /videos/{id}/final-voiceover/generate
 GET    /videos/{id}/final-production/status
 POST   /videos/{id}/final-production/export
+GET    /videos/{id}/final-voiceover/readiness
 POST   /visual-assets/from-video/{id}
 POST   /visual-generation/plans/{id}/queue
 POST   /visual-generation/jobs/{id}/run-local
@@ -114,10 +118,17 @@ ENABLE_YOUTUBE_UPLOADS=false
 INTERNAL_API_KEY=                # required when APP_ENV=production
 OPENAI_API_KEY=                  # for LLM and TTS
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TTS_VOICE=onyx
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 IMAGE_GENERATION_PROVIDER=placeholder
 ```
 
 The system works without an OpenAI key using deterministic local templates and placeholder visuals.
+Production final voiceover readiness can be checked without API calls via `GET /videos/{id}/final-voiceover/readiness`.
+Local/Mac/silent preview audio is only for draft preview and is never accepted for final export.
 
 ## Safety boundary
 

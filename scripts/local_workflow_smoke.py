@@ -76,6 +76,9 @@ def _prepare_isolated_environment() -> SmokeContext:
     os.environ["OUTPUT_DIR"] = str(output_dir)
     os.environ.setdefault("APP_ENV", "development")
     os.environ["INTERNAL_API_KEY"] = ""
+    os.environ["OPENAI_API_KEY"] = ""
+    os.environ["ELEVENLABS_API_KEY"] = ""
+    os.environ["ELEVENLABS_VOICE_ID"] = ""
     return SmokeContext(root_dir=root_dir, db_path=db_path, output_dir=output_dir)
 
 
@@ -217,6 +220,21 @@ def run_smoke() -> SmokeContext:
         ctx.youtube_payload_ready = True
         steps.pass_step("YouTube payload prepared (manual upload path only)")
 
+        voice_readiness_resp = client.get(f"/videos/{video_id}/final-voiceover/readiness")
+        _expect_status(voice_readiness_resp, 200, "Failed to load final voiceover readiness")
+        voice_readiness = _json(voice_readiness_resp, "Final voiceover readiness payload was not valid JSON")
+        providers = list(voice_readiness.get("providers") or [])
+        if len(providers) < 2:
+            raise SmokeFailure("FAIL 12: Readiness payload did not include production providers")
+        if not all("api_key_configured" in item for item in providers):
+            raise SmokeFailure("FAIL 12: Readiness payload missing api_key_configured fields")
+        available = [str(item) for item in voice_readiness.get("available_providers") or []]
+        if available:
+            raise SmokeFailure(f"FAIL 12: Isolated smoke env expected no configured production providers, got: {available}")
+        if "current_final_voiceover_status" not in voice_readiness:
+            raise SmokeFailure("FAIL 12: Readiness payload missing current_final_voiceover_status")
+        steps.pass_step("Voiceover readiness endpoint reports production providers and blocked config state")
+
         dirty_title = f"{video_title} [INSERT LINK]"
         dirty_resp = client.patch(f"/videos/{video_id}", json={"title": dirty_title})
         _expect_status(dirty_resp, 200, "Failed to inject metadata blocker into title")
@@ -225,9 +243,9 @@ def run_smoke() -> SmokeContext:
         status_dirty = _json(status_dirty_resp, "Final production status payload was not valid JSON")
         dirty_blockers = [str(item) for item in status_dirty.get("blockers") or []]
         if bool(status_dirty.get("final_metadata_ready")):
-            raise SmokeFailure("FAIL 12: Metadata should be blocked after injecting placeholder text")
+            raise SmokeFailure("FAIL 13: Metadata should be blocked after injecting placeholder text")
         if not contains_text(dirty_blockers, "metadata"):
-            raise SmokeFailure(f"FAIL 12: Expected metadata blocker, got: {dirty_blockers}")
+            raise SmokeFailure(f"FAIL 13: Expected metadata blocker, got: {dirty_blockers}")
         steps.pass_step("Final metadata blockers detected")
 
         clean_resp = client.patch(f"/videos/{video_id}", json={"title": video_title})
@@ -242,7 +260,7 @@ def run_smoke() -> SmokeContext:
         status_clean = _json(status_clean_resp, "Final production status payload was not valid JSON")
         if not bool(status_clean.get("final_metadata_ready")):
             raise SmokeFailure(
-                f"FAIL 13: Metadata did not become ready after cleanup. blockers={status_clean.get('blockers')}"
+                f"FAIL 14: Metadata did not become ready after cleanup. blockers={status_clean.get('blockers')}"
             )
         steps.pass_step("Metadata cleanup restored final metadata readiness")
 
@@ -251,9 +269,9 @@ def run_smoke() -> SmokeContext:
         final_export = _json(final_export_resp, "Final export response was not valid JSON")
         export_blockers = [str(item) for item in final_export.get("blockers") or []]
         if str(final_export.get("status")) != "blocked":
-            raise SmokeFailure(f"FAIL 14: Final export should be blocked without production voiceover: {final_export}")
+            raise SmokeFailure(f"FAIL 15: Final export should be blocked without production voiceover: {final_export}")
         if not contains_text(export_blockers, "voiceover"):
-            raise SmokeFailure(f"FAIL 14: Expected voiceover blocker, got: {export_blockers}")
+            raise SmokeFailure(f"FAIL 15: Expected voiceover blocker, got: {export_blockers}")
         steps.pass_step("Final export refused because production final voiceover is missing")
 
         db = SessionLocal()
@@ -266,7 +284,7 @@ def run_smoke() -> SmokeContext:
         finally:
             db.close()
         if has_published_record is not None:
-            raise SmokeFailure("FAIL 15: Smoke test unexpectedly marked video as published")
+            raise SmokeFailure("FAIL 16: Smoke test unexpectedly marked video as published")
         steps.pass_step("No YouTube auto-upload occurred (manual publish record remains unset)")
 
     return ctx

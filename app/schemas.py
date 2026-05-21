@@ -1477,3 +1477,28 @@ class FinalVoiceoverGenerateResponse(BaseModel):
     provider: str | None
     voice: str | None
     blockers: list[str]
+
+
+class VoiceoverProviderReadiness(BaseModel):
+    provider: str
+    configured: bool
+    provider_allowed: bool
+    api_key_configured: bool
+    voice_configured: bool
+    model_configured: bool
+    default_voice: str | None = None
+    default_model: str | None = None
+    blockers: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    next_required_action: str
+
+
+class ProductionVoiceoverReadiness(BaseModel):
+    video_id: int
+    available_providers: list[str]
+    blocked_providers: list[str]
+    providers: list[VoiceoverProviderReadiness]
+    current_final_voiceover_status: FinalVoiceoverStatus
+    recommended_next_action: str
+    gate_explanation: str
+    safety_note: str

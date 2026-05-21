@@ -34,6 +34,7 @@ python scripts/local_workflow_smoke.py
 Notes:
 - Uses isolated temporary SQLite DB + `OUTPUT_DIR` by default (no live uvicorn required).
 - Verifies review gates end-to-end.
+- Verifies production voiceover readiness endpoint without calling external APIs.
 - Expected final result is blocked final export when production voiceover is missing.
 
 ## Local renderer prerequisite
@@ -144,6 +145,9 @@ curl -X POST http://127.0.0.1:8000/videos/1/final-voiceover/generate \
   -H "Content-Type: application/json" \
   -d '{"provider":"openai"}'
 
+# Check production voiceover readiness (local-only, no external API call)
+curl http://127.0.0.1:8000/videos/1/final-voiceover/readiness
+
 # Check final production readiness
 curl http://127.0.0.1:8000/videos/1/final-production/status
 
@@ -152,6 +156,11 @@ curl -X POST http://127.0.0.1:8000/videos/1/final-production/export
 ```
 
 Note: production voiceover setup (OpenAI/ElevenLabs credentials and quota handling) may be deferred. In that case final export remains correctly blocked until `final_voice_ready=true`.
+Local/Mac/silent preview audio is never treated as production final voiceover.
+
+Required env vars for production voiceover generation:
+- OpenAI: `OPENAI_API_KEY` (optional overrides: `OPENAI_TTS_MODEL`, `OPENAI_TTS_VOICE`)
+- ElevenLabs: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (optional override: `ELEVENLABS_MODEL_ID`)
 
 ## Dashboard workflow controls (selected video)
 

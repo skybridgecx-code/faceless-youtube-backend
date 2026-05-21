@@ -45,6 +45,7 @@ const app = {
     publishingPayloadByVideoId: {},
     finalProductionByVideoId: {},
     finalVoiceoverByVideoId: {},
+    finalVoiceoverReadinessByVideoId: {},
     workflowExportAttemptByVideoId: {},
     operatorExportByVideoId: {},
     publishingPayloadQueue: [],
@@ -3403,6 +3404,7 @@ const app = {
     await this.loadSelectedVideoPerformance();
     await this.loadPublishingPayloadForSelectedVideo();
     await this.loadFinalProductionStatus();
+    await this.loadFinalVoiceoverReadiness();
     await this.loadFinalVoiceoverStatus();
     await this.loadOperatorExportForSelectedVideo();
     if (reloadAudit) {
@@ -4978,6 +4980,27 @@ const app = {
     }
   },
 
+  async loadFinalVoiceoverReadiness() {
+    const selected = this.getSelectedVideo();
+    if (!selected) {
+      this.renderWorkflowControlPanel();
+      return null;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/final-voiceover/readiness`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to load final voiceover readiness');
+      this.state.finalVoiceoverReadinessByVideoId[selected.id] = data;
+      this.renderWorkflowControlPanel();
+      return data;
+    } catch (err) {
+      this.log(`Final voiceover readiness failed: ${err.message}`, 'error');
+      this.state.finalVoiceoverReadinessByVideoId[selected.id] = null;
+      this.renderWorkflowControlPanel();
+      return null;
+    }
+  },
+
   async loadOperatorExportForSelectedVideo() {
     const selected = this.getSelectedVideo();
     if (!selected) {
@@ -5054,6 +5077,10 @@ const app = {
     const finalVisualsEl = document.getElementById('workflowFinalVisualsReady');
     const finalMetadataEl = document.getElementById('workflowFinalMetadataReady');
     const finalVoiceEl = document.getElementById('workflowFinalVoiceReady');
+    const finalVoiceOpenAiEl = document.getElementById('workflowVoiceOpenAIConfigured');
+    const finalVoiceElevenEl = document.getElementById('workflowVoiceElevenLabsConfigured');
+    const finalVoiceReadinessActionEl = document.getElementById('workflowVoiceReadinessAction');
+    const finalVoiceGateNoteEl = document.getElementById('workflowVoiceGateNote');
     const finalExportEl = document.getElementById('workflowFinalExportReady');
     const blockersEl = document.getElementById('workflowFinalBlockers');
     const nextActionEl = document.getElementById('workflowNextAction');
@@ -5062,6 +5089,7 @@ const app = {
     if (
       !videoLabelEl || !visualReviewCountsEl || !videoApprovalEl || !previewExistsEl || !previewReviewedEl
       || !packageExistsEl || !payloadStatusEl || !finalVisualsEl || !finalMetadataEl || !finalVoiceEl
+      || !finalVoiceOpenAiEl || !finalVoiceElevenEl || !finalVoiceReadinessActionEl || !finalVoiceGateNoteEl
       || !finalExportEl || !blockersEl || !nextActionEl || !blockerChainEl || !voiceDeferredNoteEl
     ) {
       return;
@@ -5078,6 +5106,10 @@ const app = {
       finalVisualsEl.textContent = 'No';
       finalMetadataEl.textContent = 'No';
       finalVoiceEl.textContent = 'No';
+      finalVoiceOpenAiEl.textContent = 'Not configured';
+      finalVoiceElevenEl.textContent = 'Not configured';
+      finalVoiceReadinessActionEl.textContent = 'Select a video to inspect production voiceover readiness.';
+      finalVoiceGateNoteEl.textContent = 'Production voiceover requires OpenAI or ElevenLabs. Local/Mac/silent preview audio is not accepted for final export.';
       finalExportEl.textContent = 'No';
       blockersEl.textContent = '-';
       nextActionEl.textContent = 'Select a video to continue workflow.';
@@ -5107,6 +5139,7 @@ const app = {
     const payload = this.state.publishingPayloadByVideoId?.[selected.id] || null;
     const finalStatus = this.state.finalProductionByVideoId?.[selected.id] || null;
     const finalVoiceStatus = this.state.finalVoiceoverByVideoId?.[selected.id] || null;
+    const finalVoiceReadiness = this.state.finalVoiceoverReadinessByVideoId?.[selected.id] || null;
     const exportAttempt = this.state.workflowExportAttemptByVideoId?.[selected.id] || null;
     const operatorExport = this.state.operatorExportByVideoId?.[selected.id] || null;
     const blockers = Array.isArray(finalStatus?.blockers) ? [...finalStatus.blockers] : [];
@@ -5128,7 +5161,9 @@ const app = {
     const finalVoiceReady = !!finalStatus?.final_voice_ready;
     const finalExportReady = !!finalStatus?.final_export_ready;
     const ffmpegBlocked = this.workflowHasBlocker(blockers, /ffmpeg/i);
-    const finalVoiceDeferred = !finalVoiceReady && !finalVoiceStatus?.voiceover_ready;
+    const providers = Array.isArray(finalVoiceReadiness?.providers) ? finalVoiceReadiness.providers : [];
+    const openaiProvider = providers.find((item) => String(item?.provider || '').toLowerCase() === 'openai') || null;
+    const elevenProvider = providers.find((item) => String(item?.provider || '').toLowerCase() === 'elevenlabs') || null;
 
     videoLabelEl.textContent = `#${selected.id} — ${selected.title || ''}`;
     visualReviewCountsEl.textContent = `${visualApproved} / ${visualPending} / ${visualRejected}`;
@@ -5140,6 +5175,12 @@ const app = {
     finalVisualsEl.textContent = finalStatus?.final_visuals_ready ? 'Yes' : 'No';
     finalMetadataEl.textContent = finalMetadataReady ? 'Yes' : 'No';
     finalVoiceEl.textContent = finalVoiceReady ? 'Yes' : 'No';
+    finalVoiceOpenAiEl.textContent = openaiProvider?.configured ? 'Configured' : 'Not configured';
+    finalVoiceElevenEl.textContent = elevenProvider?.configured ? 'Configured' : 'Not configured';
+    finalVoiceReadinessActionEl.textContent = finalVoiceReadiness?.recommended_next_action
+      || 'Check production voiceover readiness before generation.';
+    finalVoiceGateNoteEl.textContent = finalVoiceReadiness?.safety_note
+      || 'Production voiceover requires OpenAI or ElevenLabs. Local/Mac/silent preview audio is not accepted for final export.';
     finalExportEl.textContent = finalExportReady ? 'Yes' : 'No';
     blockersEl.textContent = blockers.length ? blockers.join(' | ') : 'None';
     nextActionEl.textContent = (
@@ -5217,7 +5258,11 @@ const app = {
         status: finalVoiceReady ? 'Complete' : 'Deferred',
         detail: finalVoiceReady
           ? 'Production voiceover present'
-          : 'Production voiceover requires OpenAI or ElevenLabs and is intentionally deferred.',
+          : (
+            finalVoiceReadiness?.available_providers?.length
+              ? 'Provider configured; generate production final voiceover when ready.'
+              : 'Production voiceover requires OpenAI or ElevenLabs and is intentionally deferred.'
+          ),
       },
       {
         label: 'Final export',
@@ -5318,6 +5363,7 @@ const app = {
       await this.loadPreviewStatus();
       await this.loadPublishingPayloadForSelectedVideo();
       await this.loadFinalProductionStatus();
+      await this.loadFinalVoiceoverReadiness();
       await this.loadFinalVoiceoverStatus();
       await this.loadOperatorExportForSelectedVideo();
       await this.loadVisualGenerationData();
@@ -5457,6 +5503,7 @@ const app = {
       } else {
         this.log('Final production check passed with no blockers.', 'success');
       }
+      await this.loadFinalVoiceoverReadiness();
       await this.loadFinalVoiceoverStatus();
       await this.loadOperatorExportForSelectedVideo();
       this.renderWorkflowControlPanel();
