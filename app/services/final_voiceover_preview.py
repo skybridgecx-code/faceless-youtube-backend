@@ -11,9 +11,22 @@ from app.services.final_voiceover import (
     _DEFAULT_OPENAI_VOICE,
     get_source_text_for_final_voiceover,
 )
+from app.services.final_voiceover_source_quality import assess_final_voiceover_source_quality
 from app.services.voiceover_readiness import assess_production_voiceover_readiness
 
 _SAFETY_NOTE = "Dry run only. No external API call was made."
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _estimate_duration_seconds(word_count: int) -> int:
@@ -106,6 +119,7 @@ def build_final_voiceover_dry_run(
 
     raw_text = get_source_text_for_final_voiceover(video) or ""
     source_text = raw_text.strip()
+    source_quality = assess_final_voiceover_source_quality(source_text)
     excerpt = _excerpt(source_text)
     input_text = source_text[:max_chars] if source_text else ""
     input_character_count = len(input_text)
@@ -114,9 +128,10 @@ def build_final_voiceover_dry_run(
 
     blockers = list(provider_state.blockers)
     warnings = list(provider_state.warnings)
-
-    if not source_text:
-        blockers.append("No script text available for voiceover generation")
+    blockers.extend(source_quality.blockers)
+    warnings.extend(source_quality.warnings)
+    blockers = _dedupe(blockers)
+    warnings = _dedupe(warnings)
 
     if provider == "openai":
         model = (os.getenv("OPENAI_TTS_MODEL") or "").strip() or _DEFAULT_OPENAI_MODEL
@@ -128,14 +143,17 @@ def build_final_voiceover_dry_run(
         request_preview = _request_preview_elevenlabs(model, resolved_voice, excerpt, input_character_count)
 
     if blockers:
-        next_required_action = blockers[0]
+        if source_quality.blockers:
+            next_required_action = "Clean script/source text placeholders before real voiceover generation."
+        else:
+            next_required_action = blockers[0]
     else:
         next_required_action = "Configuration and source text look ready. Run real production generation when you are ready to spend API credits."
 
     return FinalVoiceoverDryRunResponse(
         video_id=video.id,
         provider=provider,
-        configured=provider_state.configured and bool(source_text),
+        configured=provider_state.configured and source_quality.ready,
         model=model,
         voice=resolved_voice,
         input_character_count=input_character_count,
@@ -144,6 +162,9 @@ def build_final_voiceover_dry_run(
         max_input_chars_used=max_chars,
         estimated_duration_seconds=estimated_duration_seconds,
         request_preview=request_preview,
+        source_quality_ready=source_quality.ready,
+        source_quality_blockers=source_quality.blockers,
+        source_quality_warnings=source_quality.warnings,
         blockers=blockers,
         warnings=warnings,
         next_required_action=next_required_action,

@@ -5087,6 +5087,9 @@ const app = {
     const dryRunVoiceEl = document.getElementById('workflowDryRunVoice');
     const dryRunCountsEl = document.getElementById('workflowDryRunCounts');
     const dryRunExcerptEl = document.getElementById('workflowDryRunExcerpt');
+    const dryRunSourceQualityReadyEl = document.getElementById('workflowDryRunSourceQualityReady');
+    const dryRunSourceQualityBlockersEl = document.getElementById('workflowDryRunSourceQualityBlockers');
+    const dryRunSourceQualityWarningsEl = document.getElementById('workflowDryRunSourceQualityWarnings');
     const dryRunBlockersEl = document.getElementById('workflowDryRunBlockers');
     const dryRunNextActionEl = document.getElementById('workflowDryRunNextAction');
     const dryRunSafetyEl = document.getElementById('workflowDryRunSafety');
@@ -5100,6 +5103,7 @@ const app = {
       || !packageExistsEl || !payloadStatusEl || !finalVisualsEl || !finalMetadataEl || !finalVoiceEl
       || !finalVoiceOpenAiEl || !finalVoiceElevenEl || !finalVoiceReadinessActionEl || !finalVoiceGateNoteEl
       || !dryRunConfiguredEl || !dryRunModelEl || !dryRunVoiceEl || !dryRunCountsEl || !dryRunExcerptEl
+      || !dryRunSourceQualityReadyEl || !dryRunSourceQualityBlockersEl || !dryRunSourceQualityWarningsEl
       || !dryRunBlockersEl || !dryRunNextActionEl || !dryRunSafetyEl
       || !finalExportEl || !blockersEl || !nextActionEl || !blockerChainEl || !voiceDeferredNoteEl
     ) {
@@ -5126,6 +5130,9 @@ const app = {
       dryRunVoiceEl.textContent = '-';
       dryRunCountsEl.textContent = '-';
       dryRunExcerptEl.textContent = '-';
+      dryRunSourceQualityReadyEl.textContent = 'No';
+      dryRunSourceQualityBlockersEl.textContent = '-';
+      dryRunSourceQualityWarningsEl.textContent = '-';
       dryRunBlockersEl.textContent = '-';
       dryRunNextActionEl.textContent = 'Run dry run preview.';
       dryRunSafetyEl.textContent = '• Dry run only. No external API call was made.';
@@ -5209,6 +5216,21 @@ const app = {
       ? `${Number(finalVoiceDryRun.input_character_count || 0)} / ${Number(finalVoiceDryRun.input_word_count || 0)}`
       : '-';
     dryRunExcerptEl.textContent = finalVoiceDryRun?.input_excerpt || '-';
+    dryRunSourceQualityReadyEl.textContent = finalVoiceDryRun
+      ? (finalVoiceDryRun.source_quality_ready ? 'Yes' : 'No')
+      : 'No';
+    const dryRunSourceQualityBlockers = Array.isArray(finalVoiceDryRun?.source_quality_blockers)
+      ? finalVoiceDryRun.source_quality_blockers
+      : [];
+    const dryRunSourceQualityWarnings = Array.isArray(finalVoiceDryRun?.source_quality_warnings)
+      ? finalVoiceDryRun.source_quality_warnings
+      : [];
+    dryRunSourceQualityBlockersEl.textContent = dryRunSourceQualityBlockers.length
+      ? dryRunSourceQualityBlockers.join(' | ')
+      : 'None';
+    dryRunSourceQualityWarningsEl.textContent = dryRunSourceQualityWarnings.length
+      ? dryRunSourceQualityWarnings.join(' | ')
+      : 'None';
     const dryRunBlockers = Array.isArray(finalVoiceDryRun?.blockers) ? finalVoiceDryRun.blockers : [];
     dryRunBlockersEl.textContent = dryRunBlockers.length ? dryRunBlockers.join(' | ') : 'None';
     dryRunNextActionEl.textContent = finalVoiceDryRun?.next_required_action || 'Run dry run preview.';

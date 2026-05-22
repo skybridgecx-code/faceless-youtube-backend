@@ -129,10 +129,22 @@ Preview request before generation:
 - Dry-run only.
 - No OpenAI/ElevenLabs API calls are made.
 - Returns provider/model/voice, script counts, excerpt, estimated duration, and safe request preview fields.
+- Returns source-quality gate fields (`source_quality_ready`, `source_quality_blockers`, `source_quality_warnings`).
 - Does not create final voiceover files.
 - Does not satisfy the final voiceover gate.
 
+Common source-quality blockers:
+- `[INSERT LINK]`
+- `How to I Built`
+- `Draft Preview`
+- unresolved bracket placeholders like `[TBD]` or `[...]`
+- unresolved editorial tokens such as `TODO`, `TBD`, `lorem ipsum`
+- empty or too-short source text
+
+Clean source text by editing the latest script/description asset before real generation.
+
 Generate via `POST /videos/{video_id}/final-voiceover/generate` — requires `OPENAI_API_KEY` or ElevenLabs credentials.
+If source-quality blockers are present, generation is refused before any external provider API call.
 
 Operational note: production voiceover credential/setup work can be intentionally deferred during local renderer/dashboard phases. In that mode, final export stays blocked by design.
 Local/Mac/silent preview voiceover is draft-only preview audio and is never accepted for final export.

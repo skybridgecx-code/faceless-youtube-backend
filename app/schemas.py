@@ -1493,6 +1493,9 @@ class FinalVoiceoverDryRunResponse(BaseModel):
     max_input_chars_used: int
     estimated_duration_seconds: int | None = None
     request_preview: dict[str, object]
+    source_quality_ready: bool = False
+    source_quality_blockers: list[str] = Field(default_factory=list)
+    source_quality_warnings: list[str] = Field(default_factory=list)
     blockers: list[str]
     warnings: list[str] = Field(default_factory=list)
     next_required_action: str

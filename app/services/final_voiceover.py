@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import AssetType, ContentAsset, Video
 from app.schemas import FinalVoiceoverGenerateResponse, FinalVoiceoverStatus
+from app.services.final_voiceover_source_quality import assess_final_voiceover_source_quality
 
 _BLOCKED_PROVIDERS = {"macos", "silent", "fallback", "local", "placeholder", "none", ""}
 _PRODUCTION_PROVIDERS = {"openai", "elevenlabs"}
@@ -155,6 +156,17 @@ def generate_final_voiceover(
             provider=provider,
             voice=voice,
             blockers=["No script text available for voiceover generation"],
+        )
+
+    source_quality = assess_final_voiceover_source_quality(script_text)
+    if not source_quality.ready:
+        return FinalVoiceoverGenerateResponse(
+            video_id=video_id,
+            status="blocked",
+            voiceover_path=None,
+            provider=provider,
+            voice=voice,
+            blockers=source_quality.blockers,
         )
 
     output_dir = final_voiceover_dir(video_id)

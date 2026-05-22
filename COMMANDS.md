@@ -164,6 +164,9 @@ curl -X POST http://127.0.0.1:8000/videos/1/final-production/export
 Note: production voiceover setup (OpenAI/ElevenLabs credentials and quota handling) may be deferred. In that case final export remains correctly blocked until `final_voice_ready=true`.
 Local/Mac/silent preview audio is never treated as production final voiceover.
 Dry-run preview does not create voiceover files and does not satisfy the production voiceover gate.
+Dry-run now also reports `source_quality_ready`, `source_quality_blockers`, and `source_quality_warnings`.
+Common source-quality blockers include: `[INSERT LINK]`, `How to I Built`, `Draft Preview`, unresolved bracket placeholders, `TODO`, `TBD`, and `lorem ipsum`.
+Fix source-quality blockers by editing script/description assets before real generation.
 
 Required env vars for production voiceover generation:
 - OpenAI: `OPENAI_API_KEY` (optional overrides: `OPENAI_TTS_MODEL`, `OPENAI_TTS_VOICE`)

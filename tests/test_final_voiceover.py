@@ -43,6 +43,23 @@ def _create_video(client: TestClient, title: str = "Voiceover Test Video") -> di
     return video
 
 
+def _set_script_text(client: TestClient, video_id: int, body: str) -> None:
+    resp = client.patch(f"/videos/{video_id}/assets/script", json={"body": body})
+    assert resp.status_code == 200
+
+
+def _set_clean_script_text(client: TestClient, video_id: int) -> None:
+    _set_script_text(
+        client,
+        video_id,
+        (
+            "This is a clean educational narration script for local operators. "
+            "It explains workflow steps, review gates, and practical implementation details "
+            "without placeholders or unfinished editorial markers."
+        ),
+    )
+
+
 def _write_voiceover_mp3(video_id: int, empty: bool = False) -> Path:
     vo_dir = get_settings().output_path / "final_voiceovers" / f"video_{video_id}"
     vo_dir.mkdir(parents=True, exist_ok=True)
@@ -276,6 +293,7 @@ def test_post_generate_missing_openai_key_does_not_create_file() -> None:
     client = TestClient(app)
     video = _create_video(client, "No Key Generate")
     video_id = video["id"]
+    _set_clean_script_text(client, video_id)
 
     saved_key = os.environ.pop("OPENAI_API_KEY", None)
     try:
@@ -466,6 +484,89 @@ def test_dry_run_elevenlabs_request_preview_excludes_api_key(monkeypatch: pytest
     preview_text = json.dumps(body["request_preview"])
     assert "SECRET_ELEVEN_KEY_VALUE" not in preview_text
     assert "REDACTED" in preview_text
+
+
+def test_dry_run_dirty_source_returns_source_quality_blocked() -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run Dirty Source")
+    video_id = video["id"]
+    _set_script_text(client, video_id, "Draft Preview notes: How to I Built [INSERT LINK] [TODO]")
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_quality_ready"] is False
+    assert body["source_quality_blockers"]
+    assert any("placeholder" in item.lower() or "insert link" in item.lower() for item in body["source_quality_blockers"])
+
+
+def test_dry_run_clean_source_returns_source_quality_ready() -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run Clean Source")
+    video_id = video["id"]
+    _set_clean_script_text(client, video_id)
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_quality_ready"] is True
+    assert body["source_quality_blockers"] == []
+
+
+def test_provider_config_can_be_ready_while_source_quality_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Provider Ready Source Dirty")
+    video_id = video["id"]
+    _set_script_text(client, video_id, "Draft Preview [INSERT LINK]")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-configured")
+    monkeypatch.setenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+    monkeypatch.setenv("OPENAI_TTS_VOICE", "onyx")
+
+    readiness = client.get(f"/videos/{video_id}/final-voiceover/readiness")
+    assert readiness.status_code == 200
+    providers = {item["provider"]: item for item in readiness.json()["providers"]}
+    assert providers["openai"]["configured"] is True
+
+    dry_run = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert dry_run.status_code == 200
+    body = dry_run.json()
+    assert body["source_quality_ready"] is False
+    assert body["configured"] is False
+
+
+def test_real_generation_dirty_source_blocks_before_external_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Generate Dirty Source Block")
+    video_id = video["id"]
+    _set_script_text(client, video_id, "How to I Built this [INSERT LINK] Draft Preview")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-configured")
+
+    def fail_urlopen(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("external API call must not run when source quality is blocked")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_urlopen)
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/generate", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "blocked"
+    assert body["voiceover_path"] is None
+    assert any("placeholder" in item.lower() or "draft preview" in item.lower() for item in body["blockers"])
+
+
+def test_placeholder_pattern_detection_in_source_quality() -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Pattern Detection Source")
+    video_id = video["id"]
+    _set_script_text(client, video_id, "Narration TBD [INSERT LINK] [DRAFT NOTE] lorem ipsum")
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    combined = " | ".join(body["source_quality_blockers"]).lower()
+    assert "insert link" in combined
+    assert "tbd" in combined or "lorem ipsum" in combined
 
 
 def test_dry_run_invalid_provider_returns_422() -> None:

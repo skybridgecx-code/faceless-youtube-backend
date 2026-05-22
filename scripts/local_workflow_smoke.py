@@ -235,22 +235,55 @@ def run_smoke() -> SmokeContext:
             raise SmokeFailure("FAIL 12: Readiness payload missing current_final_voiceover_status")
         steps.pass_step("Voiceover readiness endpoint reports production providers and blocked config state")
 
-        dry_run_resp = client.post(
+        dirty_source_resp = client.patch(
+            f"/videos/{video_id}/assets/script",
+            json={"body": "Draft Preview narrator notes: How to I Built this demo [INSERT LINK] [TBD]"},
+        )
+        _expect_status(dirty_source_resp, 200, "Failed to inject intentionally dirty source text")
+
+        dry_run_dirty_resp = client.post(
             f"/videos/{video_id}/final-voiceover/dry-run",
             json={"provider": "openai", "max_chars": 5000},
         )
-        _expect_status(dry_run_resp, 200, "Failed to load final voiceover dry run")
-        dry_run = _json(dry_run_resp, "Final voiceover dry run payload was not valid JSON")
-        dry_run_blockers = [str(item) for item in dry_run.get("blockers") or []]
-        if bool(dry_run.get("dry_run")) is not True:
-            raise SmokeFailure(f"FAIL 13: Expected dry_run=true, got: {dry_run.get('dry_run')}")
-        if bool(dry_run.get("api_call_made")) is not False:
-            raise SmokeFailure(f"FAIL 13: Expected api_call_made=false, got: {dry_run.get('api_call_made')}")
-        if str(dry_run.get("provider")) != "openai":
-            raise SmokeFailure(f"FAIL 13: Unexpected dry-run provider: {dry_run.get('provider')}")
-        if not contains_text(dry_run_blockers, "OPENAI_API_KEY"):
-            raise SmokeFailure(f"FAIL 13: Expected missing OPENAI_API_KEY blocker, got: {dry_run_blockers}")
-        steps.pass_step("Voiceover dry run returns preview data without external API calls")
+        _expect_status(dry_run_dirty_resp, 200, "Failed to load final voiceover dry run with dirty source")
+        dry_run_dirty = _json(dry_run_dirty_resp, "Final voiceover dry run payload was not valid JSON")
+        dirty_quality_blockers = [str(item) for item in dry_run_dirty.get("source_quality_blockers") or []]
+        if bool(dry_run_dirty.get("dry_run")) is not True:
+            raise SmokeFailure(f"FAIL 13: Expected dry_run=true, got: {dry_run_dirty.get('dry_run')}")
+        if bool(dry_run_dirty.get("api_call_made")) is not False:
+            raise SmokeFailure(f"FAIL 13: Expected api_call_made=false, got: {dry_run_dirty.get('api_call_made')}")
+        if str(dry_run_dirty.get("provider")) != "openai":
+            raise SmokeFailure(f"FAIL 13: Unexpected dry-run provider: {dry_run_dirty.get('provider')}")
+        if bool(dry_run_dirty.get("source_quality_ready")) is not False:
+            raise SmokeFailure("FAIL 13: Expected source_quality_ready=false for dirty source text")
+        if not contains_text(dirty_quality_blockers, "placeholder") and not contains_text(dirty_quality_blockers, "insert link"):
+            raise SmokeFailure(f"FAIL 13: Expected source quality blockers for dirty text, got: {dirty_quality_blockers}")
+        steps.pass_step("Voiceover dry run detects dirty source-quality blockers without external API calls")
+
+        clean_source_resp = client.patch(
+            f"/videos/{video_id}/assets/script",
+            json={
+                "body": (
+                    "This final narration explains practical local automation workflows with clear educational framing, "
+                    "manual review boundaries, and a step-by-step operator walkthrough for deployment readiness."
+                )
+            },
+        )
+        _expect_status(clean_source_resp, 200, "Failed to clean source text for dry run quality check")
+        dry_run_clean_resp = client.post(
+            f"/videos/{video_id}/final-voiceover/dry-run",
+            json={"provider": "openai", "max_chars": 5000},
+        )
+        _expect_status(dry_run_clean_resp, 200, "Failed to load final voiceover dry run with clean source")
+        dry_run_clean = _json(dry_run_clean_resp, "Final voiceover dry run payload was not valid JSON")
+        dry_run_clean_blockers = [str(item) for item in dry_run_clean.get("blockers") or []]
+        if bool(dry_run_clean.get("source_quality_ready")) is not True:
+            raise SmokeFailure(
+                f"FAIL 14: Expected source_quality_ready=true for clean source text, got: {dry_run_clean.get('source_quality_ready')}"
+            )
+        if not contains_text(dry_run_clean_blockers, "OPENAI_API_KEY"):
+            raise SmokeFailure(f"FAIL 14: Expected missing OPENAI_API_KEY blocker, got: {dry_run_clean_blockers}")
+        steps.pass_step("Voiceover dry run source quality becomes ready after source cleanup")
 
         dirty_title = f"{video_title} [INSERT LINK]"
         dirty_resp = client.patch(f"/videos/{video_id}", json={"title": dirty_title})
@@ -260,9 +293,9 @@ def run_smoke() -> SmokeContext:
         status_dirty = _json(status_dirty_resp, "Final production status payload was not valid JSON")
         dirty_blockers = [str(item) for item in status_dirty.get("blockers") or []]
         if bool(status_dirty.get("final_metadata_ready")):
-            raise SmokeFailure("FAIL 14: Metadata should be blocked after injecting placeholder text")
+            raise SmokeFailure("FAIL 15: Metadata should be blocked after injecting placeholder text")
         if not contains_text(dirty_blockers, "metadata"):
-            raise SmokeFailure(f"FAIL 14: Expected metadata blocker, got: {dirty_blockers}")
+            raise SmokeFailure(f"FAIL 15: Expected metadata blocker, got: {dirty_blockers}")
         steps.pass_step("Final metadata blockers detected")
 
         clean_resp = client.patch(f"/videos/{video_id}", json={"title": video_title})
@@ -277,7 +310,7 @@ def run_smoke() -> SmokeContext:
         status_clean = _json(status_clean_resp, "Final production status payload was not valid JSON")
         if not bool(status_clean.get("final_metadata_ready")):
             raise SmokeFailure(
-                f"FAIL 15: Metadata did not become ready after cleanup. blockers={status_clean.get('blockers')}"
+                f"FAIL 16: Metadata did not become ready after cleanup. blockers={status_clean.get('blockers')}"
             )
         steps.pass_step("Metadata cleanup restored final metadata readiness")
 
@@ -286,9 +319,9 @@ def run_smoke() -> SmokeContext:
         final_export = _json(final_export_resp, "Final export response was not valid JSON")
         export_blockers = [str(item) for item in final_export.get("blockers") or []]
         if str(final_export.get("status")) != "blocked":
-            raise SmokeFailure(f"FAIL 16: Final export should be blocked without production voiceover: {final_export}")
+            raise SmokeFailure(f"FAIL 17: Final export should be blocked without production voiceover: {final_export}")
         if not contains_text(export_blockers, "voiceover"):
-            raise SmokeFailure(f"FAIL 16: Expected voiceover blocker, got: {export_blockers}")
+            raise SmokeFailure(f"FAIL 17: Expected voiceover blocker, got: {export_blockers}")
         steps.pass_step("Final export refused because production final voiceover is missing")
 
         db = SessionLocal()
@@ -301,7 +334,7 @@ def run_smoke() -> SmokeContext:
         finally:
             db.close()
         if has_published_record is not None:
-            raise SmokeFailure("FAIL 17: Smoke test unexpectedly marked video as published")
+            raise SmokeFailure("FAIL 18: Smoke test unexpectedly marked video as published")
         steps.pass_step("No YouTube auto-upload occurred (manual publish record remains unset)")
 
     return ctx

@@ -133,7 +133,9 @@ IMAGE_GENERATION_PROVIDER=placeholder
 The system works without an OpenAI key using deterministic local templates and placeholder visuals.
 Production final voiceover readiness can be checked without API calls via `GET /videos/{id}/final-voiceover/readiness`.
 Production voiceover dry-run request preview is available at `POST /videos/{id}/final-voiceover/dry-run` and never calls external APIs.
+Dry-run now includes a source-quality gate (`source_quality_ready`, `source_quality_blockers`, `source_quality_warnings`) so operators can clean text before spending credits.
 Dry run output does not create voiceover files and does not satisfy the final voiceover gate.
+Real generation also refuses before any provider API request when source-quality blockers are present.
 Local/Mac/silent preview audio is only for draft preview and is never accepted for final export.
 
 ## Safety boundary
