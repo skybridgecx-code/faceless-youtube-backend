@@ -366,3 +366,127 @@ def test_publishing_payload_blocked_without_final_voiceover() -> None:
         "voiceover" in b.lower() or "voice" in b.lower() or "generated" in b.lower()
         for b in body["blockers"]
     )
+
+
+def test_dry_run_openai_works_without_api_keys_and_no_file_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run OpenAI")
+    video_id = video["id"]
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dry_run"] is True
+    assert body["api_call_made"] is False
+    assert body["provider"] == "openai"
+    assert body["input_character_count"] >= 0
+    assert body["input_word_count"] >= 0
+    assert body["request_preview"]
+    assert any("OPENAI_API_KEY" in item for item in body["blockers"])
+
+    voice_path = get_settings().output_path / "final_voiceovers" / f"video_{video_id}" / "voiceover.mp3"
+    assert not voice_path.exists()
+
+
+def test_dry_run_elevenlabs_works_without_api_keys_and_no_file_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run ElevenLabs")
+    video_id = video["id"]
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "elevenlabs"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dry_run"] is True
+    assert body["api_call_made"] is False
+    assert body["provider"] == "elevenlabs"
+    assert body["request_preview"]
+    assert any("ELEVENLABS_API_KEY" in item for item in body["blockers"])
+    assert any("ELEVENLABS_VOICE_ID" in item for item in body["blockers"])
+
+    voice_path = get_settings().output_path / "final_voiceovers" / f"video_{video_id}" / "voiceover.mp3"
+    assert not voice_path.exists()
+
+
+def test_dry_run_does_not_call_external_apis(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run No External Call")
+    video_id = video["id"]
+
+    def fail_urlopen(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("dry run should never call urllib.request.urlopen")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_urlopen)
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["api_call_made"] is False
+
+
+def test_dry_run_does_not_make_final_voiceover_status_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run Gate")
+    video_id = video["id"]
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    dry_run = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert dry_run.status_code == 200
+    status = client.get(f"/videos/{video_id}/final-voiceover/status")
+    assert status.status_code == 200
+    assert status.json()["voiceover_ready"] is False
+
+
+def test_dry_run_openai_request_preview_excludes_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run OpenAI Secret Redaction")
+    video_id = video["id"]
+    monkeypatch.setenv("OPENAI_API_KEY", "SECRET_OPENAI_KEY_VALUE")
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    preview_text = json.dumps(body["request_preview"])
+    assert "SECRET_OPENAI_KEY_VALUE" not in preview_text
+    assert "REDACTED" in preview_text
+
+
+def test_dry_run_elevenlabs_request_preview_excludes_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run Eleven Secret Redaction")
+    video_id = video["id"]
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "SECRET_ELEVEN_KEY_VALUE")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice-demo")
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "elevenlabs"})
+    assert response.status_code == 200
+    body = response.json()
+    preview_text = json.dumps(body["request_preview"])
+    assert "SECRET_ELEVEN_KEY_VALUE" not in preview_text
+    assert "REDACTED" in preview_text
+
+
+def test_dry_run_invalid_provider_returns_422() -> None:
+    client = TestClient(app)
+    video = _create_video(client, "Dry Run Invalid Provider")
+    video_id = video["id"]
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "not-real"})
+    assert response.status_code == 422
+
+
+def test_dry_run_blocks_when_no_source_text_exists() -> None:
+    client = TestClient(app)
+    channel_id = client.post("/channels", json={"name": "Dry Run No Source Channel"}).json()["id"]
+    video = client.post("/videos", json={"channel_id": channel_id, "title": "Dry Run No Source"}).json()
+    video_id = video["id"]
+    # Intentionally no /generate call.
+
+    response = client.post(f"/videos/{video_id}/final-voiceover/dry-run", json={"provider": "openai"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dry_run"] is True
+    assert body["api_call_made"] is False
+    assert any("No script text available" in item for item in body["blockers"])

@@ -122,6 +122,16 @@ Required environment variables for production voiceover generation:
 - OpenAI: `OPENAI_API_KEY` (optional overrides: `OPENAI_TTS_MODEL`, `OPENAI_TTS_VOICE`)
 - ElevenLabs: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (optional override: `ELEVENLABS_MODEL_ID`)
 
+Preview request before generation:
+
+`POST /videos/{video_id}/final-voiceover/dry-run`
+
+- Dry-run only.
+- No OpenAI/ElevenLabs API calls are made.
+- Returns provider/model/voice, script counts, excerpt, estimated duration, and safe request preview fields.
+- Does not create final voiceover files.
+- Does not satisfy the final voiceover gate.
+
 Generate via `POST /videos/{video_id}/final-voiceover/generate` — requires `OPENAI_API_KEY` or ElevenLabs credentials.
 
 Operational note: production voiceover credential/setup work can be intentionally deferred during local renderer/dashboard phases. In that mode, final export stays blocked by design.
@@ -176,6 +186,7 @@ The dashboard includes `Selected Video Workflow Controls` so operators can compl
 
 The panel surfaces final-production blockers directly and does not bypass any gate.
 It now also surfaces production voiceover readiness (OpenAI/ElevenLabs configured/not configured) without exposing secrets.
+It now includes `Preview Final Voiceover Request` for dry-run request preview without spending API credits.
 
 ### One-command smoke test (no live server required)
 
@@ -209,6 +220,7 @@ curl -X POST http://127.0.0.1:8000/videos/{video_id}/package
 curl -X POST http://127.0.0.1:8000/publish/{video_id}/prepare-youtube-payload
 curl -X POST http://127.0.0.1:8000/videos/{video_id}/publishing-payload/generate
 curl http://127.0.0.1:8000/videos/{video_id}/final-voiceover/readiness
+curl -X POST http://127.0.0.1:8000/videos/{video_id}/final-voiceover/dry-run -H "Content-Type: application/json" -d '{"provider":"openai","max_chars":5000}'
 curl http://127.0.0.1:8000/videos/{video_id}/final-production/status
 curl -X POST http://127.0.0.1:8000/videos/{video_id}/final-production/export
 ```

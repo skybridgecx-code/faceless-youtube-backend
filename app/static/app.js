@@ -46,6 +46,7 @@ const app = {
     finalProductionByVideoId: {},
     finalVoiceoverByVideoId: {},
     finalVoiceoverReadinessByVideoId: {},
+    finalVoiceoverDryRunByVideoId: {},
     workflowExportAttemptByVideoId: {},
     operatorExportByVideoId: {},
     publishingPayloadQueue: [],
@@ -5081,6 +5082,14 @@ const app = {
     const finalVoiceElevenEl = document.getElementById('workflowVoiceElevenLabsConfigured');
     const finalVoiceReadinessActionEl = document.getElementById('workflowVoiceReadinessAction');
     const finalVoiceGateNoteEl = document.getElementById('workflowVoiceGateNote');
+    const dryRunConfiguredEl = document.getElementById('workflowDryRunConfigured');
+    const dryRunModelEl = document.getElementById('workflowDryRunModel');
+    const dryRunVoiceEl = document.getElementById('workflowDryRunVoice');
+    const dryRunCountsEl = document.getElementById('workflowDryRunCounts');
+    const dryRunExcerptEl = document.getElementById('workflowDryRunExcerpt');
+    const dryRunBlockersEl = document.getElementById('workflowDryRunBlockers');
+    const dryRunNextActionEl = document.getElementById('workflowDryRunNextAction');
+    const dryRunSafetyEl = document.getElementById('workflowDryRunSafety');
     const finalExportEl = document.getElementById('workflowFinalExportReady');
     const blockersEl = document.getElementById('workflowFinalBlockers');
     const nextActionEl = document.getElementById('workflowNextAction');
@@ -5090,6 +5099,8 @@ const app = {
       !videoLabelEl || !visualReviewCountsEl || !videoApprovalEl || !previewExistsEl || !previewReviewedEl
       || !packageExistsEl || !payloadStatusEl || !finalVisualsEl || !finalMetadataEl || !finalVoiceEl
       || !finalVoiceOpenAiEl || !finalVoiceElevenEl || !finalVoiceReadinessActionEl || !finalVoiceGateNoteEl
+      || !dryRunConfiguredEl || !dryRunModelEl || !dryRunVoiceEl || !dryRunCountsEl || !dryRunExcerptEl
+      || !dryRunBlockersEl || !dryRunNextActionEl || !dryRunSafetyEl
       || !finalExportEl || !blockersEl || !nextActionEl || !blockerChainEl || !voiceDeferredNoteEl
     ) {
       return;
@@ -5110,6 +5121,14 @@ const app = {
       finalVoiceElevenEl.textContent = 'Not configured';
       finalVoiceReadinessActionEl.textContent = 'Select a video to inspect production voiceover readiness.';
       finalVoiceGateNoteEl.textContent = 'Production voiceover requires OpenAI or ElevenLabs. Local/Mac/silent preview audio is not accepted for final export.';
+      dryRunConfiguredEl.textContent = 'No';
+      dryRunModelEl.textContent = '-';
+      dryRunVoiceEl.textContent = '-';
+      dryRunCountsEl.textContent = '-';
+      dryRunExcerptEl.textContent = '-';
+      dryRunBlockersEl.textContent = '-';
+      dryRunNextActionEl.textContent = 'Run dry run preview.';
+      dryRunSafetyEl.textContent = '• Dry run only. No external API call was made.';
       finalExportEl.textContent = 'No';
       blockersEl.textContent = '-';
       nextActionEl.textContent = 'Select a video to continue workflow.';
@@ -5130,6 +5149,7 @@ const app = {
       this.applyWorkflowActionButtonState('workflowBtnPreparePayload', false, false, 'Select a video first.');
       this.applyWorkflowActionButtonState('workflowBtnGeneratePublishingPayload', false, false, 'Select a video first.');
       this.applyWorkflowActionButtonState('workflowBtnCheckFinalProduction', false, false, 'Select a video first.');
+      this.applyWorkflowActionButtonState('workflowBtnPreviewFinalVoiceoverRequest', false, false, 'Select a video first.');
       this.applyWorkflowActionButtonState('workflowBtnRunFinalExport', false, false, 'Select a video first.');
       return;
     }
@@ -5140,6 +5160,7 @@ const app = {
     const finalStatus = this.state.finalProductionByVideoId?.[selected.id] || null;
     const finalVoiceStatus = this.state.finalVoiceoverByVideoId?.[selected.id] || null;
     const finalVoiceReadiness = this.state.finalVoiceoverReadinessByVideoId?.[selected.id] || null;
+    const finalVoiceDryRun = this.state.finalVoiceoverDryRunByVideoId?.[selected.id] || null;
     const exportAttempt = this.state.workflowExportAttemptByVideoId?.[selected.id] || null;
     const operatorExport = this.state.operatorExportByVideoId?.[selected.id] || null;
     const blockers = Array.isArray(finalStatus?.blockers) ? [...finalStatus.blockers] : [];
@@ -5181,6 +5202,19 @@ const app = {
       || 'Check production voiceover readiness before generation.';
     finalVoiceGateNoteEl.textContent = finalVoiceReadiness?.safety_note
       || 'Production voiceover requires OpenAI or ElevenLabs. Local/Mac/silent preview audio is not accepted for final export.';
+    dryRunConfiguredEl.textContent = finalVoiceDryRun ? (finalVoiceDryRun.configured ? 'Yes' : 'No') : 'No';
+    dryRunModelEl.textContent = finalVoiceDryRun?.model || '-';
+    dryRunVoiceEl.textContent = finalVoiceDryRun?.voice || '-';
+    dryRunCountsEl.textContent = finalVoiceDryRun
+      ? `${Number(finalVoiceDryRun.input_character_count || 0)} / ${Number(finalVoiceDryRun.input_word_count || 0)}`
+      : '-';
+    dryRunExcerptEl.textContent = finalVoiceDryRun?.input_excerpt || '-';
+    const dryRunBlockers = Array.isArray(finalVoiceDryRun?.blockers) ? finalVoiceDryRun.blockers : [];
+    dryRunBlockersEl.textContent = dryRunBlockers.length ? dryRunBlockers.join(' | ') : 'None';
+    dryRunNextActionEl.textContent = finalVoiceDryRun?.next_required_action || 'Run dry run preview.';
+    dryRunSafetyEl.textContent = finalVoiceDryRun?.safety_note
+      ? `• ${finalVoiceDryRun.safety_note}`
+      : '• Dry run only. No external API call was made.';
     finalExportEl.textContent = finalExportReady ? 'Yes' : 'No';
     blockersEl.textContent = blockers.length ? blockers.join(' | ') : 'None';
     nextActionEl.textContent = (
@@ -5338,6 +5372,7 @@ const app = {
     );
     this.applyWorkflowActionButtonState('workflowBtnGeneratePublishingPayload', true, false, '');
     this.applyWorkflowActionButtonState('workflowBtnCheckFinalProduction', true, false, '');
+    this.applyWorkflowActionButtonState('workflowBtnPreviewFinalVoiceoverRequest', true, false, '');
     this.applyWorkflowActionButtonState(
       'workflowBtnRunFinalExport',
       true,
@@ -5484,6 +5519,38 @@ const app = {
       { reloadAssets: false, reloadCalendar: false, reloadAudit: true, keepComplianceReport: true }
     );
     await this.refreshSelectedWorkflowStatus();
+  },
+
+  async previewFinalVoiceoverRequest() {
+    const selected = this.requireSelectedVideo('preview final voiceover request');
+    if (!selected) return;
+    const btn = document.getElementById('workflowBtnPreviewFinalVoiceoverRequest');
+    const providerSelect = document.getElementById('workflowVoiceoverDryRunProvider');
+    const provider = providerSelect?.value || 'openai';
+    if (btn) {
+      btn.classList.add('loading');
+      btn.disabled = true;
+    }
+    try {
+      const res = await fetch(`/videos/${selected.id}/final-voiceover/dry-run`, {
+        method: 'POST',
+        headers: this.buildWriteHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ provider, max_chars: 5000 })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to preview final voiceover request');
+      this.state.finalVoiceoverDryRunByVideoId[selected.id] = data;
+      this.renderWorkflowControlPanel();
+      this.log(`Dry run generated for ${provider}. No external API call was made.`, 'success');
+    } catch (err) {
+      this.log(`Final voiceover dry run failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.classList.remove('loading');
+        btn.disabled = false;
+      }
+      await this.refreshSelectedWorkflowStatus();
+    }
   },
 
   async checkFinalProductionForWorkflow() {

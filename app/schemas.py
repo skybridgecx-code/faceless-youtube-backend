@@ -1479,6 +1479,26 @@ class FinalVoiceoverGenerateResponse(BaseModel):
     blockers: list[str]
 
 
+class FinalVoiceoverDryRunResponse(BaseModel):
+    video_id: int
+    provider: str
+    dry_run: bool = True
+    api_call_made: bool = False
+    configured: bool
+    model: str | None = None
+    voice: str | None = None
+    input_character_count: int
+    input_word_count: int
+    input_excerpt: str
+    max_input_chars_used: int
+    estimated_duration_seconds: int | None = None
+    request_preview: dict[str, object]
+    blockers: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    next_required_action: str
+    safety_note: str
+
+
 class VoiceoverProviderReadiness(BaseModel):
     provider: str
     configured: bool

@@ -726,6 +726,25 @@
                     <div class="meta-row"><span class="meta-label">Final Export Manifest Path</span><span class="meta-value pre-wrap" id="workflowFinalManifestPath">-</span></div>
                   </div>
 
+                  <div class="flow-card" style="margin-top:0.45rem;">
+                    <div class="flow-card-title">Final Voiceover Dry Run</div>
+                    <div class="meta-row">
+                      <span class="meta-label">Provider</span>
+                      <select id="workflowVoiceoverDryRunProvider" class="form-select">
+                        <option value="openai">OpenAI</option>
+                        <option value="elevenlabs">ElevenLabs</option>
+                      </select>
+                    </div>
+                    <div class="meta-row"><span class="meta-label">Configured</span><span class="meta-value" id="workflowDryRunConfigured">No</span></div>
+                    <div class="meta-row"><span class="meta-label">Model</span><span class="meta-value" id="workflowDryRunModel">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Voice</span><span class="meta-value" id="workflowDryRunVoice">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Input Chars / Words</span><span class="meta-value" id="workflowDryRunCounts">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Input Excerpt</span><span class="meta-value pre-wrap" id="workflowDryRunExcerpt">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Blockers</span><span class="meta-value pre-wrap" id="workflowDryRunBlockers">-</span></div>
+                    <div class="meta-row"><span class="meta-label">Next Action</span><span class="meta-value pre-wrap" id="workflowDryRunNextAction">Run dry run preview.</span></div>
+                    <div class="flow-item pending" id="workflowDryRunSafety">• Dry run only. No external API call was made.</div>
+                  </div>
+
                   <div class="workflow-actions-grid">
                     <button class="btn" id="workflowBtnApprovePendingAssets" onclick="app.approveAllPendingVisualAssets()">Approve All Pending Visual Assets</button>
                     <button class="btn" id="workflowBtnApproveVideo" onclick="app.approveVideoForWorkflow()">Approve Video</button>
@@ -735,6 +754,7 @@
                     <button class="btn" id="workflowBtnPreparePayload" onclick="app.prepareYoutubePayloadForWorkflow()">Prepare YouTube Payload</button>
                     <button class="btn" id="workflowBtnGeneratePublishingPayload" onclick="app.generatePublishingPayload()">Generate Publishing Payload</button>
                     <button class="btn" id="workflowBtnCheckFinalProduction" onclick="app.checkFinalProductionForWorkflow()">Check Final Production</button>
+                    <button class="btn" id="workflowBtnPreviewFinalVoiceoverRequest" onclick="app.previewFinalVoiceoverRequest()">Preview Final Voiceover Request</button>
                     <button class="btn success" id="workflowBtnRunFinalExport" onclick="app.runFinalExportForWorkflow()">Run Final Export</button>
                   </div>
                 </div>

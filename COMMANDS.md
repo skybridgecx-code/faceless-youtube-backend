@@ -35,6 +35,7 @@ Notes:
 - Uses isolated temporary SQLite DB + `OUTPUT_DIR` by default (no live uvicorn required).
 - Verifies review gates end-to-end.
 - Verifies production voiceover readiness endpoint without calling external APIs.
+- Verifies production voiceover dry-run preview endpoint without calling external APIs.
 - Expected final result is blocked final export when production voiceover is missing.
 
 ## Local renderer prerequisite
@@ -148,6 +149,11 @@ curl -X POST http://127.0.0.1:8000/videos/1/final-voiceover/generate \
 # Check production voiceover readiness (local-only, no external API call)
 curl http://127.0.0.1:8000/videos/1/final-voiceover/readiness
 
+# Preview production voiceover request (dry run only, no external API call)
+curl -X POST http://127.0.0.1:8000/videos/1/final-voiceover/dry-run \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"openai","max_chars":5000}'
+
 # Check final production readiness
 curl http://127.0.0.1:8000/videos/1/final-production/status
 
@@ -157,6 +163,7 @@ curl -X POST http://127.0.0.1:8000/videos/1/final-production/export
 
 Note: production voiceover setup (OpenAI/ElevenLabs credentials and quota handling) may be deferred. In that case final export remains correctly blocked until `final_voice_ready=true`.
 Local/Mac/silent preview audio is never treated as production final voiceover.
+Dry-run preview does not create voiceover files and does not satisfy the production voiceover gate.
 
 Required env vars for production voiceover generation:
 - OpenAI: `OPENAI_API_KEY` (optional overrides: `OPENAI_TTS_MODEL`, `OPENAI_TTS_VOICE`)

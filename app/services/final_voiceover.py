@@ -95,7 +95,7 @@ def assess_final_voiceover(video_id: int) -> FinalVoiceoverStatus:
     )
 
 
-def _get_script_text(video: Video) -> str | None:
+def get_source_text_for_final_voiceover(video: Video) -> str | None:
     def _body(asset_type: AssetType) -> str | None:
         assets = [a for a in video.assets if a.asset_type == asset_type]
         if not assets:
@@ -146,7 +146,7 @@ def generate_final_voiceover(
                     blockers=[],
                 )
 
-    script_text = _get_script_text(video)
+    script_text = get_source_text_for_final_voiceover(video)
     if not script_text:
         return FinalVoiceoverGenerateResponse(
             video_id=video_id,

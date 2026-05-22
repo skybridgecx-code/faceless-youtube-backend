@@ -50,6 +50,7 @@ python scripts/local_workflow_smoke.py
 
 The smoke script intentionally expects final export to remain blocked until a real production voiceover exists.
 It now includes a production voiceover readiness check that is local-only and does not call external APIs.
+It also includes a production voiceover dry-run request preview that makes no external API call.
 
 ## Main workflow
 
@@ -62,11 +63,12 @@ It now includes a production voiceover readiness check that is local-only and do
 7. Render and review a local draft preview.
 8. Build a production package.
 9. Check production voiceover readiness (`GET /videos/{id}/final-voiceover/readiness`) — local-only, no API calls.
-10. Generate final production voiceover (cloud TTS required, done later when you are ready to spend API credits).
-11. Run the final export — creates `final.mp4`, `final_export_manifest.json`, `render_plan.json`, and `render_command.json`.
-12. Prepare YouTube metadata payload.
-13. Upload manually via YouTube Studio.
-14. Mark published.
+10. Preview production voiceover request (`POST /videos/{id}/final-voiceover/dry-run`) — dry run only, no API calls.
+11. Generate final production voiceover (cloud TTS required, done later when you are ready to spend API credits).
+12. Run the final export — creates `final.mp4`, `final_export_manifest.json`, `render_plan.json`, and `render_command.json`.
+13. Prepare YouTube metadata payload.
+14. Upload manually via YouTube Studio.
+15. Mark published.
 
 ## Review gates
 
@@ -78,6 +80,7 @@ No gate can be bypassed. Each must be satisfied by a human operator:
 | Preview review | `POST /videos/{id}/preview/review` |
 | Visual asset approval | `POST /visual-generation/assets/{id}/approve` |
 | Voiceover readiness | `GET /videos/{id}/final-voiceover/readiness` |
+| Voiceover dry-run preview | `POST /videos/{id}/final-voiceover/dry-run` |
 | Final voiceover (cloud TTS only) | `POST /videos/{id}/final-voiceover/generate` |
 | Metadata cleanup | Edit video title/description |
 | Final export | `POST /videos/{id}/final-production/export` |
@@ -98,6 +101,7 @@ POST   /videos/{id}/final-voiceover/generate
 GET    /videos/{id}/final-production/status
 POST   /videos/{id}/final-production/export
 GET    /videos/{id}/final-voiceover/readiness
+POST   /videos/{id}/final-voiceover/dry-run
 POST   /visual-assets/from-video/{id}
 POST   /visual-generation/plans/{id}/queue
 POST   /visual-generation/jobs/{id}/run-local
@@ -128,6 +132,8 @@ IMAGE_GENERATION_PROVIDER=placeholder
 
 The system works without an OpenAI key using deterministic local templates and placeholder visuals.
 Production final voiceover readiness can be checked without API calls via `GET /videos/{id}/final-voiceover/readiness`.
+Production voiceover dry-run request preview is available at `POST /videos/{id}/final-voiceover/dry-run` and never calls external APIs.
+Dry run output does not create voiceover files and does not satisfy the final voiceover gate.
 Local/Mac/silent preview audio is only for draft preview and is never accepted for final export.
 
 ## Safety boundary
