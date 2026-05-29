@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,7 @@ from app.schemas import (
 from app.services.agents import ensure_channel_agents, first_active_agent_name, maybe_assign_agent_to_opportunity, resolve_agent_for_opportunity
 from app.services.audit import log_audit_event
 from app.services.opportunity_intake import normalize_text
+from app.services.idea_demand import score_ideas, suggest_candidate_topics
 from app.services.research import (
     ResearchFetchError,
     ResearchSetupRequiredError,
@@ -454,4 +456,94 @@ def create_opportunities_from_strategy(run_id: int, db: Session = Depends(get_db
             f"Created {len(created_ids)} research-backed opportunity(ies); "
             f"skipped {skipped_duplicates} duplicate(s). Review and approve manually before promotion."
         ),
+    )
+
+
+class RankIdeasRequest(BaseModel):
+    niche_lane: str = Field(default="operator workflow", max_length=240)
+    query: str = Field(default="", max_length=240)
+    candidate_topics: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=10, ge=1, le=25)
+    use_live_sources: bool = True
+
+
+class RankedIdeaRead(BaseModel):
+    topic: str
+    demand_score: int
+    saturation_risk: str
+    rationale: str
+    signals: dict
+
+
+class RankIdeasResult(BaseModel):
+    niche_lane: str
+    query: str
+    live_signal_used: bool
+    note: str
+    ideas: list[RankedIdeaRead]
+
+
+@router.post("/rank-ideas", response_model=RankIdeasResult)
+def rank_ideas(payload: RankIdeasRequest) -> RankIdeasResult:
+    """Rank candidate video topics by estimated demand vs. saturation.
+
+    Deterministic. Works with no API key (keyword/lane heuristic) and uses real
+    YouTube source signals when ``use_live_sources`` is set and a key exists.
+    These are research suggestions only — they create nothing and bypass no gate.
+    """
+    niche_lane = payload.niche_lane.strip() or "operator workflow"
+    query = payload.query.strip()
+
+    source_videos: list = []
+    live_signal_used = False
+    note = "Scored from lane/query keyword fit (no live source signal)."
+
+    if payload.use_live_sources and query:
+        api_key = _resolve_youtube_api_key()
+        if api_key:
+            try:
+                source_videos, _ = fetch_youtube_sources(
+                    api_key=api_key,
+                    query=query,
+                    max_results=payload.max_results,
+                )
+                if source_videos:
+                    live_signal_used = True
+                    note = f"Scored using {len(source_videos)} live YouTube source(s)."
+                else:
+                    note = "Live research returned no sources; scored from keyword fit."
+            except (ResearchSetupRequiredError, ResearchFetchError) as exc:
+                note = f"Live research unavailable ({exc}); scored from keyword fit."
+
+    candidates = [t.strip() for t in payload.candidate_topics if t.strip()]
+    if not candidates:
+        candidates = suggest_candidate_topics(
+            niche_lane=niche_lane,
+            query=query,
+            source_videos=source_videos,
+            limit=payload.max_results,
+        )
+
+    ranked = score_ideas(
+        niche_lane=niche_lane,
+        query=query,
+        candidate_topics=candidates,
+        source_videos=source_videos,
+    )
+
+    return RankIdeasResult(
+        niche_lane=niche_lane,
+        query=query,
+        live_signal_used=live_signal_used,
+        note=note,
+        ideas=[
+            RankedIdeaRead(
+                topic=idea.topic,
+                demand_score=idea.demand_score,
+                saturation_risk=idea.saturation_risk,
+                rationale=idea.rationale,
+                signals=idea.signals,
+            )
+            for idea in ranked
+        ],
     )
