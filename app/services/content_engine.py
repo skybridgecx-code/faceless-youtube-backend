@@ -9,6 +9,7 @@ from typing import Any, Callable
 from app.config import get_settings
 from app.models import ContentType, Video
 from app.services.compliance import build_review_checklist, scan_text
+from app.services.retention import retention_prompt_guidance
 
 
 @dataclass(frozen=True)
@@ -248,6 +249,8 @@ def _build_asset_prompt(video: Video, asset_type: str, fallback_text: str) -> st
             "\nThis is a SHORT-FORM script: 45-60 seconds, strong first 3-second hook, "
             "single clear point, vertical-video direction, and CTA or loop ending."
         )
+    if asset_type == "script":
+        short_script_instruction += "\n" + retention_prompt_guidance(content_type_value)
     return (
         f"Generate only the {asset_type} asset for this video.\n"
         f"Content type: {content_type_value}\n"
@@ -548,6 +551,8 @@ def _template_build_description(video: Video) -> str:
 In this video, I break down: {video.title}
 
 This is an educational/demo video. Any business examples shown are sample workflows unless clearly stated otherwise.
+
+AI disclosure: This video was produced with AI assistance (script, voiceover, and/or visuals).
 
 Topics covered:
 - AI receptionist workflow

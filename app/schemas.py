@@ -285,6 +285,24 @@ class PackageResponse(BaseModel):
     manifest_asset_id: int
 
 
+class RetentionCheckRead(BaseModel):
+    id: str
+    label: str
+    passed: bool
+    weight: int
+    tip: str
+
+
+class RetentionAnalysisResponse(BaseModel):
+    video_id: int
+    content_type: str
+    score: int
+    grade: str
+    summary: str
+    script_present: bool
+    checks: list[RetentionCheckRead] = Field(default_factory=list)
+
+
 class PreviewStatus(BaseModel):
     video_id: int
     title: str
@@ -408,6 +426,8 @@ class YouTubePayloadResponse(BaseModel):
     privacy_status: str
     made_for_kids: bool
     review_required: bool
+    altered_or_synthetic_content: bool = True
+    ai_disclosure: str = ""
 
 
 class PublishingPayloadRead(BaseModel):
