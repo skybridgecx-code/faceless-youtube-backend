@@ -38,6 +38,10 @@ from app.services.agents import ensure_channel_agents, first_active_agent_name, 
 from app.services.audit import log_audit_event
 from app.services.opportunity_intake import normalize_text
 from app.services.idea_demand import score_ideas, suggest_candidate_topics
+from app.services.performance_feedback import (
+    PerformanceLearningSignal,
+    build_performance_learning_signal,
+)
 from app.services.research import (
     ResearchFetchError,
     ResearchSetupRequiredError,
@@ -465,6 +469,10 @@ class RankIdeasRequest(BaseModel):
     candidate_topics: list[str] = Field(default_factory=list)
     max_results: int = Field(default=10, ge=1, le=25)
     use_live_sources: bool = True
+    channel_id: int | None = Field(
+        default=None,
+        description="When set, bias ranking using this channel's own published-video performance.",
+    )
 
 
 class RankedIdeaRead(BaseModel):
@@ -475,20 +483,34 @@ class RankedIdeaRead(BaseModel):
     signals: dict
 
 
+class PerformanceLearningRead(BaseModel):
+    has_signal: bool
+    sample_size: int
+    strong_count: int
+    weak_count: int
+    proven_keywords: list[str]
+    avoid_keywords: list[str]
+    preferred_content_type: str | None
+    note: str
+
+
 class RankIdeasResult(BaseModel):
     niche_lane: str
     query: str
     live_signal_used: bool
     note: str
     ideas: list[RankedIdeaRead]
+    performance_learning: PerformanceLearningRead | None = None
 
 
 @router.post("/rank-ideas", response_model=RankIdeasResult)
-def rank_ideas(payload: RankIdeasRequest) -> RankIdeasResult:
+def rank_ideas(payload: RankIdeasRequest, db: Session = Depends(get_db)) -> RankIdeasResult:
     """Rank candidate video topics by estimated demand vs. saturation.
 
     Deterministic. Works with no API key (keyword/lane heuristic) and uses real
     YouTube source signals when ``use_live_sources`` is set and a key exists.
+    When ``channel_id`` is provided, the channel's own published-video metrics
+    bias the ranking toward proven angles (the performance feedback loop).
     These are research suggestions only — they create nothing and bypass no gate.
     """
     niche_lane = payload.niche_lane.strip() or "operator workflow"
@@ -524,11 +546,23 @@ def rank_ideas(payload: RankIdeasRequest) -> RankIdeasResult:
             limit=payload.max_results,
         )
 
+    learning: PerformanceLearningSignal | None = None
+    proven_keywords: set[str] = set()
+    avoid_keywords: set[str] = set()
+    if payload.channel_id is not None:
+        learning = build_performance_learning_signal(db, channel_id=payload.channel_id)
+        proven_keywords = set(learning.proven_keywords)
+        avoid_keywords = set(learning.avoid_keywords)
+        if learning.has_signal:
+            note = f"{note} {learning.note}"
+
     ranked = score_ideas(
         niche_lane=niche_lane,
         query=query,
         candidate_topics=candidates,
         source_videos=source_videos,
+        proven_keywords=proven_keywords,
+        avoid_keywords=avoid_keywords,
     )
 
     return RankIdeasResult(
@@ -546,4 +580,18 @@ def rank_ideas(payload: RankIdeasRequest) -> RankIdeasResult:
             )
             for idea in ranked
         ],
+        performance_learning=(
+            PerformanceLearningRead(
+                has_signal=learning.has_signal,
+                sample_size=learning.sample_size,
+                strong_count=learning.strong_count,
+                weak_count=learning.weak_count,
+                proven_keywords=learning.proven_keywords,
+                avoid_keywords=learning.avoid_keywords,
+                preferred_content_type=learning.preferred_content_type,
+                note=learning.note,
+            )
+            if learning is not None
+            else None
+        ),
     )

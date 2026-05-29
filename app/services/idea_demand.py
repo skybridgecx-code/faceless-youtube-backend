@@ -46,6 +46,16 @@ def _tokens(text: str) -> set[str]:
     }
 
 
+def keyword_tokens(text: str) -> set[str]:
+    """Public keyword extractor.
+
+    Shares the exact tokenization used for relevance scoring so callers (e.g. the
+    performance feedback loop) can produce ``proven_keywords`` / ``avoid_keywords``
+    that line up with how :func:`score_ideas` measures relevance.
+    """
+    return _tokens(text)
+
+
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
@@ -128,11 +138,21 @@ def score_ideas(
     candidate_topics: list[str],
     source_videos: list[SourceVideo] | None = None,
     now: datetime | None = None,
+    proven_keywords: set[str] | None = None,
+    avoid_keywords: set[str] | None = None,
 ) -> list[RankedIdea]:
-    """Rank candidate topics by estimated demand. Deterministic."""
+    """Rank candidate topics by estimated demand. Deterministic.
+
+    ``proven_keywords`` / ``avoid_keywords`` let the performance feedback loop
+    bias ranking toward angles this channel has already won with (and away from
+    ones that underperformed). Both default to empty, so without a learning
+    signal the ranking is identical to the pure demand heuristic.
+    """
     now = now or datetime.now(timezone.utc)
     sources = source_videos or []
     has_live = len(sources) > 0
+    proven = {t for t in (proven_keywords or set()) if t}
+    avoid = {t for t in (avoid_keywords or set()) if t}
 
     corpus_tokens: set[str] = set()
     lane_query_tokens = _tokens(niche_lane) | _tokens(query)
@@ -178,6 +198,16 @@ def score_ideas(
         saturation = max(duplicate_ratio, local_dup) if has_live else 0.2
 
         raw = (0.35 * relevance + 0.40 * _clamp01(demand) + 0.15 * freshness)
+
+        # 4) Performance learning bias: nudge toward proven-winning angles and
+        #    away from angles tied to underperformers. Bounded so it tunes the
+        #    order without overriding genuine demand signal.
+        proven_hits = len(t_tokens & proven)
+        avoid_hits = len(t_tokens & avoid)
+        learning_bonus = 0.10 * _clamp01(proven_hits / len(t_tokens)) if proven else 0.0
+        learning_penalty = 0.10 * _clamp01(avoid_hits / len(t_tokens)) if avoid else 0.0
+        raw = _clamp01(raw + learning_bonus - learning_penalty)
+
         score = raw * (1.0 - 0.30 * saturation)
         demand_score = max(1, min(100, round(score * 100)))
 
@@ -200,6 +230,11 @@ def score_ideas(
                 f"(relevance {relevance:.0%}). Connect YOUTUBE_DATA_API_KEY for real demand signals."
             )
 
+        if proven_hits:
+            rationale += f" Proven-angle boost (+{proven_hits} learned keyword(s))."
+        if avoid_hits:
+            rationale += f" Underperformer caution (-{avoid_hits} weak keyword(s))."
+
         ranked.append(
             RankedIdea(
                 topic=topic,
@@ -213,6 +248,8 @@ def score_ideas(
                     "saturation": round(saturation, 3),
                     "matching_sources": len(matching),
                     "live_signal": bool(has_live and matching),
+                    "proven_keyword_hits": proven_hits,
+                    "avoid_keyword_hits": avoid_hits,
                 },
             )
         )
