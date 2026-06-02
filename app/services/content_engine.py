@@ -9,6 +9,7 @@ from typing import Any, Callable
 from app.config import get_settings
 from app.models import ContentType, Video
 from app.services.compliance import build_review_checklist, scan_text
+from app.services.monetization import apply_monetization, parse_affiliate_offers
 from app.services.retention import retention_prompt_guidance
 
 
@@ -573,7 +574,9 @@ Subscribe for more local business AI systems and dashboard breakdowns.
 
 
 def build_description(video: Video) -> str:
-    return _render_asset_with_fallback(video, "description", _template_build_description)
+    rendered = _render_asset_with_fallback(video, "description", _template_build_description)
+    offers = parse_affiliate_offers(get_settings().affiliate_offers_json)
+    return apply_monetization(rendered, offers)
 
 
 def _template_build_thumbnail_prompt(video: Video) -> str:

@@ -24,6 +24,7 @@ from app.routers import (
     executive_producer,
     final_production,
     final_voiceover,
+    monetization,
     opportunities,
     performance,
     pipeline,
@@ -114,6 +115,7 @@ app.include_router(publishing_payloads.router)
 app.include_router(publish.router)
 app.include_router(opportunities.router)
 app.include_router(performance.router)
+app.include_router(monetization.router)
 app.include_router(channel_studio.router)
 app.include_router(executive_producer.router)
 app.include_router(agents.router)
