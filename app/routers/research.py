@@ -14,6 +14,7 @@ from app.db import get_db
 from app.models import (
     Channel,
     ContentAgent,
+    ContentType,
     ResearchPattern,
     ResearchRun,
     ResearchSourceChannel,
@@ -37,6 +38,7 @@ from app.schemas import (
 from app.services.agents import ensure_channel_agents, first_active_agent_name, maybe_assign_agent_to_opportunity, resolve_agent_for_opportunity
 from app.services.audit import log_audit_event
 from app.services.opportunity_intake import normalize_text
+from app.services.batch_production import produce_content_batch
 from app.services.idea_demand import score_ideas, suggest_candidate_topics
 from app.services.performance_feedback import (
     PerformanceLearningSignal,
@@ -594,4 +596,108 @@ def rank_ideas(payload: RankIdeasRequest, db: Session = Depends(get_db)) -> Rank
             if learning is not None
             else None
         ),
+    )
+
+
+class ProduceBatchRequest(BaseModel):
+    channel_id: int
+    niche_lane: str = Field(default="operator workflow", max_length=240)
+    query: str = Field(default="", max_length=240)
+    count: int = Field(default=5, ge=1, le=25)
+    content_type: str = Field(default="long")
+    use_live_sources: bool = True
+    use_performance_learning: bool = True
+
+
+class ProducedVideoRead(BaseModel):
+    video_id: int
+    title: str
+    demand_score: int
+    saturation_risk: str
+    asset_count: int
+
+
+class ProduceBatchResult(BaseModel):
+    channel_id: int
+    requested: int
+    produced: int
+    live_signal_used: bool
+    note: str
+    videos: list[ProducedVideoRead]
+
+
+@router.post("/produce-batch", response_model=ProduceBatchResult)
+def produce_batch(payload: ProduceBatchRequest, db: Session = Depends(get_db)) -> ProduceBatchResult:
+    """Produce a demand-ranked batch of review-ready videos with full text assets.
+
+    Combines demand ranking (live YouTube signals when a key is configured) with
+    the channel's own performance learning, then generates monetized descriptions
+    and every other text asset. Each video lands in ``needs_review`` — nothing is
+    rendered, published, or uploaded. The human review gate is preserved.
+    """
+    channel = db.get(Channel, payload.channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    niche_lane = payload.niche_lane.strip() or "operator workflow"
+    query = payload.query.strip()
+    content_type = ContentType.short if payload.content_type.strip().lower() == "short" else ContentType.long
+
+    source_videos: list = []
+    if payload.use_live_sources and query:
+        api_key = _resolve_youtube_api_key()
+        if api_key:
+            try:
+                source_videos, _ = fetch_youtube_sources(api_key=api_key, query=query, max_results=payload.count)
+            except (ResearchSetupRequiredError, ResearchFetchError):
+                source_videos = []
+
+    proven_keywords: set[str] = set()
+    avoid_keywords: set[str] = set()
+    if payload.use_performance_learning:
+        learning = build_performance_learning_signal(db, channel_id=payload.channel_id)
+        proven_keywords = set(learning.proven_keywords)
+        avoid_keywords = set(learning.avoid_keywords)
+
+    result = produce_content_batch(
+        db,
+        channel_id=payload.channel_id,
+        niche_lane=niche_lane,
+        query=query,
+        count=payload.count,
+        source_videos=source_videos,
+        content_type=content_type,
+        proven_keywords=proven_keywords,
+        avoid_keywords=avoid_keywords,
+    )
+
+    log_audit_event(
+        db,
+        "content_batch_produced",
+        f"Produced {result.produced} review-ready video(s) for channel {payload.channel_id}",
+        metadata={
+            "channel_id": payload.channel_id,
+            "requested": result.requested,
+            "produced": result.produced,
+            "live_signal_used": result.live_signal_used,
+            "video_ids": [v.video_id for v in result.videos],
+        },
+    )
+
+    return ProduceBatchResult(
+        channel_id=result.channel_id,
+        requested=result.requested,
+        produced=result.produced,
+        live_signal_used=result.live_signal_used,
+        note=result.note,
+        videos=[
+            ProducedVideoRead(
+                video_id=v.video_id,
+                title=v.title,
+                demand_score=v.demand_score,
+                saturation_risk=v.saturation_risk,
+                asset_count=v.asset_count,
+            )
+            for v in result.videos
+        ],
     )
