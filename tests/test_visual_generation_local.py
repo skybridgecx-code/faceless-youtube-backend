@@ -208,6 +208,37 @@ def test_final_production_blocks_until_visual_asset_manually_approved() -> None:
     assert status_after["final_visuals_ready"] is True
 
 
+def test_run_local_records_real_image_dimensions_and_provider() -> None:
+    """run-local now produces a real sized PNG and records its dimensions + provider."""
+    client = TestClient(app)
+    ctx = _setup_video_with_plan(client, "Local Worker Real Image")
+    job_id = ctx["job_id"]
+
+    resp = client.post(f"/visual-generation/jobs/{job_id}/run-local")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "imported"
+    assert body["provider"] == "placeholder"
+    assert body["fallback_used"] is False
+    asset_id = body["asset_id"]
+
+    # The file is a genuine, non-trivial PNG (not a 1x1 stub).
+    file_path = Path(body["file_path"])
+    raw = file_path.read_bytes()
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(raw) > 1000
+
+    db = SessionLocal()
+    try:
+        asset = db.get(VisualGeneratedAsset, asset_id)
+        assert asset is not None
+        assert asset.width == 1280
+        assert asset.height == 720
+        assert asset.mime_type == "image/png"
+    finally:
+        db.close()
+
+
 def test_run_local_on_already_imported_job_returns_warning() -> None:
     """Running run-local a second time on an already-imported job returns a warning, not an error."""
     client = TestClient(app)

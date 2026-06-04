@@ -22,6 +22,26 @@ class AnalyticsFeedback:
     analytics_band: PerformanceBand
 
 
+@dataclass(frozen=True)
+class PerformanceLearningSignal:
+    """What the channel's own published-video metrics teach the next ideation pass.
+
+    This closes the feedback loop: keywords from strong performers become
+    ``proven_keywords`` (boost next ranking), keywords unique to weak performers
+    become ``avoid_keywords`` (caution). It is advisory only — it biases the
+    *order* of suggestions and bypasses no review gate.
+    """
+
+    has_signal: bool
+    sample_size: int
+    strong_count: int
+    weak_count: int
+    proven_keywords: list[str]
+    avoid_keywords: list[str]
+    preferred_content_type: str | None
+    note: str
+
+
 def _safe_float(value: float | int | None) -> float | None:
     if value is None:
         return None
@@ -300,3 +320,100 @@ def performance_summary_rows(db: Session, limit: int = 20) -> dict[str, object]:
         "total_videos_with_manual_metrics": len(ranked),
         "manual_local_note": "Manual/local metrics only — no YouTube API connected yet.",
     }
+
+
+def build_performance_learning_signal(
+    db: Session,
+    *,
+    channel_id: int,
+    max_keywords: int = 12,
+) -> PerformanceLearningSignal:
+    """Learn proven / weak angles from this channel's own published metrics.
+
+    Bands each video that has local/manual metrics, then mines title keywords:
+    keywords that show up in strong performers become ``proven_keywords``;
+    keywords that appear only in weak performers (never in a strong one) become
+    ``avoid_keywords``. Deterministic ordering (frequency, then alphabetical).
+    """
+    # Imported lazily to keep the keyword space identical to the ranker without
+    # creating an import cycle at module load.
+    from app.services.idea_demand import keyword_tokens
+
+    rows = _latest_metrics_rows(db, channel_id)
+    if not rows:
+        return PerformanceLearningSignal(
+            has_signal=False,
+            sample_size=0,
+            strong_count=0,
+            weak_count=0,
+            proven_keywords=[],
+            avoid_keywords=[],
+            preferred_content_type=None,
+            note="No local/manual metrics for this channel yet; ideation runs on demand signal only.",
+        )
+
+    strong_counts: dict[str, int] = {}
+    weak_counts: dict[str, int] = {}
+    strong_count = 0
+    weak_count = 0
+    content_type_strength: dict[str, int] = {}
+
+    for video, metric in rows:
+        ctr_value = compute_ctr(metric.impressions, metric.clicks, metric.ctr)
+        band = performance_band_from_metrics(
+            views=metric.views,
+            impressions=metric.impressions,
+            ctr_value=ctr_value,
+            average_percentage_viewed=metric.average_percentage_viewed,
+            average_view_duration_seconds=metric.average_view_duration_seconds,
+            watch_time_minutes=metric.watch_time_minutes,
+        )
+        tokens = keyword_tokens(video.title)
+        ct_value = video.content_type.value if video.content_type is not None else "long"
+        if band == "strong":
+            strong_count += 1
+            content_type_strength[ct_value] = content_type_strength.get(ct_value, 0) + 1
+            for token in tokens:
+                strong_counts[token] = strong_counts.get(token, 0) + 1
+        elif band == "weak":
+            weak_count += 1
+            content_type_strength[ct_value] = content_type_strength.get(ct_value, 0) - 1
+            for token in tokens:
+                weak_counts[token] = weak_counts.get(token, 0) + 1
+
+    proven = [tok for tok, _ in sorted(strong_counts.items(), key=lambda kv: (-kv[1], kv[0]))][:max_keywords]
+    # Avoid only keywords that never appeared in a strong performer.
+    avoid = [
+        tok
+        for tok, _ in sorted(weak_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        if tok not in strong_counts
+    ][:max_keywords]
+
+    preferred_content_type: str | None = None
+    positive_types = {ct: score for ct, score in content_type_strength.items() if score > 0}
+    if positive_types:
+        preferred_content_type = sorted(positive_types.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+    has_signal = bool(proven or avoid)
+    if not has_signal:
+        note = (
+            f"Found {len(rows)} video(s) with metrics but no clear strong/weak split yet; "
+            "ideation stays neutral until more data accumulates."
+        )
+    else:
+        note = (
+            f"Learned from {len(rows)} video(s) with local/manual metrics "
+            f"({strong_count} strong, {weak_count} weak): boosting proven angles and "
+            "cautioning weak ones in the next ideation pass."
+        )
+
+    return PerformanceLearningSignal(
+        has_signal=has_signal,
+        sample_size=len(rows),
+        strong_count=strong_count,
+        weak_count=weak_count,
+        proven_keywords=proven,
+        avoid_keywords=avoid,
+        preferred_content_type=preferred_content_type,
+        note=note,
+    )

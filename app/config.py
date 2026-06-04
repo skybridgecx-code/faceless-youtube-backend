@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     image_generation_api_key: str | None = None
     image_generation_model: str = "gpt-image-1"
     youtube_data_api_key: str | None = None
+    youtube_oauth_client_id: str = ""
+    youtube_oauth_client_secret: str = ""
+    youtube_oauth_refresh_token: str = ""
+    affiliate_offers_json: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

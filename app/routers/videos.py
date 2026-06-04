@@ -52,6 +52,8 @@ from app.schemas import (
     PackageResponse,
     PreviewReviewUpdate,
     PreviewStatus,
+    RetentionAnalysisResponse,
+    RetentionCheckRead,
     ThumbnailGenerationResponse,
     VideoPerformanceRead,
     VideoPerformanceUpdate,
@@ -79,6 +81,7 @@ from app.services.content_engine import (
 from app.services.package_builder import build_video_package, slugify
 from app.services.performance_feedback import latest_performance_for_video, performance_payload_for_video
 from app.services.preview_visuals import build_preview_visual_manifest, build_visual_asset_review_summary
+from app.services.retention import analyze_script
 from app.services.thumbnail_generation import generate_thumbnail_image
 from app.services.visual_asset_review import asset_review_fields, update_visual_asset_review
 from app.services.visual_assets import build_visual_plan_for_video
@@ -1999,3 +2002,36 @@ def run_compliance(video_id: int, db: Session = Depends(get_db)) -> ComplianceRe
         },
     )
     return report
+
+
+@router.get("/{video_id}/retention-analysis", response_model=RetentionAnalysisResponse)
+def get_retention_analysis(video_id: int, db: Session = Depends(get_db)) -> RetentionAnalysisResponse:
+    """Score the latest script against 2026 retention best practices.
+
+    This is a read-only adviser: it never rewrites the script and bypasses no
+    review gate. If no script exists yet, it returns an empty (zero-score)
+    report so the operator knows a script must be generated first.
+    """
+    video = get_video_or_404(db, video_id)
+    script_asset = latest_asset(video, AssetType.script)
+    script_text = script_asset.body if script_asset is not None else ""
+    content_type = video.content_type.value if video.content_type is not None else "long"
+    report = analyze_script(script_text, content_type=content_type)
+    return RetentionAnalysisResponse(
+        video_id=video.id,
+        content_type=report.content_type,
+        score=report.score,
+        grade=report.grade,
+        summary=report.summary,
+        script_present=script_asset is not None and bool((script_text or "").strip()),
+        checks=[
+            RetentionCheckRead(
+                id=check.id,
+                label=check.label,
+                passed=check.passed,
+                weight=check.weight,
+                tip=check.tip,
+            )
+            for check in report.checks
+        ],
+    )

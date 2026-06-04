@@ -9,14 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import VisualAssetPlan, VisualGeneratedAsset, VisualGenerationJob
-
-# Minimal valid 1×1 white PNG for local placeholder stubs.
-_PNG_PLACEHOLDER = (
-    b"\x89PNG\r\n\x1a\n"
-    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
-    b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
-    b"\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+from app.services.visual_providers import build_seed_text, generate_visual_asset
 
 ACTIVE_JOB_STATUSES = {"queued", "exported", "imported"}
 
@@ -117,14 +110,16 @@ def payload_json(payload: dict[str, Any]) -> str:
 def _local_asset_path(video_id: int, job_id: int, job_type: str) -> Path:
     output_dir = get_settings().output_path / "visual_assets" / f"video_{video_id}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / f"job_{job_id}_{job_type}_placeholder.png"
+    return output_dir / f"job_{job_id}_{job_type}.png"
 
 
 def run_local_generation_job(job: VisualGenerationJob, db: Session) -> dict[str, Any]:
-    """Run a queued job locally using a deterministic placeholder asset.
+    """Run a queued job into a real, on-disk visual asset.
 
-    Leaves the generated asset in pending review — never auto-approves.
-    Provider failures become structured warnings, not crashes.
+    Uses the configured image provider (default: deterministic local card, no
+    paid provider required). Leaves the generated asset in pending review —
+    never auto-approves. Provider failures degrade to a deterministic fallback
+    card and surface as structured warnings, never crashes.
     """
     if job.status not in {"queued", "exported"}:
         return {
@@ -136,13 +131,22 @@ def run_local_generation_job(job: VisualGenerationJob, db: Session) -> dict[str,
 
     plan = job.plan
     video_id = plan.video_id
+    settings = get_settings()
+    video_title = (plan.video.title if plan.video is not None else None) or plan.title or ""
+    seed_text = build_seed_text(video_title=video_title, job=job)
 
     try:
         asset_path = _local_asset_path(video_id, job.id, job.job_type)
-        asset_path.write_bytes(_PNG_PLACEHOLDER)
+        result = generate_visual_asset(
+            seed_text=seed_text,
+            prompt=job.prompt or "",
+            negative_prompt=job.negative_prompt,
+            out_path=asset_path,
+            settings=settings,
+        )
     except OSError as exc:
         job.status = "failed"
-        job.failure_reason = f"Local placeholder write failed: {exc}"
+        job.failure_reason = f"Visual asset write failed: {exc}"
         db.commit()
         return {
             "job_id": job.id,
@@ -162,18 +166,25 @@ def run_local_generation_job(job: VisualGenerationJob, db: Session) -> dict[str,
             asset_type=job.job_type,
             file_path=str(asset_path),
             file_exists=True,
-            mime_type="image/png",
+            mime_type=result.mime_type,
+            width=result.width,
+            height=result.height,
+            notes=result.note,
         )
         db.add(asset)
         db.flush()
     else:
         existing_asset.file_path = str(asset_path)
         existing_asset.file_exists = True
-        existing_asset.mime_type = "image/png"
+        existing_asset.mime_type = result.mime_type
+        existing_asset.width = result.width
+        existing_asset.height = result.height
+        existing_asset.notes = result.note
         asset = existing_asset
 
     job.output_path = str(asset_path)
     job.status = "imported"
+    # A graceful provider fallback is a warning, not a job failure.
     job.failure_reason = None
 
     if job.scene is not None:
@@ -190,5 +201,8 @@ def run_local_generation_job(job: VisualGenerationJob, db: Session) -> dict[str,
         "asset_id": asset.id,
         "file_path": str(asset_path),
         "review_status": "pending",
-        "warning": None,
+        "provider": result.provider,
+        "requested_provider": result.requested_provider,
+        "fallback_used": result.fallback_used,
+        "warning": result.warning,
     }

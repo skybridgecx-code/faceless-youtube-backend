@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,7 @@ from app.db import get_db
 from app.models import (
     Channel,
     ContentAgent,
+    ContentType,
     ResearchPattern,
     ResearchRun,
     ResearchSourceChannel,
@@ -36,6 +38,12 @@ from app.schemas import (
 from app.services.agents import ensure_channel_agents, first_active_agent_name, maybe_assign_agent_to_opportunity, resolve_agent_for_opportunity
 from app.services.audit import log_audit_event
 from app.services.opportunity_intake import normalize_text
+from app.services.batch_production import produce_content_batch
+from app.services.idea_demand import score_ideas, suggest_candidate_topics
+from app.services.performance_feedback import (
+    PerformanceLearningSignal,
+    build_performance_learning_signal,
+)
 from app.services.research import (
     ResearchFetchError,
     ResearchSetupRequiredError,
@@ -454,4 +462,242 @@ def create_opportunities_from_strategy(run_id: int, db: Session = Depends(get_db
             f"Created {len(created_ids)} research-backed opportunity(ies); "
             f"skipped {skipped_duplicates} duplicate(s). Review and approve manually before promotion."
         ),
+    )
+
+
+class RankIdeasRequest(BaseModel):
+    niche_lane: str = Field(default="operator workflow", max_length=240)
+    query: str = Field(default="", max_length=240)
+    candidate_topics: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=10, ge=1, le=25)
+    use_live_sources: bool = True
+    channel_id: int | None = Field(
+        default=None,
+        description="When set, bias ranking using this channel's own published-video performance.",
+    )
+
+
+class RankedIdeaRead(BaseModel):
+    topic: str
+    demand_score: int
+    saturation_risk: str
+    rationale: str
+    signals: dict
+
+
+class PerformanceLearningRead(BaseModel):
+    has_signal: bool
+    sample_size: int
+    strong_count: int
+    weak_count: int
+    proven_keywords: list[str]
+    avoid_keywords: list[str]
+    preferred_content_type: str | None
+    note: str
+
+
+class RankIdeasResult(BaseModel):
+    niche_lane: str
+    query: str
+    live_signal_used: bool
+    note: str
+    ideas: list[RankedIdeaRead]
+    performance_learning: PerformanceLearningRead | None = None
+
+
+@router.post("/rank-ideas", response_model=RankIdeasResult)
+def rank_ideas(payload: RankIdeasRequest, db: Session = Depends(get_db)) -> RankIdeasResult:
+    """Rank candidate video topics by estimated demand vs. saturation.
+
+    Deterministic. Works with no API key (keyword/lane heuristic) and uses real
+    YouTube source signals when ``use_live_sources`` is set and a key exists.
+    When ``channel_id`` is provided, the channel's own published-video metrics
+    bias the ranking toward proven angles (the performance feedback loop).
+    These are research suggestions only — they create nothing and bypass no gate.
+    """
+    niche_lane = payload.niche_lane.strip() or "operator workflow"
+    query = payload.query.strip()
+
+    source_videos: list = []
+    live_signal_used = False
+    note = "Scored from lane/query keyword fit (no live source signal)."
+
+    if payload.use_live_sources and query:
+        api_key = _resolve_youtube_api_key()
+        if api_key:
+            try:
+                source_videos, _ = fetch_youtube_sources(
+                    api_key=api_key,
+                    query=query,
+                    max_results=payload.max_results,
+                )
+                if source_videos:
+                    live_signal_used = True
+                    note = f"Scored using {len(source_videos)} live YouTube source(s)."
+                else:
+                    note = "Live research returned no sources; scored from keyword fit."
+            except (ResearchSetupRequiredError, ResearchFetchError) as exc:
+                note = f"Live research unavailable ({exc}); scored from keyword fit."
+
+    candidates = [t.strip() for t in payload.candidate_topics if t.strip()]
+    if not candidates:
+        candidates = suggest_candidate_topics(
+            niche_lane=niche_lane,
+            query=query,
+            source_videos=source_videos,
+            limit=payload.max_results,
+        )
+
+    learning: PerformanceLearningSignal | None = None
+    proven_keywords: set[str] = set()
+    avoid_keywords: set[str] = set()
+    if payload.channel_id is not None:
+        learning = build_performance_learning_signal(db, channel_id=payload.channel_id)
+        proven_keywords = set(learning.proven_keywords)
+        avoid_keywords = set(learning.avoid_keywords)
+        if learning.has_signal:
+            note = f"{note} {learning.note}"
+
+    ranked = score_ideas(
+        niche_lane=niche_lane,
+        query=query,
+        candidate_topics=candidates,
+        source_videos=source_videos,
+        proven_keywords=proven_keywords,
+        avoid_keywords=avoid_keywords,
+    )
+
+    return RankIdeasResult(
+        niche_lane=niche_lane,
+        query=query,
+        live_signal_used=live_signal_used,
+        note=note,
+        ideas=[
+            RankedIdeaRead(
+                topic=idea.topic,
+                demand_score=idea.demand_score,
+                saturation_risk=idea.saturation_risk,
+                rationale=idea.rationale,
+                signals=idea.signals,
+            )
+            for idea in ranked
+        ],
+        performance_learning=(
+            PerformanceLearningRead(
+                has_signal=learning.has_signal,
+                sample_size=learning.sample_size,
+                strong_count=learning.strong_count,
+                weak_count=learning.weak_count,
+                proven_keywords=learning.proven_keywords,
+                avoid_keywords=learning.avoid_keywords,
+                preferred_content_type=learning.preferred_content_type,
+                note=learning.note,
+            )
+            if learning is not None
+            else None
+        ),
+    )
+
+
+class ProduceBatchRequest(BaseModel):
+    channel_id: int
+    niche_lane: str = Field(default="operator workflow", max_length=240)
+    query: str = Field(default="", max_length=240)
+    count: int = Field(default=5, ge=1, le=25)
+    content_type: str = Field(default="long")
+    use_live_sources: bool = True
+    use_performance_learning: bool = True
+
+
+class ProducedVideoRead(BaseModel):
+    video_id: int
+    title: str
+    demand_score: int
+    saturation_risk: str
+    asset_count: int
+
+
+class ProduceBatchResult(BaseModel):
+    channel_id: int
+    requested: int
+    produced: int
+    live_signal_used: bool
+    note: str
+    videos: list[ProducedVideoRead]
+
+
+@router.post("/produce-batch", response_model=ProduceBatchResult)
+def produce_batch(payload: ProduceBatchRequest, db: Session = Depends(get_db)) -> ProduceBatchResult:
+    """Produce a demand-ranked batch of review-ready videos with full text assets.
+
+    Combines demand ranking (live YouTube signals when a key is configured) with
+    the channel's own performance learning, then generates monetized descriptions
+    and every other text asset. Each video lands in ``needs_review`` — nothing is
+    rendered, published, or uploaded. The human review gate is preserved.
+    """
+    channel = db.get(Channel, payload.channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    niche_lane = payload.niche_lane.strip() or "operator workflow"
+    query = payload.query.strip()
+    content_type = ContentType.short if payload.content_type.strip().lower() == "short" else ContentType.long
+
+    source_videos: list = []
+    if payload.use_live_sources and query:
+        api_key = _resolve_youtube_api_key()
+        if api_key:
+            try:
+                source_videos, _ = fetch_youtube_sources(api_key=api_key, query=query, max_results=payload.count)
+            except (ResearchSetupRequiredError, ResearchFetchError):
+                source_videos = []
+
+    proven_keywords: set[str] = set()
+    avoid_keywords: set[str] = set()
+    if payload.use_performance_learning:
+        learning = build_performance_learning_signal(db, channel_id=payload.channel_id)
+        proven_keywords = set(learning.proven_keywords)
+        avoid_keywords = set(learning.avoid_keywords)
+
+    result = produce_content_batch(
+        db,
+        channel_id=payload.channel_id,
+        niche_lane=niche_lane,
+        query=query,
+        count=payload.count,
+        source_videos=source_videos,
+        content_type=content_type,
+        proven_keywords=proven_keywords,
+        avoid_keywords=avoid_keywords,
+    )
+
+    log_audit_event(
+        db,
+        "content_batch_produced",
+        f"Produced {result.produced} review-ready video(s) for channel {payload.channel_id}",
+        metadata={
+            "channel_id": payload.channel_id,
+            "requested": result.requested,
+            "produced": result.produced,
+            "live_signal_used": result.live_signal_used,
+            "video_ids": [v.video_id for v in result.videos],
+        },
+    )
+
+    return ProduceBatchResult(
+        channel_id=result.channel_id,
+        requested=result.requested,
+        produced=result.produced,
+        live_signal_used=result.live_signal_used,
+        note=result.note,
+        videos=[
+            ProducedVideoRead(
+                video_id=v.video_id,
+                title=v.title,
+                demand_score=v.demand_score,
+                saturation_risk=v.saturation_risk,
+                asset_count=v.asset_count,
+            )
+            for v in result.videos
+        ],
     )
