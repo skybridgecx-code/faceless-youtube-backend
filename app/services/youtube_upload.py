@@ -48,6 +48,35 @@ class UploadResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def oauth_client_config(client_id: str, client_secret: str) -> dict:
+    """Build the installed-app OAuth client config for the consent flow.
+
+    Matches the shape google-auth-oauthlib expects from
+    ``InstalledAppFlow.from_client_config``.
+    """
+    return {
+        "installed": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": TOKEN_URI,
+            "redirect_uris": ["http://localhost"],
+        }
+    }
+
+
+def build_oauth_env_snippet(client_id: str, client_secret: str, refresh_token: str) -> str:
+    """Return the exact .env lines to paste after a successful consent flow."""
+    return "\n".join(
+        [
+            "ENABLE_YOUTUBE_UPLOADS=true",
+            f"YOUTUBE_OAUTH_CLIENT_ID={client_id}",
+            f"YOUTUBE_OAUTH_CLIENT_SECRET={client_secret}",
+            f"YOUTUBE_OAUTH_REFRESH_TOKEN={refresh_token}",
+        ]
+    )
+
+
 def _missing_credentials(settings: Settings) -> list[str]:
     missing: list[str] = []
     if not (getattr(settings, "youtube_oauth_client_id", "") or "").strip():
