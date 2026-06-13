@@ -13,7 +13,12 @@ from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Video  # noqa: E402
 from app.services.youtube import YouTubePayload  # noqa: E402
-from app.services.youtube_upload import upload_private_video  # noqa: E402
+from app.services.youtube_upload import (  # noqa: E402
+    YOUTUBE_UPLOAD_SCOPE,
+    build_oauth_env_snippet,
+    oauth_client_config,
+    upload_private_video,
+)
 
 
 def _reset_db() -> None:
@@ -90,6 +95,48 @@ def test_upload_always_forces_private(tmp_path) -> None:  # type: ignore[no-unty
     # Without google libs installed this lands on setup_required, but privacy is always private.
     assert result.privacy_status == "private"
     assert result.status in {"uploaded", "setup_required", "error"}
+
+
+def test_oauth_client_config_shape() -> None:
+    cfg = oauth_client_config("cid", "secret")
+    assert cfg["installed"]["client_id"] == "cid"
+    assert cfg["installed"]["client_secret"] == "secret"
+    assert "token_uri" in cfg["installed"]
+    assert cfg["installed"]["auth_uri"].startswith("https://")
+
+
+def test_build_oauth_env_snippet() -> None:
+    snippet = build_oauth_env_snippet("cid", "secret", "refresh123")
+    assert "ENABLE_YOUTUBE_UPLOADS=true" in snippet
+    assert "YOUTUBE_OAUTH_CLIENT_ID=cid" in snippet
+    assert "YOUTUBE_OAUTH_CLIENT_SECRET=secret" in snippet
+    assert "YOUTUBE_OAUTH_REFRESH_TOKEN=refresh123" in snippet
+
+
+def test_upload_scope_is_upload_only() -> None:
+    # Least privilege: the setup flow must request only the upload scope.
+    assert YOUTUBE_UPLOAD_SCOPE == "https://www.googleapis.com/auth/youtube.upload"
+
+
+def test_oauth_setup_script_requires_credentials(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import importlib.util
+    from pathlib import Path
+
+    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_SECRET", raising=False)
+
+    script_path = Path(__file__).resolve().parent.parent / "scripts" / "youtube_oauth_setup.py"
+    spec = importlib.util.spec_from_file_location("youtube_oauth_setup", script_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # argparse calls sys.exit(2) when required credentials are absent.
+    try:
+        module.main([])
+        assert False, "expected SystemExit"
+    except SystemExit as exc:
+        assert exc.code == 2
 
 
 def test_endpoint_blocks_unapproved_video() -> None:
