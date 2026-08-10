@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "product": "autonomous-youtube-studio",
+  "architecture_status": "target_during_controlled_migration",
+  "deployment": "modular-monolith",
+  "i0_baseline": {
+    "repository": "Aatifshow33/faceless-youtube-backend",
+    "branch": "youmo-clone-v2",
+    "sha": "3f270573d2786762123e9d11239f65a6c4d2061a",
+    "shared_historical_anchor": "5afebd93b98e6b65ccec41da036ad1ec972dc517"
+  },
+  "historical_blueprint_audit": {
+    "repository": "skybridgecx-code/faceless-youtube-backend",
+    "branch": "youmo-clone-v2",
+    "sha": "20c30309d30a93bda9474c10c28f81cf237b733f",
+    "status": "historical_repository_state_only"
+  },
+  "runtime_stages": [
+    "topic",
+    "research",
+    "script",
+    "storyboard",
+    "media",
+    "assembly",
+    "machine_qa",
+    "private_upload",
+    "human_approval",
+    "release"
+  ],
+  "hard_invariants": [
+    "no_public_release_without_hash_bound_human_approval",
+    "no_unsupported_material_claims",
+    "no_unknown_rights_media",
+    "no_provider_direct_state_mutation",
+    "analytics_cannot_mutate_policy",
+    "hard_gate_failure_cannot_be_overridden_by_soft_score",
+    "accepted_artifacts_are_immutable",
+    "all_retries_time_and_cost_are_bounded"
+  ],
+  "provider_boundaries": [
+    "llm",
+    "video_generation",
+    "tts",
+    "youtube"
+  ],
+  "forbidden_v1": [
+    "microservices",
+    "celery",
+    "redis",
+    "kafka",
+    "temporal_cluster",
+    "dynamic_agent_swarms",
+    "self_modifying_prompts",
+    "auto_public_release",
+    "multi_channel_tenancy"
+  ],
+  "migration_rules": [
+    "evolve_existing_repository",
+    "preserve_legacy_until_shadow_cutover",
+    "canonical_campaign_becomes_single_content_root",
+    "canonical_artifacts_are_content_addressed",
+    "gate_decisions_are_immutable",
+    "legacy_removal_requires_i8_shadow_gate",
+    "architecture_changes_require_lock_version_change"
+  ],
+  "current_state_at_i0": {
+    "alembic_present": true,
+    "startup_schema_mutation_present": true,
+    "private_youtube_upload_path_present": true,
+    "campaign_root_present": false,
+    "dbos_workflow_present": false,
+    "hash_bound_release_approval_present": false
+  }
+}
