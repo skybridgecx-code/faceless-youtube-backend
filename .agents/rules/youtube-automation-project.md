@@ -14,7 +14,8 @@ Before implementation, read and obey:
 
 1. `architecture.lock.json`
 2. `ARCHITECTURE.md`
-3. the current phase acceptance criteria
+3. `COMMERCIAL_SUCCESS.md`
+4. the current phase acceptance criteria
 
 The I0 implementation baseline is:
 
@@ -54,6 +55,10 @@ v1 excludes sensitive health, finance, elections/politics, war/conflict, and leg
 - Hard gate failures cannot be overridden by model scores.
 - Accepted artifacts are immutable.
 - All loops, retries, wall time, and cost are bounded.
+- Commercial scores never override deterministic truth, rights, or safety gates.
+- Do not optimize views, revenue, or upload volume without the locked constraints.
+- Sponsor economics cannot influence editorial claims or conclusions.
+- Analytics may recommend but may not self-modify policy.
 
 ## v1 infrastructure constraints
 

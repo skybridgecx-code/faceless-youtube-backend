@@ -12,8 +12,9 @@ The architecture is governed in this order:
 
 1. `architecture.lock.json` — machine-testable architecture contract.
 2. `ARCHITECTURE.md` — human-readable architecture and migration rules.
-3. Phase-specific implementation plan and acceptance criteria.
-4. `README.md` — operator-facing current-state documentation.
+3. `COMMERCIAL_SUCCESS.md` — commercial and editorial-success architecture specification.
+4. Phase-specific implementation plan and acceptance criteria.
+5. `README.md` — operator-facing current-state documentation.
 
 If a lower-level document conflicts with the lock or this architecture document, stop and resolve the conflict before implementation.
 
@@ -136,6 +137,14 @@ Analytics may not automatically mutate:
 - safety rules,
 - budget caps.
 
+### 4.9 Commercial optimization is constrained
+
+Automation is operational leverage, not the product objective. The product optimizes for long-term viewer value and sustainable campaign economics only within the locked editorial, truth, sourceability, rights, media-integrity, safety, brand-consistency, non-repetition, bounded-retry/time/cost, deterministic-gate, and hash-bound human-approval constraints.
+
+Commercial scoring cannot override a hard gate. The system must not autonomously optimize unconstrained views, revenue, or upload volume; production volume is subordinate to quality and viewer satisfaction. Sponsor economics are isolated from editorial claims and conclusions. Analytics may recommend learning artifacts, but remains recommendation-only and may not self-modify policy.
+
+`COMMERCIAL_SUCCESS.md` is authoritative for the commercial-success contract below this document and above phase-specific implementation criteria.
+
 ## 5. Target runtime stages
 
 The locked runtime sequence is:
@@ -206,17 +215,17 @@ Therefore the old blueprint phase named “add Alembic” is superseded. The mig
 - **I1 — Governance Lock:** architecture files, lock test, README direction, replacement agent rule. No runtime/schema behavior changes.
 - **I2 — Migration Reconciliation and Canonical Core Schema:** reconcile existing Alembic, migrate fresh/current DB copies, introduce canonical tables alongside legacy state, then remove ad-hoc startup DDL only when proven safe.
 - **I3 — Durable Workflow and Gate Engine on Stub Providers.**
-- **I4 — Topic, Research, Claims, and Script.**
-- **I5 — Storyboard, video-provider adapter, TTS, deterministic render.**
-- **I6 — Machine QA and one-touch approval UI.**
-- **I7 — Private upload, hash-bound release, analytics.**
+- **I4 — Topic, Research, Claims, and Script + commercial topic intelligence, Viewer Promise, narrative engineering.**
+- **I5 — Storyboard, video-provider adapter, TTS, deterministic render + retention-oriented visual selection.**
+- **I6 — Machine QA, hook/packaging QA, one-touch approval UI.**
+- **I7 — Private upload, hash-bound release, analytics + campaign economics.**
 - **I8 — Three real private shadow campaigns.**
 - **I9 — Legacy removal.**
 - **I10 — Scale only when triggered.**
 
 ## 10. Change control
 
-Any change to runtime stages, hard invariants, forbidden v1 infrastructure, publication safety, provider boundaries, or migration-removal gates requires:
+Any change to runtime stages, hard invariants, forbidden v1 infrastructure, publication safety, provider boundaries, migration-removal gates, the locked commercial optimization objective, sponsor/editorial separation, or phase commercial requirements requires:
 
 1. an explicit `schema_version` increment in `architecture.lock.json`,
 2. corresponding updates to this document,

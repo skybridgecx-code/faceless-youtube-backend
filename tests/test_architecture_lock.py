@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "architecture.lock.json"
 ARCH_PATH = ROOT / "ARCHITECTURE.md"
 AGENT_RULE_PATH = ROOT / ".agents" / "rules" / "youtube-automation-project.md"
+COMMERCIAL_SUCCESS_PATH = ROOT / "COMMERCIAL_SUCCESS.md"
 README_PATH = ROOT / "README.md"
 REQUIREMENTS_PATH = ROOT / "requirements.txt"
 
@@ -31,6 +32,11 @@ REQUIRED_INVARIANTS = {
     "hard_gate_failure_cannot_be_overridden_by_soft_score",
     "accepted_artifacts_are_immutable",
     "all_retries_time_and_cost_are_bounded",
+    "commercial_scores_cannot_override_truth_rights_or_safety_gates",
+    "no_unconstrained_view_or_revenue_maximization",
+    "sponsor_economics_cannot_influence_editorial_claims_or_conclusions",
+    "production_volume_is_not_primary_optimization_target",
+    "controlled_editorial_exploration_is_required",
 }
 
 REQUIRED_FORBIDDEN_V1 = {
@@ -53,7 +59,7 @@ def load_lock() -> dict[str, object]:
 def test_architecture_lock_identity_and_baseline() -> None:
     lock = load_lock()
 
-    assert lock["schema_version"] == 1
+    assert lock["schema_version"] == 2
     assert lock["product"] == "autonomous-youtube-studio"
     assert lock["architecture_status"] == "target_during_controlled_migration"
     assert lock["deployment"] == "modular-monolith"
@@ -80,6 +86,59 @@ def test_architecture_lock_runtime_and_safety_contract() -> None:
     assert set(lock["forbidden_v1"]) >= REQUIRED_FORBIDDEN_V1
 
 
+def test_commercial_success_contract() -> None:
+    commercial = load_lock()["commercial_success_contract"]
+
+    assert commercial["north_star"] == (
+        "maximize_long_term_viewer_value_and_sustainable_campaign_economics_"
+        "subject_to_hard_invariants"
+    )
+    assert commercial["primary_metric_priority"] == [
+        "viewer_satisfaction",
+        "watch_time_and_retention",
+        "qualified_click_appeal",
+        "returning_viewer_growth",
+        "subscriber_conversion",
+        "revenue_per_campaign",
+        "production_efficiency",
+    ]
+    assert commercial["forbidden_autonomous_objectives"] == [
+        "maximize_views_unconstrained",
+        "maximize_revenue_unconstrained",
+        "maximize_upload_volume",
+    ]
+    assert commercial["phase_requirements"] == {
+        "I4": [
+            "commercial_topic_ranking",
+            "viewer_promise",
+            "narrative_engineering",
+            "narrator_editorial_identity",
+        ],
+        "I5": [
+            "retention_oriented_visual_selection",
+            "visual_mode_diversity",
+            "bounded_generated_media",
+            "meaningful_visual_progression",
+        ],
+        "I6": [
+            "first_30_seconds_hook_qa",
+            "multiple_distinct_packaging_concepts",
+            "packaging_truth_gate",
+            "thumbnail_readability_and_hierarchy",
+        ],
+        "I7": [
+            "audience_learning",
+            "campaign_unit_economics",
+            "performance_snapshots",
+            "analytics_nonmutation",
+        ],
+    }
+    assert commercial["first_meaningful_public_evaluation_campaigns"] == 10
+    assert commercial["controlled_exploration_required"] is True
+    assert commercial["sponsors_separated_from_editorial_reasoning"] is True
+    assert commercial["analytics_may_recommend_but_not_self_modify"] is True
+
+
 def test_current_state_reconciliation_is_explicit() -> None:
     current = load_lock()["current_state_at_i0"]
 
@@ -94,15 +153,20 @@ def test_current_state_reconciliation_is_explicit() -> None:
 def test_governance_documents_exist_and_old_niche_rule_is_retired() -> None:
     assert ARCH_PATH.is_file()
     assert AGENT_RULE_PATH.is_file()
+    assert COMMERCIAL_SUCCESS_PATH.is_file()
     assert README_PATH.is_file()
 
     architecture_text = ARCH_PATH.read_text(encoding="utf-8")
     agent_text = AGENT_RULE_PATH.read_text(encoding="utf-8")
+    commercial_text = COMMERCIAL_SUCCESS_PATH.read_text(encoding="utf-8")
     readme_text = README_PATH.read_text(encoding="utf-8")
 
     assert "Autonomous YouTube Studio" in architecture_text
     assert "Autonomous YouTube Studio" in agent_text
+    assert "Autonomous YouTube Studio" in commercial_text
     assert "Autonomous YouTube Studio" in readme_text
+    assert "COMMERCIAL_SUCCESS.md" in architecture_text
+    assert "COMMERCIAL_SUCCESS.md" in agent_text
 
     assert "AI automation for local service businesses." not in agent_text
     assert "YOUTUBE_AUTOMATION_PROJECT_INSTRUCTIONS.md" not in agent_text

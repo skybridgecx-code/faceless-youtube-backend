@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "product": "autonomous-youtube-studio",
   "architecture_status": "target_during_controlled_migration",
   "deployment": "modular-monolith",
@@ -35,8 +35,60 @@
     "analytics_cannot_mutate_policy",
     "hard_gate_failure_cannot_be_overridden_by_soft_score",
     "accepted_artifacts_are_immutable",
-    "all_retries_time_and_cost_are_bounded"
+    "all_retries_time_and_cost_are_bounded",
+    "commercial_scores_cannot_override_truth_rights_or_safety_gates",
+    "no_unconstrained_view_or_revenue_maximization",
+    "sponsor_economics_cannot_influence_editorial_claims_or_conclusions",
+    "production_volume_is_not_primary_optimization_target",
+    "controlled_editorial_exploration_is_required"
   ],
+  "commercial_success_contract": {
+    "north_star": "maximize_long_term_viewer_value_and_sustainable_campaign_economics_subject_to_hard_invariants",
+    "primary_metric_priority": [
+      "viewer_satisfaction",
+      "watch_time_and_retention",
+      "qualified_click_appeal",
+      "returning_viewer_growth",
+      "subscriber_conversion",
+      "revenue_per_campaign",
+      "production_efficiency"
+    ],
+    "forbidden_autonomous_objectives": [
+      "maximize_views_unconstrained",
+      "maximize_revenue_unconstrained",
+      "maximize_upload_volume"
+    ],
+    "phase_requirements": {
+      "I4": [
+        "commercial_topic_ranking",
+        "viewer_promise",
+        "narrative_engineering",
+        "narrator_editorial_identity"
+      ],
+      "I5": [
+        "retention_oriented_visual_selection",
+        "visual_mode_diversity",
+        "bounded_generated_media",
+        "meaningful_visual_progression"
+      ],
+      "I6": [
+        "first_30_seconds_hook_qa",
+        "multiple_distinct_packaging_concepts",
+        "packaging_truth_gate",
+        "thumbnail_readability_and_hierarchy"
+      ],
+      "I7": [
+        "audience_learning",
+        "campaign_unit_economics",
+        "performance_snapshots",
+        "analytics_nonmutation"
+      ]
+    },
+    "first_meaningful_public_evaluation_campaigns": 10,
+    "controlled_exploration_required": true,
+    "sponsors_separated_from_editorial_reasoning": true,
+    "analytics_may_recommend_but_not_self_modify": true
+  },
   "provider_boundaries": [
     "llm",
     "video_generation",
