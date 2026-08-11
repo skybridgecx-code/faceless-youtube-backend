@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .build_cli import main as build_main
-from .config import ProjectConfigError, load_project_config
+from .config import ProjectConfig, ProjectConfigError, load_project_config
 from .doctor import diagnose_workspace
 from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
+from .promotion import PromotionCheckError, _load_publish_evidence
 from .promotion_cli import main as promotion_check_main
+from .publish import PublishError, prepare_publish
 from .publish_cli import main as publish_main
 from .resume_cli import main as resume_main
 from .run_manifest import RunManifest, RunManifestError, load_run_manifest
@@ -175,7 +177,7 @@ def _dry_run_new(
         return rc
     target_index = _TARGET_RANK[args.until]
     planned = list(_TARGETS[:target_index])
-    print(f"FLOW_MODE=DRY_RUN")
+    print("FLOW_MODE=DRY_RUN")
     print(f"FLOW_PLAN={'>'.join(name.upper().replace('-', '_') for name in planned)}")
     print(f"FLOW_MAX_STEPS={args.max_steps}")
     print("RUN_MANIFEST=NOT_CREATED")
@@ -189,7 +191,7 @@ def _dry_run_new(
 
 def _safe_existing_state(
     control_root: Path,
-    config: object,
+    config: ProjectConfig,
     manifest: RunManifest,
 ) -> str:
     diagnosis = diagnose_workspace(control_root, config, Path(manifest.workspace))
@@ -210,9 +212,45 @@ def _safe_existing_state(
     return diagnosis.state
 
 
+def _verify_state_after_step(
+    control_root: Path,
+    config: ProjectConfig,
+    run_id: str,
+    expected_states: set[str],
+    label: str,
+) -> tuple[RunManifest, str]:
+    try:
+        manifest = load_run_manifest(control_root, config, run_id)
+    except RunManifestError as exc:
+        raise FlowError(f"{label} post-step run verification failed: {exc}") from exc
+    state = _safe_existing_state(control_root, config, manifest)
+    if state not in expected_states:
+        raise FlowError(
+            f"{label} returned success but journal/doctor state is {state!r}; "
+            f"expected one of {sorted(expected_states)!r}"
+        )
+    return manifest, state
+
+
+def _verify_published(
+    control_root: Path,
+    config: ProjectConfig,
+    run_id: str,
+) -> None:
+    try:
+        _load_publish_evidence(control_root, config, run_id)
+        plan = prepare_publish(control_root, config, run_id, allow_fetch=True)
+    except (PromotionCheckError, PublishError) as exc:
+        raise FlowError(f"publish post-step verification failed: {exc}") from exc
+    if plan.mode != "ALREADY_PUBLISHED":
+        raise FlowError(
+            f"publish returned success but remote candidate is not exact: mode={plan.mode}"
+        )
+
+
 def _dry_run_existing(
     control_root: Path,
-    config: object,
+    config: ProjectConfig,
     manifest: RunManifest,
     target: str,
 ) -> int:
@@ -268,18 +306,21 @@ def _build_new(
 
 
 def _resume_once(control_root: Path, project: str, run_id: str, subject: str) -> int:
-    argv = [
-        "--repo",
-        str(control_root),
-        "--project",
-        project,
-        "--run-id",
-        run_id,
-        "--subject",
-        subject,
-        "--execute",
-    ]
-    rc, _, _ = _invoke("RESUME_NEXT_GATE", resume_main, argv)
+    rc, _, _ = _invoke(
+        "RESUME_NEXT_GATE",
+        resume_main,
+        [
+            "--repo",
+            str(control_root),
+            "--project",
+            project,
+            "--run-id",
+            run_id,
+            "--subject",
+            subject,
+            "--execute",
+        ],
+    )
     return rc
 
 
@@ -347,7 +388,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     steps = 0
     run_id = args.run_id
     if args.workspace:
-        rc, run_id = _build_new(control_state.root, args.project, args)
+        try:
+            rc, run_id = _build_new(control_state.root, args.project, args)
+        except FlowError as exc:
+            print(f"STOP: build flow integration failed: {exc}", file=sys.stderr)
+            return 15
         steps += 1
         if run_id is None:
             print("STOP: build did not produce a recoverable run id", file=sys.stderr)
@@ -355,6 +400,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if rc != 0:
             _print_boundary(run_id, args.until, steps, detail="build stopped the flow")
             return rc
+        try:
+            _verify_state_after_step(
+                control_state.root,
+                config,
+                run_id,
+                {"READY_FOR_AUDIT"},
+                "build",
+            )
+        except FlowError as exc:
+            print(f"STOP: {exc}", file=sys.stderr)
+            _print_boundary(run_id, args.until, steps, detail="build post-step proof failed")
+            return 15
         if args.until == "build":
             _print_boundary(run_id, args.until, steps, detail="requested build boundary reached")
             return 0
@@ -379,6 +436,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             if rc != 0:
                 _print_boundary(run_id, args.until, steps, detail="audit stopped the flow")
                 return rc
+            try:
+                _verify_state_after_step(
+                    control_state.root,
+                    config,
+                    run_id,
+                    {"READY_FOR_CHECKPOINT"},
+                    "audit",
+                )
+            except FlowError as exc:
+                print(f"STOP: {exc}", file=sys.stderr)
+                _print_boundary(run_id, args.until, steps, detail="audit post-step proof failed")
+                return 15
             if args.until == "audit":
                 _print_boundary(run_id, args.until, steps, detail="requested audit boundary reached")
                 return 0
@@ -390,6 +459,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             if rc != 0:
                 _print_boundary(run_id, args.until, steps, detail="checkpoint stopped the flow")
                 return rc
+            try:
+                _verify_state_after_step(
+                    control_state.root,
+                    config,
+                    run_id,
+                    {"CHECKPOINTED_CLEAN"},
+                    "checkpoint",
+                )
+            except FlowError as exc:
+                print(f"STOP: {exc}", file=sys.stderr)
+                _print_boundary(run_id, args.until, steps, detail="checkpoint post-step proof failed")
+                return 15
             if args.until == "checkpoint":
                 _print_boundary(run_id, args.until, steps, detail="requested checkpoint boundary reached")
                 return 0
@@ -404,6 +485,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if rc != 0:
                 _print_boundary(run_id, args.until, steps, detail="noncanonical publication stopped the flow")
                 return rc
+            try:
+                _verify_published(control_state.root, config, run_id)
+            except FlowError as exc:
+                print(f"STOP: {exc}", file=sys.stderr)
+                _print_boundary(run_id, args.until, steps, detail="publish post-step proof failed")
+                return 15
             if args.until == "publish":
                 _print_boundary(run_id, args.until, steps, detail="requested publish boundary reached")
                 return 0
