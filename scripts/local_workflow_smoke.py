@@ -86,6 +86,10 @@ def run_smoke() -> SmokeContext:
     ctx = _prepare_isolated_environment()
     steps = StepPrinter()
 
+    from scripts.migrate_db import upgrade_database
+
+    upgrade_database(os.environ["DATABASE_URL"])
+
     from fastapi.testclient import TestClient
 
     import app.main as main_module

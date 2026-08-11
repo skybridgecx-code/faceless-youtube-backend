@@ -12,6 +12,7 @@ from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import AssetType, ContentAsset  # noqa: E402
 from app.services.retention import analyze_script, retention_prompt_guidance  # noqa: E402
+from tests.db_helpers import reset_migrated_test_database  # noqa: E402
 
 STRONG_LONG_SCRIPT = """## 0:00 Hook
 Most contractors lose money on the phone, and you probably do too. But here's
@@ -32,8 +33,7 @@ WEAK_SCRIPT = "Today we talk about some stuff. It is fine. The thing is okay. Th
 
 
 def _reset_db() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_migrated_test_database()
 
 
 def test_strong_script_scores_higher_than_weak() -> None:

@@ -19,11 +19,11 @@ from app.services.youtube_upload import (  # noqa: E402
     oauth_client_config,
     upload_private_video,
 )
+from tests.db_helpers import reset_migrated_test_database  # noqa: E402
 
 
 def _reset_db() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_migrated_test_database()
 
 
 def _payload() -> YouTubePayload:

@@ -12,11 +12,11 @@ from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import AssetType, ContentAsset, Video, VideoStatus  # noqa: E402
 from app.services.batch_production import produce_content_batch  # noqa: E402
+from tests.db_helpers import reset_migrated_test_database  # noqa: E402
 
 
 def _reset_db() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_migrated_test_database()
 
 
 def _make_channel(client: TestClient, name: str) -> int:

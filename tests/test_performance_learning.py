@@ -13,11 +13,11 @@ from app.main import app  # noqa: E402
 from app.models import Channel, ContentType, Video, VideoPerformanceMetric  # noqa: E402
 from app.services.idea_demand import score_ideas  # noqa: E402
 from app.services.performance_feedback import build_performance_learning_signal  # noqa: E402
+from tests.db_helpers import reset_migrated_test_database  # noqa: E402
 
 
 def _reset_db() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_migrated_test_database()
 
 
 def _seed_channel_with_metrics() -> int:

@@ -15,12 +15,12 @@ from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import VisualAssetPlan, VisualGeneratedAsset, VisualScene  # noqa: E402
 from app.security import InMemoryRateLimiter  # noqa: E402
+from tests.db_helpers import reset_migrated_test_database  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def reset_test_db() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_migrated_test_database()
     main_module.rate_limiter = InMemoryRateLimiter()
     main_module.settings.internal_api_key = None
     output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()

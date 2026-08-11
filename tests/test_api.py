@@ -26,11 +26,11 @@ from app.models import AuditEvent, ContentAgent, ContentType, PublishRecord, Vid
 from app.services.agents import seed_default_agents_if_empty  # noqa: E402
 from app.services.research import SourceChannel, SourceVideo, build_research_patterns, build_research_strategy  # noqa: E402
 from app.security import InMemoryRateLimiter  # noqa: E402
+from tests.db_helpers import reset_migrated_test_database  # noqa: E402
 
 
 def setup_function() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    reset_migrated_test_database()
     main_module.rate_limiter = InMemoryRateLimiter()
     output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
     if output_dir.exists():
@@ -2900,9 +2900,15 @@ def test_default_agent_seeding_twice_does_not_create_duplicates() -> None:
         db.close()
 
 
-def test_init_db_seed_flow_twice_does_not_create_duplicates() -> None:
+def test_init_db_is_read_only_when_database_is_already_migrated() -> None:
     client = TestClient(app)
     channel_id = client.post("/channels", json={"name": "Agent InitDb Idempotent Channel"}).json()["id"]
+
+    db = SessionLocal()
+    try:
+        before = len(list(db.scalars(select(ContentAgent).where(ContentAgent.channel_id == channel_id))))
+    finally:
+        db.close()
 
     init_db()
     init_db()
@@ -2914,7 +2920,7 @@ def test_init_db_seed_flow_twice_does_not_create_duplicates() -> None:
                 select(ContentAgent).where(ContentAgent.channel_id == channel_id).order_by(ContentAgent.id.asc())
             )
         )
-        assert len(channel_agents) == 7
+        assert len(channel_agents) == before == 7
 
         normalized_pairs = {(
             " ".join(agent.name.lower().split()),
