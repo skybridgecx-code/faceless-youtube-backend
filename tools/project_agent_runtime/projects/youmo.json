@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "project_id": "youmo",
+  "display_name": "YouMo Autonomous YouTube Studio",
+  "repository": "skybridgecx-code/faceless-youtube-backend",
+  "canonical_branch": "youmo-clone-v2",
+  "allowed_branch_prefixes": [
+    "phase/",
+    "fix/",
+    "audit/",
+    "tooling/"
+  ],
+  "architecture_lock": "architecture.lock.json",
+  "architecture_sources": [
+    "ARCHITECTURE.md",
+    "COMMERCIAL_SUCCESS.md",
+    ".agents/rules/youtube-automation-project.md"
+  ],
+  "state_dir": ".youmo"
+}
