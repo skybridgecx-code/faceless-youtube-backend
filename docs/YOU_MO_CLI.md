@@ -4,24 +4,40 @@ The YouMo CLI is a project-scoped Codex engineering runtime for the Autonomous Y
 
 ## Current audited scope
 
-I0 established deterministic repository identity, branch/worktree preflight, architecture authority hashing, and compact context capsules.
+### I0 — deterministic project preflight
 
-I1 adds the official OpenAI Codex Python SDK boundary without enabling write-capable agent execution:
+I0 established repository identity, branch/worktree preflight, architecture authority hashing, and compact context capsules.
+
+### I1 — guarded Codex SDK transport
+
+I1 added the official OpenAI Codex Python SDK boundary without enabling write-capable agent execution:
 
 - tooling dependencies live in `requirements-youmo-cli.txt`, separate from production dependencies;
 - SDK loading is lazy and `doctor` does not start Codex;
 - `plan --execute` is explicitly opt-in and read-only;
-- the Codex thread ID and architecture/HEAD binding are persisted under ignored `.youmo/` state;
-- a saved thread is rejected when repository HEAD or `architecture.lock.json` changes unless a fresh thread is explicitly requested;
-- `build` remains non-writing until the isolated execution-workspace phase is implemented and audited;
-- the transport refuses the SDK `full_access` sandbox.
+- Codex thread state is bound to the current Git HEAD and architecture-lock SHA-256;
+- `full_access` sandbox requests are rejected;
+- normal planning/implementation policy is `gpt-5.6-terra` with `high` reasoning;
+- independent semantic-audit policy is `gpt-5.6-sol` with `high` reasoning.
 
-## Model policy
+### I2 — physically isolated executor workspace
 
-- planning / normal implementation: `gpt-5.6-terra`, reasoning `high`;
-- independent semantic audit: `gpt-5.6-sol`, reasoning `high`.
+I2 makes future write-capable execution independent from the operator/Desktop checkout.
 
-The model policy is stored in the YouMo manifest so it is deterministic and reviewable.
+An executor workspace must:
+
+- live completely outside the control repository tree;
+- be a separate clone, never a Git worktree;
+- own its `.git` directory and Git common directory;
+- have no Git object alternates/shared object store;
+- use the canonical YouMo GitHub repository as `origin`;
+- use a non-canonical execution branch with an allowed prefix;
+- start from an exact 40-character base commit SHA;
+- be clean and have an empty index before execution;
+- contain an internal marker bound to project, branch, and base SHA;
+- match a controller-side registry entry stored outside the repository.
+
+The real YouMo manifest stores controller state at `~/.youmo/state`, so planning/workspace metadata does not mutate the YouTube checkout.
 
 ## Setup
 
@@ -30,9 +46,9 @@ python -m pip install -r requirements-youmo-cli.txt
 ./scripts/youmo doctor
 ```
 
-`doctor` only checks the installed SDK version against the pinned requirement. It does not launch a Codex process.
+`doctor` checks the installed SDK version against the pinned requirement. It does not launch a Codex process.
 
-## Safe commands
+## Non-executing commands
 
 ```bash
 ./scripts/youmo status
@@ -43,18 +59,33 @@ python -m pip install -r requirements-youmo-cli.txt
 ./scripts/youmo plan
 ```
 
-`plan` without `--execute` is also non-executing. It prints the selected model, reasoning level, sandbox, and explicit command needed to start a read-only turn.
+`plan` without `--execute` prints the selected model, reasoning level, and read-only sandbox without starting Codex.
 
 ## Read-only Codex plan
 
-Only when no other Codex task is using the same checkout:
+When the control checkout is not being used by another Codex task:
 
 ```bash
 ./scripts/youmo plan --execute
 ```
 
-The first run creates a Codex thread. Later runs resume it only while both the Git HEAD and architecture-lock SHA-256 remain unchanged. Use `--fresh-thread` after an intentional repository or architecture transition.
+The first run creates a Codex thread. Later runs resume it only while both Git HEAD and `architecture.lock.json` remain unchanged. Use `--fresh-thread` after an intentional repository or architecture transition.
+
+## Executor workspace
+
+Creation always requires an explicit remote base SHA and an explicit non-canonical branch:
+
+```bash
+./scripts/youmo workspace init \
+  --path ~/.youmo/workspaces/i4 \
+  --base-sha <EXACT_40_CHAR_SHA> \
+  --branch phase/i4-topic-research-script
+
+./scripts/youmo workspace verify --path ~/.youmo/workspaces/i4
+```
+
+The clone is created with independent Git metadata and then re-verified against the controller registry.
 
 ## Write execution
 
-`./scripts/youmo build` intentionally fails closed in I1. The next tooling phase must create and verify an execution workspace that cannot collide with Codex Desktop or another agent before `workspace_write` is authorized.
+`./scripts/youmo build` still fails closed in I2. I2 proves the executor boundary; the next phase wires one guarded implementation turn plus deterministic post-turn evidence collection. Until that phase is audited, no write-capable Codex turn is started by this CLI.

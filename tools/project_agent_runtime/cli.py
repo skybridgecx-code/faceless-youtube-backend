@@ -13,6 +13,7 @@ from .config import ProjectConfigError, load_project_config
 from .gates import GateReport, run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
 from .prompting import developer_instructions, plan_prompt
+from .workspace import WorkspaceError, initialize_executor_workspace, verify_executor_workspace
 from .state import (
     RuntimeStateError,
     advance_runtime_state,
@@ -74,6 +75,16 @@ def _parser() -> argparse.ArgumentParser:
         help="actually start a read-only Codex turn; omitted by default for safety",
     )
     plan.add_argument("--fresh-thread", action="store_true", help="do not resume saved Codex thread state")
+
+    workspace = sub.add_parser("workspace", help="manage the isolated YouMo executor clone")
+    workspace_sub = workspace.add_subparsers(dest="workspace_command", required=True)
+    workspace_init = workspace_sub.add_parser("init", help="create a physically independent executor clone")
+    workspace_init.add_argument("--path", required=True, help="destination directory for the isolated clone")
+    workspace_init.add_argument("--base-sha", required=True, help="exact 40-character remote commit SHA")
+    workspace_init.add_argument("--branch", required=True, help="non-canonical execution branch")
+    workspace_verify = workspace_sub.add_parser("verify", help="verify executor isolation and Git identity")
+    workspace_verify.add_argument("--path", required=True, help="executor clone directory")
+    workspace_verify.add_argument("--json", action="store_true")
 
     build = sub.add_parser("build", help="validate the guarded implementation context")
     build.add_argument(
@@ -154,6 +165,51 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"VERSION={sdk.version or '<none>'}")
             print("CODEX_TRANSPORT=NOT_STARTED")
         return 0 if sdk.ready else 4
+
+    if args.command == "workspace":
+        if not report.passed:
+            _print_gate(report)
+            print("STOP: control-repository preflight failed; executor workspace operations are not authorized.", file=sys.stderr)
+            return 2
+        target = Path(args.path).expanduser()
+        if args.workspace_command == "init":
+            try:
+                workspace_report = initialize_executor_workspace(
+                    state.root,
+                    target,
+                    config,
+                    base_sha=args.base_sha,
+                    branch=args.branch,
+                )
+            except WorkspaceError as exc:
+                print(f"STOP: executor workspace initialization failed: {exc}", file=sys.stderr)
+                return 7
+            print(f"WORKSPACE={workspace_report.workspace_root}")
+            print("ISOLATION=PASS")
+            print(f"BRANCH={workspace_report.state.branch if workspace_report.state else '<unknown>'}")
+            print(f"HEAD={workspace_report.state.head if workspace_report.state else '<unknown>'}")
+            print("CODEX_TRANSPORT=NOT_STARTED")
+            return 0
+        if args.workspace_command == "verify":
+            workspace_report = verify_executor_workspace(state.root, target, config, require_clean=True)
+            payload = {
+                "passed": workspace_report.passed,
+                "workspace": str(workspace_report.workspace_root),
+                "branch": workspace_report.state.branch if workspace_report.state else None,
+                "head": workspace_report.state.head if workspace_report.state else None,
+                "checks": [
+                    {"name": check.name, "passed": check.passed, "detail": check.detail}
+                    for check in workspace_report.checks
+                ],
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                for check in workspace_report.checks:
+                    print(f"[{'PASS' if check.passed else 'FAIL'}] {check.name}: {check.detail}")
+                print(f"ISOLATION={'PASS' if workspace_report.passed else 'FAIL'}")
+            return 0 if workspace_report.passed else 7
+        raise AssertionError(f"unhandled workspace command: {args.workspace_command}")
 
     if not report.passed:
         _print_gate(report)
@@ -245,7 +301,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("CODEX_TRANSPORT=NOT_STARTED")
             return 0
         print(
-            "STOP: write-capable Codex execution remains disabled until the isolated-workspace phase is complete. "
+            "STOP: write-capable Codex execution remains disabled until the guarded build-loop phase is complete. "
             "Use 'youmo build --dry-run'; 'youmo plan --execute' is read-only.",
             file=sys.stderr,
         )

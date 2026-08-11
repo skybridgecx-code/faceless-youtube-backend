@@ -72,8 +72,15 @@ def _required_str(value: object, name: str) -> str:
     return value
 
 
+def state_directory(repo_root: Path, state_dir: str) -> Path:
+    configured = Path(state_dir).expanduser()
+    if configured.is_absolute():
+        return configured.resolve()
+    return (repo_root / configured).resolve()
+
+
 def state_path(repo_root: Path, state_dir: str) -> Path:
-    return repo_root / state_dir / "runtime-state.json"
+    return state_directory(repo_root, state_dir) / "runtime-state.json"
 
 
 def load_runtime_state(repo_root: Path, state_dir: str, *, project_id: str) -> RuntimeState:

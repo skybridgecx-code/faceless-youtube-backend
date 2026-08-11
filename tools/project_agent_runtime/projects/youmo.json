@@ -4,14 +4,19 @@
   "display_name": "YouMo Autonomous YouTube Studio",
   "repository": "skybridgecx-code/faceless-youtube-backend",
   "canonical_branch": "youmo-clone-v2",
-  "allowed_branch_prefixes": ["phase/", "fix/", "audit/", "tooling/"],
+  "allowed_branch_prefixes": [
+    "phase/",
+    "fix/",
+    "audit/",
+    "tooling/"
+  ],
   "architecture_lock": "architecture.lock.json",
   "architecture_sources": [
     "ARCHITECTURE.md",
     "COMMERCIAL_SUCCESS.md",
     ".agents/rules/youtube-automation-project.md"
   ],
-  "state_dir": ".youmo",
+  "state_dir": "~/.youmo/state",
   "codex": {
     "sdk_requirement": "openai-codex==0.144.4",
     "implementation_model": "gpt-5.6-terra",
@@ -19,5 +24,11 @@
     "audit_model": "gpt-5.6-sol",
     "audit_reasoning": "high",
     "require_explicit_execute": true
-  }
+  },
+  "execution_branch_prefixes": [
+    "phase/",
+    "fix/",
+    "tooling/",
+    "agent/"
+  ]
 }

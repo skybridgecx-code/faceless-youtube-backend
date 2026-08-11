@@ -28,6 +28,7 @@ class ProjectConfig:
     repository: str
     canonical_branch: str
     allowed_branch_prefixes: tuple[str, ...]
+    execution_branch_prefixes: tuple[str, ...]
     architecture_lock: str
     architecture_sources: tuple[str, ...]
     state_dir: str
@@ -58,11 +59,16 @@ class ProjectConfig:
             )
 
         prefixes = data["allowed_branch_prefixes"]
+        execution_prefixes = data.get("execution_branch_prefixes", prefixes)
         sources = data["architecture_sources"]
         if not isinstance(prefixes, list) or not all(
             isinstance(value, str) and value for value in prefixes
         ):
             raise ProjectConfigError("allowed_branch_prefixes must be a list of strings")
+        if not isinstance(execution_prefixes, list) or not all(
+            isinstance(value, str) and value for value in execution_prefixes
+        ):
+            raise ProjectConfigError("execution_branch_prefixes must be a list of strings")
         if not isinstance(sources, list) or not all(
             isinstance(value, str) and value for value in sources
         ):
@@ -124,6 +130,7 @@ class ProjectConfig:
             repository=repository,
             canonical_branch=data["canonical_branch"].strip(),
             allowed_branch_prefixes=tuple(prefixes),
+            execution_branch_prefixes=tuple(execution_prefixes),
             architecture_lock=data["architecture_lock"].strip(),
             architecture_sources=tuple(sources),
             state_dir=data["state_dir"].strip(),
