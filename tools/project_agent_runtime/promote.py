@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -126,6 +127,36 @@ def _run_validations(
         results.append(result)
         if not result.passed:
             break
+    return tuple(results)
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _journal_validation(item: PromotionValidation) -> dict[str, Any]:
+    return {
+        "argv": list(item.argv),
+        "returncode": item.returncode,
+        "stdout_sha256": _sha256_text(item.stdout),
+        "stderr_sha256": _sha256_text(item.stderr),
+    }
+
+
+def _validations_from_journal(payload: object) -> tuple[PromotionValidation, ...]:
+    if not isinstance(payload, list):
+        return ()
+    results: list[PromotionValidation] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        argv = item.get("argv", ())
+        if not isinstance(argv, list) or not all(isinstance(value, str) for value in argv):
+            continue
+        returncode = item.get("returncode", 1)
+        if not isinstance(returncode, int):
+            continue
+        results.append(PromotionValidation(tuple(argv), returncode, "", ""))
     return tuple(results)
 
 
@@ -259,7 +290,7 @@ def _intent_payload(
         "merge_mode": "ff-only",
         "merge_commit_created": False,
         "validation_passed": all(item.passed for item in validations),
-        "validations": [asdict(item) for item in validations],
+        "validations": [_journal_validation(item) for item in validations],
         "removed_ignored_artifacts": list(removed),
         "prepared_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -342,16 +373,7 @@ def execute_promotion(
                         "promotion evidence exists but canonical remote no longer equals candidate"
                     )
                 intent = _read_json(intent_path) or {}
-                validations = tuple(
-                    PromotionValidation(
-                        tuple(item.get("argv", ())),
-                        int(item.get("returncode", 1)),
-                        str(item.get("stdout", "")),
-                        str(item.get("stderr", "")),
-                    )
-                    for item in intent.get("validations", [])
-                    if isinstance(item, dict)
-                )
+                validations = _validations_from_journal(intent.get("validations"))
                 return PromotionResult(
                     status="ALREADY_PROMOTED",
                     run_id=readiness.run_id,
@@ -373,21 +395,15 @@ def execute_promotion(
                         "canonical already equals candidate but no YouMo promotion intent exists; "
                         "treat this as an external promotion and audit it manually"
                     )
-                _verify_existing_intent(existing_intent, replace_readiness_canonical(
-                    readiness, str(existing_intent.get("canonical_before", ""))
-                ))
+                _verify_existing_intent(
+                    existing_intent,
+                    replace_readiness_canonical(
+                        readiness, str(existing_intent.get("canonical_before", ""))
+                    ),
+                )
                 final = _final_payload(existing_intent, readiness.candidate_sha)
                 _atomic_create_json(evidence_path, final)
-                validations = tuple(
-                    PromotionValidation(
-                        tuple(item.get("argv", ())),
-                        int(item.get("returncode", 1)),
-                        str(item.get("stdout", "")),
-                        str(item.get("stderr", "")),
-                    )
-                    for item in existing_intent.get("validations", [])
-                    if isinstance(item, dict)
-                )
+                validations = _validations_from_journal(existing_intent.get("validations"))
                 return PromotionResult(
                     status="RECOVERED_PROMOTION_EVIDENCE",
                     run_id=readiness.run_id,
@@ -417,7 +433,11 @@ def execute_promotion(
                 if _validation_venv is not None
                 else resolve_validation_venv(control)
             )
-            if validation_venv is None and tuple(tuple(x) for x in _validation_commands) == DEFAULT_PROMOTION_VALIDATIONS:
+            if (
+                validation_venv is None
+                and tuple(tuple(x) for x in _validation_commands)
+                == DEFAULT_PROMOTION_VALIDATIONS
+            ):
                 raise PromotionTransactionError(
                     "trusted external validation venv is required for canonical promotion"
                 )
@@ -434,7 +454,15 @@ def execute_promotion(
                 prefix=f"{run_id[:12]}-", dir=work_root
             ) as temp_dir:
                 clone = Path(temp_dir) / "repo"
-                _git(control, "clone", "--no-checkout", "--no-local", source, str(clone), timeout=600)
+                _git(
+                    control,
+                    "clone",
+                    "--no-checkout",
+                    "--no-local",
+                    source,
+                    str(clone),
+                    timeout=600,
+                )
                 _verify_clone_remote_refs(clone, readiness)
                 _git(
                     clone,
@@ -461,7 +489,9 @@ def execute_promotion(
                 if _git(clone, "branch", "--show-current") != readiness.canonical_branch:
                     raise PromotionTransactionError("promotion clone left canonical branch")
                 if _git(clone, "status", "--porcelain=v1", "-uall"):
-                    raise PromotionTransactionError("promotion clone is dirty immediately after ff-only merge")
+                    raise PromotionTransactionError(
+                        "promotion clone is dirty immediately after ff-only merge"
+                    )
 
                 try:
                     with bound_workspace_validation_venv(clone, validation_venv):
@@ -483,7 +513,9 @@ def execute_promotion(
                         "promotion clone changed during post-merge validation"
                     )
                 if _git(clone, "rev-parse", "HEAD") != readiness.candidate_sha:
-                    raise PromotionTransactionError("promotion clone HEAD changed during validation")
+                    raise PromotionTransactionError(
+                        "promotion clone HEAD changed during validation"
+                    )
 
                 candidate_now = resolve_remote_branch_sha(
                     workspace,
