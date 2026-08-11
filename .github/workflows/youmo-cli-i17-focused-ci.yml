@@ -1,0 +1,25 @@
+name: YouMo CLI I17 Focused Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i17-core-publish
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install focused test runner
+        run: python -m pip install pytest
+      - name: Compile I17 overview
+        run: python -m py_compile tools/project_agent_runtime/overview.py tools/project_agent_runtime/overview_cli.py scripts/youmo-overview
+      - name: Run overview and run-journal tests
+        run: python -m pytest -q tests/test_project_agent_overview.py tests/test_project_agent_runs.py tests/test_project_agent_doctor.py
