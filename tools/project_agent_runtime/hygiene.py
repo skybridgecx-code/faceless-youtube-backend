@@ -9,6 +9,10 @@ class WorkspaceHygieneError(RuntimeError):
     """Raised when hidden/ignored workspace artifacts cannot be handled safely."""
 
 
+_DISPOSABLE_DIR_NAMES = frozenset({".pytest_cache", "__pycache__"})
+_DISPOSABLE_SUFFIXES = frozenset({".pyc", ".pyo"})
+
+
 def _run_git(root: Path, *args: str, timeout: int = 30) -> str:
     env = dict(os.environ)
     env.update({"GIT_OPTIONAL_LOCKS": "0", "GIT_PAGER": "cat", "LC_ALL": "C"})
@@ -49,6 +53,13 @@ def require_no_ignored_untracked(root: Path, *, context: str) -> None:
         )
 
 
+def _is_disposable_ignored_artifact(relative: str) -> bool:
+    pure = PurePosixPath(relative)
+    if any(part in _DISPOSABLE_DIR_NAMES for part in pure.parts):
+        return True
+    return pure.suffix in _DISPOSABLE_SUFFIXES
+
+
 def cleanup_ignored_untracked(root: Path, *, max_entries: int = 500) -> tuple[str, ...]:
     base = root.resolve()
     values = ignored_untracked_files(base)
@@ -56,6 +67,18 @@ def cleanup_ignored_untracked(root: Path, *, max_entries: int = 500) -> tuple[st
         raise WorkspaceHygieneError(
             f"refusing to clean {len(values)} ignored artifacts; cap is {max_entries}"
         )
+
+    protected = tuple(
+        relative for relative in values if not _is_disposable_ignored_artifact(relative)
+    )
+    if protected:
+        preview = list(protected[:20])
+        suffix = "..." if len(protected) > 20 else ""
+        raise WorkspaceHygieneError(
+            "refusing to clean non-disposable ignored workspace artifacts: "
+            f"{preview!r}{suffix}"
+        )
+
     removed: list[str] = []
     parents: set[Path] = set()
     for relative in values:
