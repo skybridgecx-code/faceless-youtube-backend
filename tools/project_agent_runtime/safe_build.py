@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Sequence
 
 from .build_engine import BuildResult, ValidationResult, run_guarded_build
+from .hygiene import WorkspaceHygieneError, cleanup_ignored_untracked
 from .validation_env import bound_workspace_validation_venv
 from .validation_policy import targeted_build_validation_commands
 
@@ -91,6 +92,12 @@ async def run_fast_guarded_build(
         violations.append(
             f"targeted validation failed ({' '.join(failed.argv)}): exit {failed.returncode}"
         )
+
+    try:
+        cleanup_ignored_untracked(workspace)
+    except WorkspaceHygieneError as exc:
+        violations.append(f"post-validation workspace hygiene failed: {exc}")
+
     return replace(
         result,
         status="READY_FOR_AUDIT" if not violations else "FAILED",
