@@ -1,0 +1,30 @@
+name: YouMo CLI I12 Focused Fix Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i12-fix2-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Provenance
+        run: |
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "BRANCH=$(git branch --show-current)"
+          git status --porcelain=v1
+      - name: Install focused test runner
+        run: python -m pip install pytest
+      - name: Compile I12 tooling
+        run: python -m py_compile tools/project_agent_runtime/*.py scripts/youmo-pilot scripts/youmo-controller scripts/youmo-bootstrap
+      - name: Run controller release and pilot tests
+        run: python -m pytest -q tests/test_project_agent_controller_release.py tests/test_project_agent_pilot.py
