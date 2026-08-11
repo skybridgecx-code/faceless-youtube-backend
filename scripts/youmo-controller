@@ -7,6 +7,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.project_agent_runtime.controller_cli import main
+from tools.project_agent_runtime.controller_release_cli import main
 
 raise SystemExit(main(sys.argv[1:]))

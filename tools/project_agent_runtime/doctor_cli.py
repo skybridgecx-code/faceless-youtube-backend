@@ -8,7 +8,8 @@ from typing import Sequence
 
 from .codex_transport import inspect_codex_sdk
 from .config import ProjectConfigError, load_project_config
-from .controller import default_layout, inspect_controller
+from .controller import default_layout
+from .controller_release import inspect_controller_release
 from .doctor import DoctorError, diagnose_all
 from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
@@ -44,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.controller_home
         else default_layout()
     )
-    controller = inspect_controller(controller_layout)
+    controller = inspect_controller_release(controller_layout)
     sdk = inspect_codex_sdk(config.codex.sdk_requirement)
 
     try:

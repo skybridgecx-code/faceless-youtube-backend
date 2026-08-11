@@ -1,12 +1,38 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.project_agent_runtime.controller_cli import main
+from tools.project_agent_runtime.controller_release import CONTROLLER_RELEASE_REF
+from tools.project_agent_runtime.controller_release_cli import main
 
-raise SystemExit(main(["install", *sys.argv[1:]]))
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="youmo-bootstrap",
+        description="Install the isolated YouMo controller release.",
+    )
+    parser.add_argument("--home", help="controller root (default: ~/.youmo/controller)")
+    parser.add_argument("--sha", required=True, help="exact 40-character release commit SHA")
+    parser.add_argument("--ref", default=CONTROLLER_RELEASE_REF)
+    parser.add_argument("--execute", action="store_true")
+    return parser
+
+
+def _controller_args(argv: list[str]) -> list[str]:
+    args = _parser().parse_args(argv)
+    result: list[str] = []
+    if args.home:
+        result.extend(["--home", args.home])
+    result.extend(["install", "--sha", args.sha, "--ref", args.ref])
+    if args.execute:
+        result.append("--execute")
+    return result
+
+
+raise SystemExit(main(_controller_args(sys.argv[1:])))
