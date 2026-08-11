@@ -1,0 +1,25 @@
+name: YouMo CLI I5 Full Repository Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i5-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-repository-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install repository requirements
+        run: python -m pip install -r requirements.txt
+      - name: Run full pytest suite
+        run: python -m pytest -q
+      - name: Check JavaScript syntax
+        run: node --check app/static/app.js
