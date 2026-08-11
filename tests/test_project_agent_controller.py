@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,6 +16,7 @@ from tools.project_agent_runtime.controller import (
     default_layout,
     inspect_controller,
     install_controller,
+    refresh_controller,
 )
 from tools.project_agent_runtime.controller_cli import main as controller_main
 
@@ -29,6 +31,29 @@ def _git(root: Path, *args: str) -> str:
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
     )
     return completed.stdout.strip()
+
+
+def _git_input(root: Path, args: list[str], input_text: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        input=input_text,
+    )
+    return completed.stdout.strip()
+
+
+class _LocalFetchRunner:
+    def __init__(self, source: Path) -> None:
+        self.source = source.resolve()
+
+    def __call__(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        argv = list(args)
+        if len(argv) >= 4 and argv[:4] == ["git", "fetch", "--no-tags", "origin"]:
+            argv[3] = str(self.source)
+        return subprocess.run(argv, **kwargs)
 
 
 def _synthetic_source(tmp_path: Path) -> tuple[Path, str]:
@@ -171,6 +196,53 @@ def test_controller_install_is_independent_ready_and_push_disabled(tmp_path: Pat
         assert f"YOUMO_VALIDATION_VENV={layout.venv}" in body
         assert str(layout.repo / "scripts" / name) in body
         assert str(layout.venv / "bin" / "python") in body
+
+
+def test_controller_refresh_fast_forwards_exact_expected_sha(tmp_path: Path) -> None:
+    source, old_sha, layout, status = _installed(tmp_path)
+    assert status.ready
+
+    (source / "REFRESHED.txt").write_text("next controller revision\n", encoding="utf-8")
+    _git(source, "add", "REFRESHED.txt")
+    _git(source, "commit", "-m", "next controller revision")
+    new_sha = _git(source, "rev-parse", "HEAD")
+    assert new_sha != old_sha
+
+    refreshed = refresh_controller(
+        expected_sha=new_sha,
+        source_ref=SOURCE_REF,
+        layout=layout,
+        runner=_LocalFetchRunner(source),
+    )
+
+    assert refreshed.ready
+    assert refreshed.head == new_sha
+    assert refreshed.expected_head == new_sha
+    assert _git(layout.repo, "rev-parse", f"{new_sha}^") == old_sha
+    assert _git(layout.repo, "remote", "get-url", "origin") == REPOSITORY_URL
+    assert _git(layout.repo, "remote", "get-url", "--push", "origin") == DISABLED_PUSH_URL
+    assert _git(source, "status", "--porcelain=v1", "-uall") == ""
+
+
+def test_controller_refresh_rejects_non_fast_forward_without_moving_head(tmp_path: Path) -> None:
+    source, installed_sha, layout, status = _installed(tmp_path)
+    assert status.ready
+
+    tree = _git(source, "write-tree")
+    divergent = _git_input(source, ["commit-tree", tree], "unrelated controller revision\n")
+    _git(source, "update-ref", f"refs/heads/{SOURCE_REF}", divergent, installed_sha)
+    assert _git(source, "rev-parse", "HEAD") == divergent
+
+    with pytest.raises(ControllerError, match="not a fast-forward"):
+        refresh_controller(
+            expected_sha=divergent,
+            source_ref=SOURCE_REF,
+            layout=layout,
+            runner=_LocalFetchRunner(source),
+        )
+
+    assert _git(layout.repo, "rev-parse", "HEAD") == installed_sha
+    assert inspect_controller(layout).ready
 
 
 def test_controller_readiness_fails_if_push_is_reenabled(tmp_path: Path) -> None:
