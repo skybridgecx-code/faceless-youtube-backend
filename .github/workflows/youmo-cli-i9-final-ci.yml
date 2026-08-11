@@ -1,0 +1,37 @@
+name: YouMo CLI I9 Final Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i9-final-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  i9-final-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Provenance diagnostics
+        run: |
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "BRANCH=$(git branch --show-current)"
+          git status --porcelain=v1
+      - name: Create repository virtualenv
+        run: python -m venv .venv
+      - name: Install repository requirements
+        run: .venv/bin/python -m pip install -r requirements.txt
+      - name: Compile all YouMo tooling
+        run: .venv/bin/python -m py_compile tools/project_agent_runtime/*.py scripts/youmo scripts/youmo-build scripts/youmo-audit scripts/youmo-checkpoint scripts/youmo-controller scripts/youmo-bootstrap scripts/youmo-doctor scripts/youmo-resume
+      - name: Run focused I0-I9 tests
+        run: .venv/bin/python -m pytest -q tests/test_project_agent_runtime.py tests/test_project_agent_workspace.py tests/test_project_agent_build.py tests/test_project_agent_audit.py tests/test_project_agent_checkpoint.py tests/test_project_agent_safety.py tests/test_project_agent_safety_cleanup.py tests/test_project_agent_controller.py tests/test_project_agent_runs.py tests/test_project_agent_controller_release.py
+      - name: Run full repository pytest suite
+        run: .venv/bin/python -m pytest -q
+      - name: Check JavaScript syntax
+        if: always()
+        run: node --check app/static/app.js
