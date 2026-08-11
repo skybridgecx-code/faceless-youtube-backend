@@ -122,6 +122,120 @@ def _fetch_exact_branch_commit(
         )
 
 
+def _check_promotion_readiness_unlocked(
+    control_root: Path,
+    config: ProjectConfig,
+    run_id: str,
+    *,
+    remote_target: str = "origin",
+) -> PromotionReadiness:
+    """Run the complete readiness proof while the caller owns the executor lease."""
+    control = control_root.resolve()
+    target = _validate_remote_target(remote_target)
+    try:
+        manifest = load_run_manifest(control, config, run_id)
+    except RunManifestError as exc:
+        raise PromotionCheckError(str(exc)) from exc
+
+    _load_publish_evidence(control, config, run_id)
+    try:
+        publish_plan = prepare_publish(
+            control,
+            config,
+            run_id,
+            allow_fetch=True,
+            _remote_target=target,
+        )
+    except PublishError as exc:
+        raise PromotionCheckError(f"published candidate is no longer valid: {exc}") from exc
+    if publish_plan.mode != "ALREADY_PUBLISHED":
+        raise PromotionCheckError(
+            "published candidate remote no longer equals its checkpoint commit"
+        )
+
+    workspace = Path(manifest.workspace).expanduser().resolve()
+    candidate_sha = publish_plan.commit_sha
+    candidate_branch = publish_plan.branch
+    candidate_before = resolve_remote_branch_sha(
+        workspace,
+        candidate_branch,
+        remote_target=target,
+    )
+    if candidate_before != candidate_sha:
+        raise PromotionCheckError(
+            "candidate remote changed before promotion ancestry proof"
+        )
+
+    canonical_before = resolve_remote_branch_sha(
+        workspace,
+        config.canonical_branch,
+        remote_target=target,
+    )
+    if canonical_before is None:
+        raise PromotionCheckError(
+            f"canonical remote branch is missing: {config.canonical_branch}"
+        )
+
+    if canonical_before == candidate_sha:
+        classification = "ALREADY_PROMOTED"
+        fast_forward_possible = False
+        promotion_needed = False
+        candidate_in_canonical = True
+    else:
+        if not _commit_known(workspace, canonical_before):
+            _fetch_exact_branch_commit(
+                workspace,
+                config.canonical_branch,
+                canonical_before,
+                remote_target=target,
+            )
+        if _is_ancestor(workspace, canonical_before, candidate_sha):
+            classification = "READY_FAST_FORWARD"
+            fast_forward_possible = True
+            promotion_needed = True
+            candidate_in_canonical = False
+        elif _is_ancestor(workspace, candidate_sha, canonical_before):
+            classification = "ALREADY_INCLUDED"
+            fast_forward_possible = False
+            promotion_needed = False
+            candidate_in_canonical = True
+        else:
+            classification = "BLOCKED_DIVERGED"
+            fast_forward_possible = False
+            promotion_needed = False
+            candidate_in_canonical = False
+
+    candidate_after = resolve_remote_branch_sha(
+        workspace,
+        candidate_branch,
+        remote_target=target,
+    )
+    canonical_after = resolve_remote_branch_sha(
+        workspace,
+        config.canonical_branch,
+        remote_target=target,
+    )
+    if candidate_after != candidate_before or canonical_after != canonical_before:
+        raise PromotionCheckError(
+            "remote branch state changed during promotion readiness check; rerun"
+        )
+
+    return PromotionReadiness(
+        run_id=manifest.run_id,
+        workspace=str(workspace),
+        repository=config.repository,
+        candidate_branch=candidate_branch,
+        candidate_sha=candidate_sha,
+        canonical_branch=config.canonical_branch,
+        canonical_sha=canonical_before,
+        classification=classification,
+        fast_forward_possible=fast_forward_possible,
+        promotion_needed=promotion_needed,
+        candidate_in_canonical=candidate_in_canonical,
+        remote_stable=True,
+    )
+
+
 def check_promotion_readiness(
     control_root: Path,
     config: ProjectConfig,
@@ -139,101 +253,11 @@ def check_promotion_readiness(
 
     try:
         with operation_lease(control, config, workspace, "promote-check"):
-            _load_publish_evidence(control, config, run_id)
-            try:
-                publish_plan = prepare_publish(
-                    control,
-                    config,
-                    run_id,
-                    allow_fetch=True,
-                    _remote_target=target,
-                )
-            except PublishError as exc:
-                raise PromotionCheckError(f"published candidate is no longer valid: {exc}") from exc
-            if publish_plan.mode != "ALREADY_PUBLISHED":
-                raise PromotionCheckError(
-                    "published candidate remote no longer equals its checkpoint commit"
-                )
-
-            candidate_sha = publish_plan.commit_sha
-            candidate_branch = publish_plan.branch
-            candidate_before = resolve_remote_branch_sha(
-                workspace,
-                candidate_branch,
+            return _check_promotion_readiness_unlocked(
+                control,
+                config,
+                run_id,
                 remote_target=target,
-            )
-            if candidate_before != candidate_sha:
-                raise PromotionCheckError(
-                    "candidate remote changed before promotion ancestry proof"
-                )
-
-            canonical_before = resolve_remote_branch_sha(
-                workspace,
-                config.canonical_branch,
-                remote_target=target,
-            )
-            if canonical_before is None:
-                raise PromotionCheckError(
-                    f"canonical remote branch is missing: {config.canonical_branch}"
-                )
-
-            if canonical_before == candidate_sha:
-                classification = "ALREADY_PROMOTED"
-                fast_forward_possible = False
-                promotion_needed = False
-                candidate_in_canonical = True
-            else:
-                if not _commit_known(workspace, canonical_before):
-                    _fetch_exact_branch_commit(
-                        workspace,
-                        config.canonical_branch,
-                        canonical_before,
-                        remote_target=target,
-                    )
-                if _is_ancestor(workspace, canonical_before, candidate_sha):
-                    classification = "READY_FAST_FORWARD"
-                    fast_forward_possible = True
-                    promotion_needed = True
-                    candidate_in_canonical = False
-                elif _is_ancestor(workspace, candidate_sha, canonical_before):
-                    classification = "ALREADY_INCLUDED"
-                    fast_forward_possible = False
-                    promotion_needed = False
-                    candidate_in_canonical = True
-                else:
-                    classification = "BLOCKED_DIVERGED"
-                    fast_forward_possible = False
-                    promotion_needed = False
-                    candidate_in_canonical = False
-
-            candidate_after = resolve_remote_branch_sha(
-                workspace,
-                candidate_branch,
-                remote_target=target,
-            )
-            canonical_after = resolve_remote_branch_sha(
-                workspace,
-                config.canonical_branch,
-                remote_target=target,
-            )
-            if candidate_after != candidate_before or canonical_after != canonical_before:
-                raise PromotionCheckError(
-                    "remote branch state changed during promotion readiness check; rerun"
-                )
-
-            return PromotionReadiness(
-                run_id=manifest.run_id,
-                workspace=str(workspace),
-                repository=config.repository,
-                candidate_branch=candidate_branch,
-                candidate_sha=candidate_sha,
-                canonical_branch=config.canonical_branch,
-                canonical_sha=canonical_before,
-                classification=classification,
-                fast_forward_possible=fast_forward_possible,
-                promotion_needed=promotion_needed,
-                candidate_in_canonical=candidate_in_canonical,
-                remote_stable=True,
             )
     except OperationLeaseError as exc:
         raise PromotionCheckError(str(exc)) from exc
