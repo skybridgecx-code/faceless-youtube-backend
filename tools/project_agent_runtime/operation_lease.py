@@ -46,6 +46,17 @@ class OperationLease:
         return cls(schema_version=1, pid=pid, **values)
 
 
+@dataclass(frozen=True)
+class LeaseInspection:
+    present: bool
+    active: bool
+    stale: bool
+    local_host: bool
+    path: str
+    lease: OperationLease | None
+    detail: str
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -75,6 +86,57 @@ def _pid_alive(pid: int) -> bool:
     except (PermissionError, OSError):
         return True
     return True
+
+
+def inspect_operation_lease(
+    control_root: Path,
+    config: ProjectConfig,
+    workspace: Path,
+) -> LeaseInspection:
+    path = _lease_path(control_root.resolve(), config, workspace.expanduser().resolve())
+    if not path.exists():
+        return LeaseInspection(
+            present=False,
+            active=False,
+            stale=False,
+            local_host=False,
+            path=str(path),
+            lease=None,
+            detail="no executor operation lease",
+        )
+    lease = _read_lease(path)
+    expected_workspace = str(workspace.expanduser().resolve())
+    if lease.project_id != config.project_id:
+        raise OperationLeaseError("operation lease project identity mismatch")
+    if lease.workspace != expected_workspace:
+        raise OperationLeaseError("operation lease workspace identity mismatch")
+    local_host = lease.hostname == socket.gethostname()
+    if not local_host:
+        return LeaseInspection(
+            present=True,
+            active=True,
+            stale=False,
+            local_host=False,
+            path=str(path),
+            lease=lease,
+            detail=(
+                f"lease belongs to another host {lease.hostname!r}; treated as active fail-closed"
+            ),
+        )
+    alive = _pid_alive(lease.pid)
+    return LeaseInspection(
+        present=True,
+        active=alive,
+        stale=not alive,
+        local_host=True,
+        path=str(path),
+        lease=lease,
+        detail=(
+            f"active {lease.operation} lease pid={lease.pid}"
+            if alive
+            else f"stale {lease.operation} lease pid={lease.pid}"
+        ),
+    )
 
 
 def _write_new_lease(path: Path, lease: OperationLease) -> None:

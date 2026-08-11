@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -16,8 +15,13 @@ from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
 from .operation_lease import OperationLeaseError, operation_lease
 from .prompting import developer_instructions
+from .run_manifest import (
+    RunManifestError,
+    create_run_manifest,
+    transition_run,
+    write_run_evidence,
+)
 from .safe_build import run_fast_guarded_build
-from .state import state_directory
 from .validation_env import ValidationEnvironmentError, resolve_validation_venv
 from .workspace import WorkspaceError, verify_executor_workspace
 
@@ -49,22 +53,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _safe_label(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "build"
-
-
-def _save_evidence(control_root: Path, state_dir: str, result_json: str, branch: str, head: str) -> Path:
-    root = state_directory(control_root, state_dir) / "build-evidence"
-    root.mkdir(parents=True, exist_ok=True)
-    path = root / f"{_safe_label(branch)}-{head[:12]}.json"
-    temp = path.with_suffix(".tmp")
-    temp.write_text(result_json, encoding="utf-8")
-    temp.replace(path)
-    return path
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    task = args.task.strip()
+    if not task:
+        print("STOP: --task must contain non-whitespace content", file=sys.stderr)
+        return 2
     try:
         control_state = inspect_repo(Path(args.repo).resolve())
         config = load_project_config(control_state.root, args.project)
@@ -129,6 +123,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("BUILD_VALIDATION=TARGETED_FAST")
         print("AUDIT_VALIDATION=FULL_REGRESSION")
         print(f"VALIDATION_VENV={validation_venv or '<system-python>'}")
+        print("RUN_MANIFEST=NOT_CREATED")
         print("EXECUTOR_LEASE=NOT_ACQUIRED")
         print("CODEX_TRANSPORT=NOT_STARTED")
         print("RERUN_WITH=youmo-build ... --execute")
@@ -140,38 +135,83 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 4
 
     try:
+        manifest = create_run_manifest(
+            control_state.root,
+            config,
+            workspace=workspace,
+            branch=executor_state.branch,
+            base_head=executor_state.head,
+            task=task,
+            allowed_paths=args.allowed_paths,
+            max_changed_files=args.max_changed_files,
+            architecture_lock_sha256=control_arch.lock_sha256,
+        )
+    except RunManifestError as exc:
+        print(f"STOP: run manifest creation failed: {exc}", file=sys.stderr)
+        return 8
+
+    try:
         with operation_lease(control_state.root, config, workspace, "build"):
             result = asyncio.run(
                 run_fast_guarded_build(
                     workspace_root=workspace,
-                    task=args.task,
-                    allowed_paths=args.allowed_paths,
+                    task=task,
+                    allowed_paths=manifest.allowed_paths,
                     architecture_paths=(config.architecture_lock, *config.architecture_sources),
                     developer_instructions=instructions,
                     model=config.codex.implementation_model,
                     reasoning=config.codex.implementation_reasoning,
                     turn_runner=run_codex_turn,
-                    max_changed_files=args.max_changed_files,
+                    max_changed_files=manifest.max_changed_files,
                     validation_venv=validation_venv,
                 )
             )
     except (BuildGuardError, CodexTransportError, OperationLeaseError, ValidationEnvironmentError) as exc:
+        try:
+            transition_run(
+                control_state.root,
+                config,
+                manifest,
+                new_stage="BUILD_FAILED",
+                last_error=str(exc),
+            )
+        except RunManifestError:
+            pass
+        print(f"RUN_ID={manifest.run_id}")
         print(f"STOP: guarded build failed: {exc}", file=sys.stderr)
         return 8
 
-    evidence = _save_evidence(
-        control_state.root,
-        config.state_dir,
-        result.to_json(),
-        result.branch,
-        result.base_head,
-    )
+    try:
+        evidence = write_run_evidence(
+            control_state.root,
+            config,
+            manifest,
+            stage_name="build",
+            payload=result.to_json(),
+        )
+        manifest = transition_run(
+            control_state.root,
+            config,
+            manifest,
+            new_stage="READY_FOR_AUDIT" if result.ready_for_audit else "BUILD_FAILED",
+            build_evidence=evidence,
+            last_error=None if result.ready_for_audit else "; ".join(result.violations) or result.status,
+        )
+    except RunManifestError as exc:
+        print(f"RUN_ID={manifest.run_id}")
+        print(f"STOP: build evidence persistence failed: {exc}", file=sys.stderr)
+        return 8
+
+    print(f"RUN_ID={manifest.run_id}")
+    print(f"RUN_STAGE={manifest.stage}")
     print(f"BUILD_STATUS={result.status}")
-    print(f"EVIDENCE={evidence}")
+    print(f"EVIDENCE={evidence.path}")
+    print(f"EVIDENCE_SHA256={evidence.sha256}")
     print(f"CHANGED_FILES={json.dumps(list(result.changed_files))}")
     print(f"DIFF_SHA256={result.diff_sha256 or '<none>'}")
     print("BUILD_VALIDATION=TARGETED_FAST")
     print("NEXT_REQUIRED_GATE=FULL_AUDIT")
+    print(f"NEXT_COMMAND=youmo-resume --run-id {manifest.run_id}")
     if result.violations:
         for violation in result.violations:
             print(f"VIOLATION={violation}")
