@@ -30,7 +30,21 @@ No numerical commercial score may override an unsupported-claim failure, source 
 
 There is never an autonomous top-level objective equivalent to maximizing views without constraints, maximizing revenue without constraints, or maximizing upload volume.
 
-## 4. I4 commercial topic intelligence
+## 4. Campaign Budget Policy
+
+The versioned contract is `policies/campaign_budget.v1.json`. For a normal 8–12 minute long-form campaign, the target variable metered production cost is approximately $20.00 (20,000,000 micro-USD), the soft warning is $25.00 (25,000,000 micro-USD), and the default hard cap is $35.00 (35,000,000 micro-USD).
+
+The metered scope includes LLM, research/search, TTS, image generation, video generation, and other metered generation APIs. Local FFmpeg and deterministic local rendering are excluded unless they later create a measurable metered hosted-compute charge.
+
+The $25.00 soft warning requires cost-reduction behavior; it is not permission to sacrifice editorial quality or truth. The system should prefer lower-cost visual modes, regenerate only failed or rejected scenes rather than whole videos, avoid unnecessary premium generated-video calls, and prefer diagrams, screenshots, stills, documents, or deterministic graphics when editorially suitable. Expensive retries must trigger visual-mode substitution rather than uncontrolled spending.
+
+Before every metered provider request, the future implementation must add the campaign's recorded or committed variable cost to a conservative estimate for the proposed request. If that sum would exceed the currently authorized campaign hard cap, the provider request must not be sent. The system must use an eligible lower-cost fallback or stop and require explicit owner authorization.
+
+An override is never automatic. It applies only to one identified campaign, specifies the new authorized cap, and records the actor, reason, and timestamp for audit. Providers and analytics cannot change budgets, the global policy, or its caps. Sponsor economics cannot change editorial gates or budget-safety behavior.
+
+Budget never overrides truth, source, rights, safety, approval, or editorial-quality requirements. Low cost is an efficiency constraint, not the channel's north-star objective.
+
+## 5. I4 commercial topic intelligence
 
 Every sourceable topic may be commercially ranked for audience relevance, current demand, novelty, consequence or stakes, narrative tension, broad-interest bridge, visual potential, shelf life, authority opportunity, and sponsor compatibility. Commercial score never overrides sourceability or safety.
 
@@ -47,13 +61,13 @@ I4 requires a first-class Viewer Promise containing, at minimum:
 
 If a compelling truthful Viewer Promise cannot be formed, the topic is not ready.
 
-## 5. Narrative engineering and narrator identity
+## 6. Narrative engineering and narrator identity
 
 Scripts must be stories or explanations, not information dumps. They require an immediate continuation reason, an unresolved question or tension where appropriate, information progression, periodic payoff, genuine explanatory value, a clear thesis, and a useful resolution describing what happens next.
 
 The narrator identity is curious, technically literate, skeptical of hype, clear about uncertainty, and interested in consequences. The channel distinguishes what is known, what companies or people claim, what evidence suggests, what remains uncertain, and what is explicitly editorial analysis. It must not fabricate a human identity.
 
-## 6. I5 retention-oriented visual architecture
+## 7. I5 retention-oriented visual architecture
 
 The storyboard selects the best visual mode for each narrative beat rather than asking only whether generative video can make something visually attractive. Representative modes are:
 
@@ -73,7 +87,9 @@ The storyboard selects the best visual mode for each narrative beat rather than 
 
 Generated cinematic media is a bounded ingredient, not a requirement to fill the runtime. Meaningful visual progression should be measurable later without forcing frantic short-form editing.
 
-## 7. I6 packaging intelligence
+I5 must implement the campaign budget preflight guard for metered providers, soft-warning cost fallbacks, and hard-cap provider blocking. These cost controls must preserve editorial suitability and every hard gate.
+
+## 8. I6 packaging intelligence
 
 Every episode must produce multiple genuinely different positioning concepts, rather than trivial title rewrites. Each concept should eventually represent a title, thumbnail concept, thumbnail text, viewer trigger, promise, risk of overclaiming, and target audience. Commercial ranking is permitted, but truth is absolute: high predicted CTR plus an unsupported implication is `FAIL`. Qualified clicks matter more than misleading clicks.
 
@@ -91,32 +107,34 @@ The opening must be separately reviewable for fulfillment of the title/thumbnail
 
 The conceptual retention zones are 0:00–0:30, 0:30–1:30, 1:30–3:00, 3:00–midpoint, midpoint–final third, and ending. At each boundary, the system should eventually answer: “Why does the viewer continue?” These are editorial QA concepts, not rigid runtime stages.
 
-## 8. I7 analytics learning and campaign economics
+## 9. I7 analytics learning and campaign economics
 
 Analytics may track supported metrics including views, impressions, CTR, watch time, average view duration, average percentage viewed, likes, comments, shares, subscribers gained/lost, and returning-viewer or traffic-source information when available. It may create recommendations, but may not automatically mutate prompts, policy, thresholds, source rules, architecture, safety rules, or budget rules.
 
 Campaign unit economics eventually track LLM, TTS, video generation, image generation, storage, other provider costs, human review minutes, and total production cost. Revenue may include YouTube advertising/Premium, sponsor revenue, affiliate revenue, and other attributable revenue. Derived economics may include revenue per 1,000 views, cost per 1,000 views, profit per campaign, margin, cost per published minute, and revenue per watch hour.
 
+I7 must include campaign cost accounting, cost per published minute, and auditable reporting of every campaign-specific budget override.
+
 These metrics are observational and recommendational. They must not override editorial hard gates.
 
-## 9. Sponsor/editorial separation
+## 10. Sponsor/editorial separation
 
 Sponsors may be matched using audience relevance, campaign topic, brand category, expected reach, historical sponsor performance, and conflict rules. Sponsor economics must never influence claim verification, source weighting, safety decisions, story conclusions, criticism of a product or company, or disclosure requirements.
 
-## 10. Controlled exploration
+## 11. Controlled exploration
 
 The system must preserve controlled editorial experimentation to prevent premature optimization into repetitive templates. No fixed exploration percentage is locked at this time.
 
-## 11. First ten public campaigns
+## 12. First ten public campaigns
 
 Do not declare channel-level editorial optimization success or failure from one or two uploads. The first meaningful aggregate optimization review occurs after ten public long-form campaigns.
 
 Compare topics, packaging, hooks, runtime, visual approaches, retention, CTR, subscribers per campaign, production cost, and 24h/7d/30d performance where available. Analytics generates hypotheses, not automatic policy mutation.
 
-## 12. Business moat
+## 13. Business moat
 
 Individual providers are replaceable. The long-term moat is the accumulated combination of historical topic decisions, verified research, narrative structures, packaging experiments, thumbnail patterns, retention outcomes, audience behavior, production economics, and editorial rules.
 
-## 13. Change control
+## 14. Change control
 
-Weakening or removing constrained optimization, sponsor/editorial separation, commercial hard-gate dominance, analytics nonmutation, controlled exploration, or phase commercial requirements requires an `architecture.lock.json` schema-version increment and independent review.
+Weakening or removing constrained optimization, the campaign budget policy or caps, sponsor/editorial separation, commercial hard-gate dominance, analytics nonmutation, controlled exploration, or phase commercial requirements requires an `architecture.lock.json` schema-version increment and independent review.

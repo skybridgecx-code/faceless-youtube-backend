@@ -1,0 +1,68 @@
+{
+  "policy_version": "campaign-budget-v1",
+  "currency": "USD",
+  "scope": {
+    "campaign_type": "default_8_to_12_minute_long_form",
+    "cost_basis": "variable_metered_production_cost",
+    "metered_cost_categories": [
+      "llm",
+      "research_search",
+      "tts",
+      "image_generation",
+      "video_generation",
+      "other_metered_generation_api"
+    ],
+    "excluded_local_costs": [
+      "local_ffmpeg",
+      "deterministic_local_rendering"
+    ],
+    "local_cost_exclusion_condition": "excluded_unless_measurable_metered_hosted_compute_charge"
+  },
+  "limits_microusd": {
+    "target": 20000000,
+    "soft_warning": 25000000,
+    "default_hard_cap": 35000000
+  },
+  "requirements": {
+    "require_preflight_estimate": true,
+    "fallback_after_soft_warning": true,
+    "block_request_above_hard_cap": true,
+    "owner_override_required": true,
+    "override_must_be_campaign_specific": true,
+    "override_must_be_audited": true
+  },
+  "soft_warning_behavior": {
+    "trigger_microusd": 25000000,
+    "required_cost_reduction_actions": [
+      "prefer_lower_cost_visual_modes",
+      "regenerate_only_failed_or_rejected_scenes",
+      "avoid_unnecessary_premium_generated_video_calls",
+      "prefer_editorially_suitable_diagrams_screenshots_stills_documents_or_deterministic_graphics"
+    ],
+    "editorial_quality_truth_rights_safety_and_approval_gates_remain_required": true
+  },
+  "hard_cap_behavior": {
+    "pre_request_calculation": "recorded_or_committed_campaign_variable_cost_microusd_plus_conservative_estimated_request_cost_microusd",
+    "compare_against": "currently_authorized_campaign_hard_cap_microusd",
+    "on_predicted_breach": "do_not_send_provider_request",
+    "allowed_responses": [
+      "use_eligible_lower_cost_fallback",
+      "stop_and_require_explicit_owner_authorization"
+    ]
+  },
+  "override_contract": {
+    "automatic": false,
+    "campaign_specific": true,
+    "must_specify_new_authorized_cap": true,
+    "required_audit_fields": [
+      "campaign_id",
+      "new_authorized_cap_microusd",
+      "actor",
+      "reason",
+      "timestamp"
+    ],
+    "auditable": true,
+    "analytics_may_mutate_global_policy": false,
+    "providers_may_mutate_global_policy": false
+  }
+}

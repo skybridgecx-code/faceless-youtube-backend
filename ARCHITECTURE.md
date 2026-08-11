@@ -2,7 +2,8 @@
 
 Status: target architecture and migration authority
 Architecture lock: `architecture.lock.json`
-I0 reconciled baseline: `Aatifshow33/faceless-youtube-backend` / `youmo-clone-v2` / `3f270573d2786762123e9d11239f65a6c4d2061a`
+Current canonical repository: `skybridgecx-code/faceless-youtube-backend`
+Historical I0 baseline: `Aatifshow33/faceless-youtube-backend` / `youmo-clone-v2` / `3f270573d2786762123e9d11239f65a6c4d2061a`
 
 ## 1. Authority and scope
 
@@ -20,16 +21,22 @@ If a lower-level document conflicts with the lock or this architecture document,
 
 ## 2. Baseline reconciliation
 
-The original architecture blueprint audited `skybridgecx-code/faceless-youtube-backend` at `20c30309d30a93bda9474c10c28f81cf237b733f`.
+The original architecture blueprint audited `skybridgecx-code/faceless-youtube-backend` at `20c30309d30a93bda9474c10c28f81cf237b733f`. That historical repository was subsequently renamed and archive-preserved as `skybridgecx-code/faceless-youtube-backend-historical`.
 
-I0 established that the maintained implementation is instead:
+I0 genuinely occurred while the maintained implementation identity was:
 
 - repository: `Aatifshow33/faceless-youtube-backend`
 - branch: `youmo-clone-v2`
 - baseline SHA: `3f270573d2786762123e9d11239f65a6c4d2061a`
 - historical shared anchor: `5afebd93b98e6b65ccec41da036ad1ec972dc517`
 
-The blueprint remains the architectural source, but repository-state claims from that audit are historical. Subsequent phases must use observed repository evidence from the reconciled baseline and must not reset the repository to the historical audit SHA.
+After I2, ownership of the maintained implementation was transferred without rewriting history:
+
+- current canonical repository: `skybridgecx-code/faceless-youtube-backend`
+- ownership-transfer source: `Aatifshow33/faceless-youtube-backend`
+- transfer completion SHA: `21f696798942a3fd23d65ca871b55085f4858f3d`
+
+The transfer preserves the I0 baseline SHA and its evidence. The blueprint remains the architectural source, but repository-state claims from that audit are historical. The active production repository must not reset to the historical blueprint SHA.
 
 ## 3. Product boundary
 
@@ -100,13 +107,27 @@ Providers:
 - do not advance workflow state,
 - do not change prompts, policy, budgets, or release state.
 
-### 4.6 Media boundary
+Every future metered provider call must pass the campaign budget guard defined by `policies/campaign_budget.v1.json` before execution.
+
+### 4.6 Campaign budget guard
+
+The default 8–12 minute long-form campaign has a variable metered-cost target of $20.00, a soft warning at $25.00, and a default hard cap of $35.00. These values are stored as exact integer micro-USD amounts in the versioned policy.
+
+Before any metered provider request, the future implementation must calculate recorded or committed campaign variable cost plus a conservative estimate for the proposed request. A predicted breach of the currently authorized campaign hard cap blocks that request before it is sent. The system may choose an eligible lower-cost fallback or stop for explicit owner authorization.
+
+At the soft warning, the system must reduce cost through editorially suitable visual-mode substitution, scene-specific retries, and avoidance of unnecessary premium generated-video calls. Cost controls never weaken truth, source, rights, safety, approval, or editorial-quality gates.
+
+Only an explicit, audited, campaign-specific owner override may raise the authorized cap. It must record the campaign, new cap, actor, reason, and timestamp. Providers, analytics, prompts, model outputs, and autonomous agents cannot raise or rewrite the global policy or its caps.
+
+Local FFmpeg and deterministic local rendering are outside the metered variable-cost calculation unless they later incur a measurable metered hosted-compute charge.
+
+### 4.7 Media boundary
 
 FFmpeg is the deterministic assembly engine and ffprobe is the canonical media validator.
 
 Generated video must not be trusted to render authoritative factual UI, numbers, charts, citations, names, logos, or code. Factual overlays are rendered deterministically from verified claims.
 
-### 4.7 Human approval and publication
+### 4.8 Human approval and publication
 
 No public or scheduled release may occur without explicit human approval bound to:
 
@@ -123,7 +144,7 @@ Any approved package mutation invalidates approval.
 
 The current legacy private-upload/manual-publication behavior is transitional and does not satisfy the target hash-bound release contract.
 
-### 4.8 Analytics cannot self-modify policy
+### 4.9 Analytics cannot self-modify policy
 
 Analytics may produce recommendation artifacts and rank future topic candidates.
 
@@ -135,9 +156,10 @@ Analytics may not automatically mutate:
 - gate thresholds,
 - source rules,
 - safety rules,
-- budget caps.
+- `policies/campaign_budget.v1.json`,
+- campaign budget caps or override authority.
 
-### 4.9 Commercial optimization is constrained
+### 4.10 Commercial optimization is constrained
 
 Automation is operational leverage, not the product objective. The product optimizes for long-term viewer value and sustainable campaign economics only within the locked editorial, truth, sourceability, rights, media-integrity, safety, brand-consistency, non-repetition, bounded-retry/time/cost, deterministic-gate, and hash-bound human-approval constraints.
 
@@ -195,37 +217,37 @@ The repository is migrated in place.
 9. No phase may perform an unrelated architecture change.
 10. No source edit is allowed when a phase explicitly requires evidence-only execution.
 
-## 8. Current reconciled repository state
+## 8. Current reconciled repository state after I2
 
-As of the I0 baseline:
+After I2:
 
 - FastAPI, SQLAlchemy, Pydantic, SQLite, pytest, FFmpeg integration, visual workflows, production voiceover gates, final export logic, and a private YouTube upload path already exist.
-- Alembic is already present with a legacy baseline migration.
-- `app/db.py` still contains startup `Base.metadata.create_all()` plus additive SQLite migration helpers.
-- The canonical `Campaign` / immutable `Artifact` / `GateDecision` target model is not yet implemented.
+- Alembic is canonical for schema evolution, with the historical baseline and the I2 forward migration preserved.
+- Startup schema mutation was removed; application startup validates schema state and does not run `Base.metadata.create_all()` or additive DDL.
+- Canonical `Campaign`, `Source`, `Claim`, `Artifact`, `Scene`, `GenerationJob`, `GateDecision`, `Approval`, and `MetricSnapshot` persistence exists alongside legacy state.
+- Legacy compatibility remains during controlled migration.
 - DBOS durable workflow ownership is not yet implemented.
 - Hash-bound final release approval is not yet implemented.
-- Legacy domain duplication remains.
 
-Therefore the old blueprint phase named “add Alembic” is superseded. The migration phase must reconcile existing Alembic state and remove startup schema mutation only after migration compatibility is proven.
+Therefore the old blueprint phase named “add Alembic” is superseded. I2 reconciled existing Alembic state, introduced the canonical core schema alongside legacy state, and removed startup schema mutation after migration compatibility was proven. Durable workflow ownership and hash-bound final release behavior remain future phase work.
 
 ## 9. Phase sequence
 
 - **I0 — Baseline Freeze and Evidence Capture:** complete against reconciled baseline `3f270573...`.
 - **I1 — Governance Lock:** architecture files, lock test, README direction, replacement agent rule. No runtime/schema behavior changes.
-- **I2 — Migration Reconciliation and Canonical Core Schema:** reconcile existing Alembic, migrate fresh/current DB copies, introduce canonical tables alongside legacy state, then remove ad-hoc startup DDL only when proven safe.
+- **I2 — Migration Reconciliation and Canonical Core Schema:** complete; reconciled existing Alembic, introduced canonical tables alongside legacy state, and removed ad-hoc startup DDL after compatibility proof.
 - **I3 — Durable Workflow and Gate Engine on Stub Providers.**
 - **I4 — Topic, Research, Claims, and Script + commercial topic intelligence, Viewer Promise, narrative engineering.**
-- **I5 — Storyboard, video-provider adapter, TTS, deterministic render + retention-oriented visual selection.**
+- **I5 — Storyboard, video-provider adapter, TTS, deterministic render + retention-oriented visual selection, campaign budget preflight enforcement, soft-warning fallbacks, and hard-cap provider blocking.**
 - **I6 — Machine QA, hook/packaging QA, one-touch approval UI.**
-- **I7 — Private upload, hash-bound release, analytics + campaign economics.**
+- **I7 — Private upload, hash-bound release, analytics + campaign cost accounting, cost per published minute, and budget-override audit reporting.**
 - **I8 — Three real private shadow campaigns.**
 - **I9 — Legacy removal.**
 - **I10 — Scale only when triggered.**
 
 ## 10. Change control
 
-Any change to runtime stages, hard invariants, forbidden v1 infrastructure, publication safety, provider boundaries, migration-removal gates, the locked commercial optimization objective, sponsor/editorial separation, or phase commercial requirements requires:
+Any change to runtime stages, hard invariants, forbidden v1 infrastructure, publication safety, provider boundaries, campaign budget policy or caps, migration-removal gates, the locked commercial optimization objective, sponsor/editorial separation, or phase commercial requirements requires:
 
 1. an explicit `schema_version` increment in `architecture.lock.json`,
 2. corresponding updates to this document,

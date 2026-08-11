@@ -17,13 +17,19 @@ Before implementation, read and obey:
 3. `COMMERCIAL_SUCCESS.md`
 4. the current phase acceptance criteria
 
-The I0 implementation baseline is:
+The current canonical repository is:
+
+- repository: `skybridgecx-code/faceless-youtube-backend`
+- branch: `youmo-clone-v2`
+- ownership-transfer completion SHA: `21f696798942a3fd23d65ca871b55085f4858f3d`
+
+The historical I0 implementation baseline remains:
 
 - repository: `Aatifshow33/faceless-youtube-backend`
 - branch at I0: `youmo-clone-v2`
 - SHA: `3f270573d2786762123e9d11239f65a6c4d2061a`
 
-The historical blueprint audit SHA `20c30309d30a93bda9474c10c28f81cf237b733f` is not an implementation reset target.
+The historical blueprint was audited at `skybridgecx-code/faceless-youtube-backend@20c30309d30a93bda9474c10c28f81cf237b733f`. That repository state is now archive-preserved as `skybridgecx-code/faceless-youtube-backend-historical` and is not an implementation reset target.
 
 ## Operating rules
 
@@ -38,6 +44,9 @@ The historical blueprint audit SHA `20c30309d30a93bda9474c10c28f81cf237b733f` is
 - Do not use `git add .`; stage only explicitly audited files.
 - Never print, log, or commit secrets.
 - Never fabricate repository inspection, command execution, test results, provider access, or publication evidence.
+- Future metered provider implementation must honor `policies/campaign_budget.v1.json`; no provider call may bypass the campaign budget guard.
+- No analytics, provider, prompt, model output, or autonomous agent may raise or rewrite campaign budget policy or caps.
+- Only an explicit campaign-specific owner override may raise the authorized cap, and it must record the new cap, actor, reason, and timestamp for audit.
 
 ## Product boundary
 
@@ -59,6 +68,9 @@ v1 excludes sensitive health, finance, elections/politics, war/conflict, and leg
 - Do not optimize views, revenue, or upload volume without the locked constraints.
 - Sponsor economics cannot influence editorial claims or conclusions.
 - Analytics may recommend but may not self-modify policy.
+- Metered provider calls require campaign budget preflight before execution.
+- A predicted campaign hard-cap breach blocks the provider request.
+- Budget overrides require explicit campaign-specific owner authorization and audit.
 
 ## v1 infrastructure constraints
 

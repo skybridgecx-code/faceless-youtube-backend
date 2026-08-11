@@ -7,15 +7,20 @@ Architecture authority:
 - `architecture.lock.json` — machine-testable architecture contract
 - `ARCHITECTURE.md` — human-readable architecture and migration rules
 
-## Repository status
+## Repository identity and status
 
-I0 reconciled the active implementation baseline as:
+The current canonical repository is:
+
+- repository: `skybridgecx-code/faceless-youtube-backend`
+- branch: `youmo-clone-v2`
+
+I0 historically occurred before the ownership transfer, under:
 
 - repository: `Aatifshow33/faceless-youtube-backend`
 - branch: `youmo-clone-v2`
 - baseline SHA: `3f270573d2786762123e9d11239f65a6c4d2061a`
 
-The earlier architecture blueprint inspected a historical repository state at `skybridgecx-code/faceless-youtube-backend@20c30309...`. That audit remains architectural input, but its repository-state observations are not the implementation reset target.
+Ownership was transferred after I2 at `21f696798942a3fd23d65ca871b55085f4858f3d` with history preserved. The earlier architecture blueprint inspected a historical repository state at `skybridgecx-code/faceless-youtube-backend@20c30309...`; that historical repository is now archive-preserved as `skybridgecx-code/faceless-youtube-backend-historical`. Its audit remains architectural input, but its repository-state observations are not the implementation reset target.
 
 The repository is in a **controlled migration**. Legacy routes, models, workflows, and data remain operational until replacement behavior passes the required phase gates and shadow-production cutover.
 
@@ -38,9 +43,9 @@ Derived Shorts reuse the approved campaign evidence and may not introduce unsupp
 
 Autopilot v1 excludes sensitive health, finance, elections/politics, war/conflict, and legal-advice topics.
 
-## Current legacy capabilities at the I0 baseline
+## Current capabilities after I2
 
-The existing application already includes:
+The application includes:
 
 - FastAPI
 - SQLAlchemy
@@ -56,15 +61,29 @@ The existing application already includes:
 - a gated **private** YouTube upload endpoint
 - local deterministic workflow smoke testing
 
-These capabilities are preserved while the canonical campaign/workflow core is introduced.
+I2 completed migration reconciliation and introduced the canonical persistence core alongside the preserved legacy state:
+
+- Alembic is canonical for schema evolution.
+- Application startup validates schema state and no longer performs `Base.metadata.create_all()` or additive startup DDL.
+- Canonical `Campaign`, `Source`, `Claim`, `Artifact`, `Scene`, `GenerationJob`, `GateDecision`, `Approval`, and `MetricSnapshot` persistence is present.
+- Legacy compatibility remains until later migration and shadow-production gates pass.
 
 Important current-state limitations:
 
 - the legacy domain model still has multiple root-like entities and duplicated status concepts,
-- `app/db.py` still performs `Base.metadata.create_all()` and additive SQLite startup schema helpers,
-- the target canonical `Campaign`, immutable `Artifact`, and `GateDecision` model is not yet implemented,
 - DBOS durable workflow ownership is not yet implemented,
+- the target workflow engine is not yet implemented,
 - target hash-bound release approval is not yet implemented.
+
+## Campaign budget policy
+
+`policies/campaign_budget.v1.json` locks the future variable metered-cost envelope for a normal 8–12 minute long-form campaign:
+
+- target: $20.00 / 20,000,000 micro-USD
+- soft warning: $25.00 / 25,000,000 micro-USD
+- default hard cap: $35.00 / 35,000,000 micro-USD
+
+Future metered provider calls must pass a campaign budget preflight. The soft warning requires cost-reduction fallbacks, and a predicted hard-cap breach blocks the next request unless an explicit, audited, campaign-specific owner override authorizes a new cap. Budget controls never weaken truth, source, rights, safety, editorial-quality, or approval gates.
 
 ## Safety boundary
 
@@ -192,7 +211,8 @@ Never commit API keys, OAuth credentials, refresh tokens, or other secrets.
 
 - I0 — baseline freeze and evidence capture: complete
 - I1 — governance lock
-- I2 — existing Alembic reconciliation + canonical core schema
+- I2 — existing Alembic reconciliation + canonical core schema: complete
+- I2.1 — campaign budget + repository identity governance lock
 - I3 — durable workflow and deterministic gate engine
 - I4 — topic/research/claims/script
 - I5 — storyboard/media/TTS/render

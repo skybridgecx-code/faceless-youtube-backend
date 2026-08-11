@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "product": "autonomous-youtube-studio",
   "architecture_status": "target_during_controlled_migration",
   "deployment": "modular-monolith",
@@ -9,10 +9,19 @@
     "sha": "3f270573d2786762123e9d11239f65a6c4d2061a",
     "shared_historical_anchor": "5afebd93b98e6b65ccec41da036ad1ec972dc517"
   },
-  "historical_blueprint_audit": {
+  "current_repository": {
     "repository": "skybridgecx-code/faceless-youtube-backend",
     "branch": "youmo-clone-v2",
+    "ownership_transfer_source": "Aatifshow33/faceless-youtube-backend",
+    "ownership_transfer_completed_after_phase": "I2",
+    "ownership_transfer_completion_sha": "21f696798942a3fd23d65ca871b55085f4858f3d"
+  },
+  "historical_blueprint_audit": {
+    "repository_at_audit": "skybridgecx-code/faceless-youtube-backend",
+    "current_archive_repository": "skybridgecx-code/faceless-youtube-backend-historical",
+    "branch_at_audit": "youmo-clone-v2",
     "sha": "20c30309d30a93bda9474c10c28f81cf237b733f",
+    "shared_historical_anchor": "5afebd93b98e6b65ccec41da036ad1ec972dc517",
     "status": "historical_repository_state_only"
   },
   "runtime_stages": [
@@ -40,8 +49,27 @@
     "no_unconstrained_view_or_revenue_maximization",
     "sponsor_economics_cannot_influence_editorial_claims_or_conclusions",
     "production_volume_is_not_primary_optimization_target",
-    "controlled_editorial_exploration_is_required"
+    "controlled_editorial_exploration_is_required",
+    "metered_provider_calls_require_campaign_budget_preflight",
+    "predicted_campaign_hard_cap_breach_blocks_provider_call",
+    "campaign_budget_overrides_require_explicit_owner_authorization_and_audit"
   ],
+  "campaign_budget_contract": {
+    "policy_path": "policies/campaign_budget.v1.json",
+    "policy_version": "campaign-budget-v1",
+    "currency": "USD",
+    "target_microusd": 20000000,
+    "soft_warning_microusd": 25000000,
+    "hard_cap_microusd": 35000000,
+    "require_preflight_estimate": true,
+    "fallback_after_soft_warning": true,
+    "block_request_above_hard_cap": true,
+    "owner_override_required": true,
+    "override_must_be_campaign_specific": true,
+    "override_must_be_audited": true,
+    "analytics_may_mutate_policy_or_caps": false,
+    "providers_may_mutate_policy_or_caps": false
+  },
   "commercial_success_contract": {
     "north_star": "maximize_long_term_viewer_value_and_sustainable_campaign_economics_subject_to_hard_invariants",
     "primary_metric_priority": [
@@ -69,7 +97,10 @@
         "retention_oriented_visual_selection",
         "visual_mode_diversity",
         "bounded_generated_media",
-        "meaningful_visual_progression"
+        "meaningful_visual_progression",
+        "campaign_budget_preflight_enforcement",
+        "soft_warning_cost_fallback",
+        "hard_cap_provider_block"
       ],
       "I6": [
         "first_30_seconds_hook_qa",
@@ -81,7 +112,10 @@
         "audience_learning",
         "campaign_unit_economics",
         "performance_snapshots",
-        "analytics_nonmutation"
+        "analytics_nonmutation",
+        "campaign_cost_accounting",
+        "cost_per_published_minute",
+        "budget_override_audit_reporting"
       ]
     },
     "first_meaningful_public_evaluation_campaigns": 10,
@@ -120,6 +154,14 @@
     "startup_schema_mutation_present": true,
     "private_youtube_upload_path_present": true,
     "campaign_root_present": false,
+    "dbos_workflow_present": false,
+    "hash_bound_release_approval_present": false
+  },
+  "current_state_after_i2": {
+    "alembic_canonical_for_schema_evolution": true,
+    "startup_schema_mutation_present": false,
+    "canonical_core_persistence_present": true,
+    "legacy_compatibility_present": true,
     "dbos_workflow_present": false,
     "hash_bound_release_approval_present": false
   }
