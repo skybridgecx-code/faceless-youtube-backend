@@ -359,7 +359,7 @@ def test_force_with_lease_rejects_remote_race_between_plan_and_push(
         return original_git(root, *args, timeout=timeout)
 
     monkeypatch.setattr(publish_module, "_git", racing_git)
-    with pytest.raises(PublishError, match="git push failed"):
+    with pytest.raises(PublishError, match="failed with exit 1"):
         execute_publish(control, config, run.run_id, _remote_target=str(bare))
     assert raced
     assert _bare_sha(bare, BRANCH) == racer_sha
