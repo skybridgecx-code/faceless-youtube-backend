@@ -19,6 +19,7 @@ from .config import ProjectConfigError, load_project_config
 from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
 from .hygiene import WorkspaceHygieneError, plan_ignored_cleanup
+from .operation_lease import OperationLeaseError, operation_lease
 from .state import state_directory
 from .workspace import WorkspaceError, verify_executor_workspace
 
@@ -144,25 +145,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"CHANGED_FILES={json.dumps(list(files))}")
         print(f"DIFF_SHA256={diff_sha}")
         print(f"IGNORED_ARTIFACTS_TO_CLEAN={json.dumps(list(ignored))}")
+        print("EXECUTOR_LEASE=NOT_ACQUIRED")
         print("GIT_COMMIT=NOT_CREATED")
         print("GIT_PUSH=NOT_STARTED")
         print("RERUN_WITH=youmo-checkpoint ... --execute")
         return 0
 
     try:
-        result = create_checkpoint(
-            control_root=control_state.root,
-            workspace_root=workspace,
-            config=config,
-            task=args.task,
-            build_evidence=build,
-            audit_evidence=audit,
-            expected_architecture=expected_arch,
-            build_evidence_sha256=sha256_file(build_path),
-            audit_evidence_sha256=sha256_file(audit_path),
-            subject=args.subject,
-        )
-    except CheckpointError as exc:
+        with operation_lease(control_state.root, config, workspace, "checkpoint"):
+            result = create_checkpoint(
+                control_root=control_state.root,
+                workspace_root=workspace,
+                config=config,
+                task=args.task,
+                build_evidence=build,
+                audit_evidence=audit,
+                expected_architecture=expected_arch,
+                build_evidence_sha256=sha256_file(build_path),
+                audit_evidence_sha256=sha256_file(audit_path),
+                subject=args.subject,
+            )
+    except (CheckpointError, OperationLeaseError) as exc:
         print(f"STOP: checkpoint failed: {exc}", file=sys.stderr)
         return 10
 
