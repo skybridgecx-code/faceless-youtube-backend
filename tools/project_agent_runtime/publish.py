@@ -6,11 +6,11 @@ import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from .architecture import ArchitectureError, load_architecture_snapshot
 from .config import ProjectConfig
-from .git_state import GitInspectionError, inspect_repo
+from .git_state import GitInspectionError
 from .hygiene import WorkspaceHygieneError, require_no_ignored_untracked
 from .operation_lease import OperationLeaseError, operation_lease
 from .run_manifest import (
@@ -100,9 +100,22 @@ def _validate_branch(root: Path, branch: str) -> str:
     return normalized
 
 
-def resolve_remote_branch_sha(root: Path, branch: str) -> str | None:
+def _validate_remote_target(remote_target: str) -> str:
+    value = remote_target.strip()
+    if not value or value.startswith("-") or any(ch in value for ch in ("\x00", "\n", "\r")):
+        raise PublishError("internal publish remote target is invalid")
+    return value
+
+
+def resolve_remote_branch_sha(
+    root: Path,
+    branch: str,
+    *,
+    remote_target: str = "origin",
+) -> str | None:
     normalized = _validate_branch(root, branch)
-    completed = _git_result(root, "ls-remote", "origin", f"refs/heads/{normalized}")
+    target = _validate_remote_target(remote_target)
+    completed = _git_result(root, "ls-remote", target, f"refs/heads/{normalized}")
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise PublishError(f"remote branch inspection failed: {detail}")
@@ -112,7 +125,7 @@ def resolve_remote_branch_sha(root: Path, branch: str) -> str | None:
         return None
     if len(matches) != 1:
         raise PublishError(
-            f"expected exactly one remote branch match for origin/{normalized}; got {len(matches)}"
+            f"expected exactly one remote branch match for {normalized!r}; got {len(matches)}"
         )
     sha = matches[0][0].lower()
     if len(sha) != 40 or any(ch not in "0123456789abcdef" for ch in sha):
@@ -160,7 +173,6 @@ def _load_checkpoint_payload(
             raise PublishError(
                 f"checkpoint evidence mismatch for {key}: {payload.get(key)!r} != {value!r}"
             )
-    # Resolve calls above prove the immutable files still hash to their manifest bindings.
     if not build_path.is_file() or not audit_path.is_file():
         raise PublishError("build/audit evidence disappeared during checkpoint verification")
     return payload
@@ -174,17 +186,24 @@ def _is_ancestor(root: Path, older: str, newer: str) -> bool:
     return _git_result(root, "merge-base", "--is-ancestor", older, newer).returncode == 0
 
 
-def _fetch_remote_branch_objects(root: Path, branch: str, expected_sha: str) -> None:
+def _fetch_remote_branch_objects(
+    root: Path,
+    branch: str,
+    expected_sha: str,
+    *,
+    remote_target: str,
+) -> None:
+    target = _validate_remote_target(remote_target)
     _git(
         root,
         "fetch",
         "--no-tags",
         "--no-write-fetch-head",
-        "origin",
+        target,
         f"refs/heads/{branch}",
         timeout=300,
     )
-    observed = resolve_remote_branch_sha(root, branch)
+    observed = resolve_remote_branch_sha(root, branch, remote_target=target)
     if observed != expected_sha:
         raise PublishError(
             "remote branch changed while ancestry was being proven; rerun publication preflight"
@@ -199,6 +218,7 @@ def _verify_remote_fast_forward(
     commit_sha: str,
     checkpoint_parent: str | None,
     allow_fetch: bool,
+    remote_target: str,
 ) -> None:
     if remote_sha == commit_sha:
         return
@@ -209,7 +229,12 @@ def _verify_remote_fast_forward(
             raise PublishError(
                 "remote branch commit is not present locally; execute mode must fetch it before ancestry can be proven"
             )
-        _fetch_remote_branch_objects(root, branch, remote_sha)
+        _fetch_remote_branch_objects(
+            root,
+            branch,
+            remote_sha,
+            remote_target=remote_target,
+        )
     if not _is_ancestor(root, remote_sha, commit_sha):
         raise PublishError(
             f"remote branch is not an ancestor of checkpoint commit: remote={remote_sha}; checkpoint={commit_sha}"
@@ -222,12 +247,19 @@ def prepare_publish(
     run_id: str,
     *,
     allow_fetch: bool = False,
+    _remote_target: str = "origin",
 ) -> PublishPlan:
     control = control_root.resolve()
+    target = _validate_remote_target(_remote_target)
     try:
         manifest = load_run_manifest(control, config, run_id)
     except RunManifestError as exc:
         raise PublishError(str(exc)) from exc
+    if manifest.branch == config.canonical_branch:
+        raise PublishError("publication to the canonical branch is forbidden")
+    if not branch_allowed_for_execution(manifest.branch, config):
+        raise PublishError(f"branch is not allowed for executor publication: {manifest.branch!r}")
+
     workspace = Path(manifest.workspace).expanduser().resolve()
     checkpoint = _load_checkpoint_payload(control, config, manifest)
 
@@ -255,10 +287,6 @@ def prepare_publish(
         raise PublishError(
             f"executor origin mismatch: {state.normalized_origin!r} != {config.repository!r}"
         )
-    if manifest.branch == config.canonical_branch:
-        raise PublishError("publication to the canonical branch is forbidden")
-    if not branch_allowed_for_execution(manifest.branch, config):
-        raise PublishError(f"branch is not allowed for executor publication: {manifest.branch!r}")
 
     try:
         require_no_ignored_untracked(workspace, context="before publish")
@@ -278,7 +306,11 @@ def prepare_publish(
     ):
         raise PublishError("executor architecture authority differs from controller")
 
-    remote_before = resolve_remote_branch_sha(workspace, manifest.branch)
+    remote_before = resolve_remote_branch_sha(
+        workspace,
+        manifest.branch,
+        remote_target=target,
+    )
     if remote_before is None:
         mode = "CREATE_REMOTE_BRANCH"
     elif remote_before == commit_sha:
@@ -289,8 +321,13 @@ def prepare_publish(
             branch=manifest.branch,
             remote_sha=remote_before,
             commit_sha=commit_sha,
-            checkpoint_parent=checkpoint.get("parent_sha") if isinstance(checkpoint.get("parent_sha"), str) else None,
+            checkpoint_parent=(
+                checkpoint.get("parent_sha")
+                if isinstance(checkpoint.get("parent_sha"), str)
+                else None
+            ),
             allow_fetch=allow_fetch,
+            remote_target=target,
         )
         mode = "FAST_FORWARD_REMOTE_BRANCH"
 
@@ -344,8 +381,11 @@ def execute_publish(
     control_root: Path,
     config: ProjectConfig,
     run_id: str,
+    *,
+    _remote_target: str = "origin",
 ) -> PublishResult:
     control = control_root.resolve()
+    target = _validate_remote_target(_remote_target)
     try:
         manifest = load_run_manifest(control, config, run_id)
     except RunManifestError as exc:
@@ -355,10 +395,20 @@ def execute_publish(
 
     try:
         with operation_lease(control, config, workspace, "publish"):
-            plan = prepare_publish(control, config, run_id, allow_fetch=True)
+            plan = prepare_publish(
+                control,
+                config,
+                run_id,
+                allow_fetch=True,
+                _remote_target=target,
+            )
             existing = _read_existing_publish(evidence_path)
             if existing is not None:
-                remote = resolve_remote_branch_sha(workspace, plan.branch)
+                remote = resolve_remote_branch_sha(
+                    workspace,
+                    plan.branch,
+                    remote_target=target,
+                )
                 expected = {
                     "run_id": plan.run_id,
                     "branch": plan.branch,
@@ -388,21 +438,26 @@ def execute_publish(
 
             if not plan.already_published:
                 ref = f"refs/heads/{plan.branch}"
-                if plan.remote_before is None:
-                    lease = f"--force-with-lease={ref}:"
-                else:
-                    lease = f"--force-with-lease={ref}:{plan.remote_before}"
+                lease = (
+                    f"--force-with-lease={ref}:"
+                    if plan.remote_before is None
+                    else f"--force-with-lease={ref}:{plan.remote_before}"
+                )
                 _git(
                     workspace,
                     "push",
                     "--porcelain",
                     lease,
-                    "origin",
+                    target,
                     f"{plan.commit_sha}:{ref}",
                     timeout=300,
                 )
 
-            remote_after = resolve_remote_branch_sha(workspace, plan.branch)
+            remote_after = resolve_remote_branch_sha(
+                workspace,
+                plan.branch,
+                remote_target=target,
+            )
             if remote_after != plan.commit_sha:
                 raise PublishError(
                     f"post-publish remote verification failed: {remote_after!r} != {plan.commit_sha!r}"
@@ -425,7 +480,11 @@ def execute_publish(
             }
             _persist_publish_evidence(evidence_path, payload)
             return PublishResult(
-                status="PUBLISHED" if not plan.already_published else "RECORDED_EXISTING_REMOTE",
+                status=(
+                    "PUBLISHED"
+                    if not plan.already_published
+                    else "RECORDED_EXISTING_REMOTE"
+                ),
                 run_id=plan.run_id,
                 workspace=plan.workspace,
                 branch=plan.branch,
