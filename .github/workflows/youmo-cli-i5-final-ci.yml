@@ -1,0 +1,37 @@
+name: YouMo CLI I5 Final Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i5-final-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  i5-final-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Provenance diagnostics
+        run: |
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "BRANCH=$(git branch --show-current)"
+          git status --porcelain=v1
+      - name: Create repository virtualenv
+        run: python -m venv .venv
+      - name: Install repository requirements
+        run: .venv/bin/python -m pip install -r requirements.txt
+      - name: Compile YouMo tooling
+        run: .venv/bin/python -m py_compile tools/project_agent_runtime/*.py scripts/youmo scripts/youmo-build scripts/youmo-audit scripts/youmo-checkpoint
+      - name: Run focused I0-I5 tests
+        run: .venv/bin/python -m pytest -q tests/test_project_agent_runtime.py tests/test_project_agent_workspace.py tests/test_project_agent_build.py tests/test_project_agent_audit.py tests/test_project_agent_checkpoint.py
+      - name: Run full repository pytest suite
+        run: .venv/bin/python -m pytest -q
+      - name: Check JavaScript syntax
+        if: always()
+        run: node --check app/static/app.js
