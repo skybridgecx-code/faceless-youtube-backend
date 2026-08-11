@@ -18,7 +18,7 @@ from .checkpoint_engine import (
 from .config import ProjectConfigError, load_project_config
 from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
-from .hygiene import WorkspaceHygieneError, ignored_untracked_files
+from .hygiene import WorkspaceHygieneError, plan_ignored_cleanup
 from .state import state_directory
 from .workspace import WorkspaceError, verify_executor_workspace
 
@@ -125,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         head, branch, files, diff_sha = verify_audit_preconditions(
             workspace, args.task, build, expected_arch
         )
-        ignored = ignored_untracked_files(workspace)
+        ignored = plan_ignored_cleanup(workspace)
     except (AuditGuardError, WorkspaceHygieneError) as exc:
         print(f"STOP: checkpoint preflight failed: {exc}", file=sys.stderr)
         return 10
