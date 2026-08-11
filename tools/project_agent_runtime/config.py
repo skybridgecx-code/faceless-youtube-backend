@@ -7,7 +7,17 @@ from typing import Any
 
 
 class ProjectConfigError(ValueError):
-    """Raised when a project runtime manifest is invalid."""
+    """Raised when the YouMo runtime manifest is invalid."""
+
+
+@dataclass(frozen=True)
+class CodexPolicy:
+    sdk_requirement: str
+    implementation_model: str
+    implementation_reasoning: str
+    audit_model: str
+    audit_reasoning: str
+    require_explicit_execute: bool
 
 
 @dataclass(frozen=True)
@@ -21,6 +31,7 @@ class ProjectConfig:
     architecture_lock: str
     architecture_sources: tuple[str, ...]
     state_dir: str
+    codex: CodexPolicy
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "ProjectConfig":
@@ -34,6 +45,7 @@ class ProjectConfig:
             "architecture_lock",
             "architecture_sources",
             "state_dir",
+            "codex",
         }
         missing = sorted(required - data.keys())
         if missing:
@@ -72,6 +84,39 @@ class ProjectConfig:
         if repository.count("/") != 1:
             raise ProjectConfigError("repository must use owner/name form")
 
+        codex = data["codex"]
+        if not isinstance(codex, dict):
+            raise ProjectConfigError("codex must be an object")
+        codex_required = {
+            "sdk_requirement",
+            "implementation_model",
+            "implementation_reasoning",
+            "audit_model",
+            "audit_reasoning",
+            "require_explicit_execute",
+        }
+        codex_missing = sorted(codex_required - codex.keys())
+        if codex_missing:
+            raise ProjectConfigError(
+                f"codex config missing required keys: {', '.join(codex_missing)}"
+            )
+        for key in (
+            "sdk_requirement",
+            "implementation_model",
+            "implementation_reasoning",
+            "audit_model",
+            "audit_reasoning",
+        ):
+            if not isinstance(codex[key], str) or not codex[key].strip():
+                raise ProjectConfigError(f"codex.{key} must be a non-empty string")
+        allowed_reasoning = {"none", "low", "medium", "high", "xhigh", "max"}
+        if codex["implementation_reasoning"] not in allowed_reasoning:
+            raise ProjectConfigError("codex.implementation_reasoning is invalid")
+        if codex["audit_reasoning"] not in allowed_reasoning:
+            raise ProjectConfigError("codex.audit_reasoning is invalid")
+        if not isinstance(codex["require_explicit_execute"], bool):
+            raise ProjectConfigError("codex.require_explicit_execute must be boolean")
+
         return cls(
             schema_version=1,
             project_id=data["project_id"].strip(),
@@ -82,6 +127,14 @@ class ProjectConfig:
             architecture_lock=data["architecture_lock"].strip(),
             architecture_sources=tuple(sources),
             state_dir=data["state_dir"].strip(),
+            codex=CodexPolicy(
+                sdk_requirement=codex["sdk_requirement"].strip(),
+                implementation_model=codex["implementation_model"].strip(),
+                implementation_reasoning=codex["implementation_reasoning"].strip(),
+                audit_model=codex["audit_model"].strip(),
+                audit_reasoning=codex["audit_reasoning"].strip(),
+                require_explicit_execute=codex["require_explicit_execute"],
+            ),
         )
 
 

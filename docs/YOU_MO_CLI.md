@@ -1,37 +1,60 @@
 # YouMo Engineering Runtime
 
-This directory documents the project-scoped Codex runtime being introduced on an
-isolated tooling branch. It is not part of the YouTube production runtime.
+The YouMo CLI is a project-scoped Codex engineering runtime for the Autonomous YouTube Studio repository. It is tooling only; it is not imported by the FastAPI/DBOS production application.
 
-## I0 scope
+## Current audited scope
 
-I0 implements deterministic project identity, Git state inspection, architecture
-authority hashing, compact context-capsule compilation, and fail-closed preflight
-gates.
+I0 established deterministic repository identity, branch/worktree preflight, architecture authority hashing, and compact context capsules.
 
-The `build` command is deliberately non-executing in I0. `youmo build --dry-run`
-proves that the repository and architecture context can be established without
-starting a second Codex process. Codex transport is a later isolated phase.
+I1 adds the official OpenAI Codex Python SDK boundary without enabling write-capable agent execution:
 
-## Commands
+- tooling dependencies live in `requirements-youmo-cli.txt`, separate from production dependencies;
+- SDK loading is lazy and `doctor` does not start Codex;
+- `plan --execute` is explicitly opt-in and read-only;
+- the Codex thread ID and architecture/HEAD binding are persisted under ignored `.youmo/` state;
+- a saved thread is rejected when repository HEAD or `architecture.lock.json` changes unless a fresh thread is explicitly requested;
+- `build` remains non-writing until the isolated execution-workspace phase is implemented and audited;
+- the transport refuses the SDK `full_access` sandbox.
+
+## Model policy
+
+- planning / normal implementation: `gpt-5.6-terra`, reasoning `high`;
+- independent semantic audit: `gpt-5.6-sol`, reasoning `high`.
+
+The model policy is stored in the YouMo manifest so it is deterministic and reviewable.
+
+## Setup
+
+```bash
+python -m pip install -r requirements-youmo-cli.txt
+./scripts/youmo doctor
+```
+
+`doctor` only checks the installed SDK version against the pinned requirement. It does not launch a Codex process.
+
+## Safe commands
 
 ```bash
 ./scripts/youmo status
 ./scripts/youmo gate
 ./scripts/youmo context
+./scripts/youmo doctor
 ./scripts/youmo build --dry-run
+./scripts/youmo plan
 ```
 
-## Isolation contract
+`plan` without `--execute` is also non-executing. It prints the selected model, reasoning level, sandbox, and explicit command needed to start a read-only turn.
 
-The tooling implementation must not operate in a worktree being mutated by
-another Codex/Desktop task. A non-clean worktree fails the preflight. The tooling
-branch is kept separate until the active implementation task is complete and its
-remote state is audited.
+## Read-only Codex plan
 
-## Reuse
+Only when no other Codex task is using the same checkout:
 
-`tools/project_agent_runtime` is generic. A second project should provide a new
-project manifest and launcher instead of copying the runtime. Project manifests
-define repository identity, canonical branch, allowed branch families, and
-architecture authorities.
+```bash
+./scripts/youmo plan --execute
+```
+
+The first run creates a Codex thread. Later runs resume it only while both the Git HEAD and architecture-lock SHA-256 remain unchanged. Use `--fresh-thread` after an intentional repository or architecture transition.
+
+## Write execution
+
+`./scripts/youmo build` intentionally fails closed in I1. The next tooling phase must create and verify an execution workspace that cannot collide with Codex Desktop or another agent before `workspace_write` is authorized.

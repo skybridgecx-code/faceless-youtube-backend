@@ -29,9 +29,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_architecture_snapshot(
-    repo_root: Path, config: ProjectConfig
-) -> ArchitectureSnapshot:
+def load_architecture_snapshot(repo_root: Path, config: ProjectConfig) -> ArchitectureSnapshot:
     lock_path = repo_root / config.architecture_lock
     try:
         raw = lock_path.read_text(encoding="utf-8")
@@ -40,7 +38,6 @@ def load_architecture_snapshot(
         raise ArchitectureError(f"architecture lock missing: {lock_path}") from exc
     except json.JSONDecodeError as exc:
         raise ArchitectureError(f"architecture lock is invalid JSON: {lock_path}") from exc
-
     if not isinstance(lock, dict):
         raise ArchitectureError("architecture lock root must be a JSON object")
 
@@ -65,11 +62,7 @@ def compile_context_capsule(
 ) -> dict[str, Any]:
     lock = snapshot.lock
     commercial = lock.get("commercial_success_contract", {})
-    phase_requirements = (
-        commercial.get("phase_requirements", {})
-        if isinstance(commercial, dict)
-        else {}
-    )
+    phase_requirements = commercial.get("phase_requirements", {}) if isinstance(commercial, dict) else {}
     return {
         "capsule_schema_version": 1,
         "project": {
@@ -95,6 +88,12 @@ def compile_context_capsule(
             "migration_rules": lock.get("migration_rules", []),
             "phase_requirements": phase_requirements,
             "source_sha256": snapshot.source_sha256,
+        },
+        "codex_policy": {
+            "implementation_model": config.codex.implementation_model,
+            "implementation_reasoning": config.codex.implementation_reasoning,
+            "audit_model": config.codex.audit_model,
+            "audit_reasoning": config.codex.audit_reasoning,
         },
     }
 
