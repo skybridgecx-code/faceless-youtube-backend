@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shlex
 import sys
 from pathlib import Path
@@ -61,7 +60,15 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validated_sha(value: str) -> str:
+    normalized = value.strip().lower()
+    if len(normalized) != 40 or any(ch not in "0123456789abcdef" for ch in normalized):
+        raise ControllerError("--sha must be a full 40-character hexadecimal commit SHA")
+    return normalized
+
+
 def _status_lines(status: object) -> list[str]:
+    clean = getattr(status, "clean")
     return [
         f"INSTALLED={str(getattr(status, 'installed')).upper()}",
         f"READY={str(getattr(status, 'ready')).upper()}",
@@ -71,9 +78,10 @@ def _status_lines(status: object) -> list[str]:
         f"HEAD={getattr(status, 'head') or '<none>'}",
         f"EXPECTED_HEAD={getattr(status, 'expected_head') or '<none>'}",
         f"BRANCH={getattr(status, 'branch') or '<none>'}",
-        f"CLEAN={getattr(status, 'clean') if getattr(status, 'clean') is not None else '<unknown>'}",
+        f"CLEAN={clean if clean is not None else '<unknown>'}",
         f"DEPENDENCIES_READY={str(getattr(status, 'dependencies_ready')).upper()}",
         f"LAUNCHERS_READY={str(getattr(status, 'launchers_ready')).upper()}",
+        f"PUSH_DISABLED={str(getattr(status, 'push_disabled')).upper()}",
         f"DETAIL={getattr(status, 'detail')}",
     ]
 
@@ -93,6 +101,7 @@ def _dry_run_install(layout: ControllerLayout, sha: str, ref: str) -> int:
     print(f"CONTROLLER_REPO={layout.repo}")
     print(f"CONTROLLER_VENV={layout.venv}")
     print(f"CONTROLLER_BIN={layout.bin}")
+    print("CONTROLLER_PUSH_POLICY=DISABLED")
     print("ACTIVE_PROJECT_CHECKOUT_MUTATION=NONE")
     print("SHELL_PROFILE_MUTATION=NONE")
     print("GIT_PUSH=NOT_STARTED")
@@ -115,6 +124,7 @@ def _dry_run_refresh(layout: ControllerLayout, sha: str, ref: str) -> int:
     print(f"SOURCE_REF={ref}")
     print(f"EXPECTED_SHA={sha}")
     print("FAST_FORWARD_ONLY=TRUE")
+    print("CONTROLLER_PUSH_POLICY=DISABLED")
     print("ACTIVE_PROJECT_CHECKOUT_MUTATION=NONE")
     print("SHELL_PROFILE_MUTATION=NONE")
     print("GIT_PUSH=NOT_STARTED")
@@ -136,8 +146,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"PATH_HINT={_path_hint(layout)}")
         return 0 if status.ready else 3
 
-    sha = args.sha.strip().lower()
+    try:
+        sha = _validated_sha(args.sha)
+    except ControllerError as exc:
+        print(f"STOP: {exc}", file=sys.stderr)
+        return 3
     ref = args.ref.strip()
+    if not ref:
+        print("STOP: --ref must be non-empty", file=sys.stderr)
+        return 3
+
     if not args.execute:
         if args.command == "install":
             return _dry_run_install(layout, sha, ref)
