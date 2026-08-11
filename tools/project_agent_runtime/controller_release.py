@@ -18,13 +18,14 @@ from .controller import (
 )
 
 
-CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i14"
+CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i15"
 EXTRA_LAUNCHERS: tuple[str, ...] = (
     "youmo-doctor",
     "youmo-resume",
     "youmo-pilot",
     "youmo-publish",
     "youmo-promote-check",
+    "youmo-promote",
 )
 
 
@@ -95,7 +96,7 @@ def inspect_controller_release(
         detail = "controller release ready"
     elif base.ready and not extras_ready:
         detail = (
-            "controller core ready but doctor/resume/pilot/publish/promote-check "
+            "controller core ready but doctor/resume/pilot/publish/promote-check/promote "
             "launchers are missing or stale"
         )
     else:
