@@ -1,0 +1,30 @@
+name: YouMo CLI I13 Focused Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i13-focused-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Provenance
+        run: |
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "BRANCH=$(git branch --show-current)"
+          git status --porcelain=v1
+      - name: Install focused test runner
+        run: python -m pip install pytest
+      - name: Compile I13 tooling
+        run: python -m py_compile tools/project_agent_runtime/publish.py tools/project_agent_runtime/publish_cli.py tools/project_agent_runtime/controller_release.py tools/project_agent_runtime/controller_release_cli.py scripts/youmo-publish
+      - name: Run publisher and release tests
+        run: python -m pytest -q tests/test_project_agent_publish.py tests/test_project_agent_controller_release.py
