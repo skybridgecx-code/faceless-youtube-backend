@@ -46,7 +46,7 @@ def _fixture(tmp_path: Path, *, configure_executor_identity: bool = True):
         "git@github.com:skybridgecx-code/faceless-youtube-backend.git",
     )
     (control / ".gitignore").write_text(
-        ".env\n.pytest_cache/\n__pycache__/\n*.pyc\n", encoding="utf-8"
+        ".env\n.pytest_cache/\n__pycache__/\n*.pyc\n*.db\nout/\n", encoding="utf-8"
     )
     lock = {
         "schema_version": 3,
@@ -192,6 +192,46 @@ def test_checkpoint_creates_one_bound_commit_and_advances_workspace(tmp_path: Pa
     assert report.passed
     assert report.marker is not None
     assert report.marker.base_sha == result.commit_sha
+
+
+def test_checkpoint_preserves_non_disposable_ignored_artifacts_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    control, executor, config, base, expected_arch = _fixture(tmp_path)
+    build, audit = _evidence(executor)
+
+    env_file = executor / ".env"
+    database = executor / "content_factory.db"
+    rendered = executor / "out" / "render.mp4"
+    cache = executor / ".pytest_cache" / "state"
+    env_file.write_text("SECRET=1\n", encoding="utf-8")
+    database.write_bytes(b"sqlite-placeholder")
+    rendered.parent.mkdir(parents=True)
+    rendered.write_bytes(b"render-placeholder")
+    cache.parent.mkdir(parents=True)
+    cache.write_text("cache\n", encoding="utf-8")
+
+    with pytest.raises(CheckpointError, match="non-disposable ignored workspace artifacts"):
+        create_checkpoint(
+            control_root=control,
+            workspace_root=executor,
+            config=config,
+            task="Implement checkpoint feature",
+            build_evidence=build,
+            audit_evidence=audit,
+            expected_architecture=expected_arch,
+            build_evidence_sha256="b" * 64,
+            audit_evidence_sha256="a" * 64,
+            subject="Checkpoint test",
+        )
+
+    assert _git(executor, "rev-parse", "HEAD") == base
+    assert _git(executor, "diff", "--cached", "--name-only") == ""
+    assert (executor / "app" / "feature.py").is_file()
+    assert env_file.read_text(encoding="utf-8") == "SECRET=1\n"
+    assert database.read_bytes() == b"sqlite-placeholder"
+    assert rendered.read_bytes() == b"render-placeholder"
+    assert cache.read_text(encoding="utf-8") == "cache\n"
 
 
 def test_checkpoint_rejects_build_audit_mismatch(tmp_path: Path) -> None:
