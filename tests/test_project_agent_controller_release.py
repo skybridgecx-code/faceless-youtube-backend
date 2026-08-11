@@ -35,6 +35,7 @@ ALL_LAUNCHERS = (
     "youmo-pilot",
     "youmo-publish",
     "youmo-promote-check",
+    "youmo-promote",
 )
 
 
@@ -138,8 +139,8 @@ def _install(tmp_path: Path):
     return source, sha, layout, status
 
 
-def test_release_ref_is_current_i14_release() -> None:
-    assert CONTROLLER_RELEASE_REF == "tooling/youmo-cli-i14"
+def test_release_ref_is_current_i15_release() -> None:
+    assert CONTROLLER_RELEASE_REF == "tooling/youmo-cli-i15"
 
 
 def test_release_install_manages_all_user_facing_launchers(tmp_path: Path) -> None:
@@ -169,20 +170,21 @@ def test_release_readiness_fails_if_managed_extra_wrapper_is_missing(tmp_path: P
         "youmo-pilot",
         "youmo-publish",
         "youmo-promote-check",
+        "youmo-promote",
     )
 
-    (layout.bin / "youmo-promote-check").unlink()
+    (layout.bin / "youmo-promote").unlink()
     observed = inspect_controller_release(layout)
     assert not observed.ready
     assert not observed.launchers_ready
-    assert "doctor/resume/pilot/publish/promote-check" in observed.detail
+    assert "doctor/resume/pilot/publish/promote-check/promote" in observed.detail
 
 
 def test_release_preflight_refuses_unmanaged_extra_launcher_before_clone(tmp_path: Path) -> None:
     source, sha = _synthetic_source(tmp_path)
     layout = default_layout(tmp_path / "controller")
     layout.bin.mkdir(parents=True)
-    collision = layout.bin / "youmo-promote-check"
+    collision = layout.bin / "youmo-promote"
     collision.write_text("#!/bin/sh\necho user-owned\n", encoding="utf-8")
 
     with pytest.raises(ControllerError, match="unmanaged launcher"):
@@ -224,6 +226,6 @@ def test_bootstrap_accepts_home_before_install_options_without_mutation(tmp_path
     assert completed.returncode == 0, completed.stderr
     assert "CONTROLLER_INSTALL=DRY_RUN" in completed.stdout
     assert f"CONTROLLER_REPO={home.resolve() / 'repo'}" in completed.stdout
-    assert "MANAGED_LAUNCHERS=youmo,youmo-build,youmo-audit,youmo-checkpoint,youmo-controller,youmo-doctor,youmo-resume,youmo-pilot,youmo-publish,youmo-promote-check" in completed.stdout
+    assert "MANAGED_LAUNCHERS=youmo,youmo-build,youmo-audit,youmo-checkpoint,youmo-controller,youmo-doctor,youmo-resume,youmo-pilot,youmo-publish,youmo-promote-check,youmo-promote" in completed.stdout
     assert "ACTIVE_PROJECT_CHECKOUT_MUTATION=NONE" in completed.stdout
     assert not home.exists()
