@@ -21,16 +21,14 @@ jobs:
         run: |
           echo "HEAD=$(git rev-parse HEAD)"
           echo "BRANCH=$(git branch --show-current)"
-          echo "=== TTS TEST PATHS ==="
-          find tests -maxdepth 1 -type f -iname '*tts*' -print | sort
-          echo "=== TEST_TTS_OPENAI EXISTS ==="
-          test -e tests/test_tts_openai.py && echo YES || echo NO
           echo "=== STATUS ==="
           git status --porcelain=v1
+      - name: Create repository virtualenv
+        run: python -m venv .venv
       - name: Install repository requirements
-        run: python -m pip install -r requirements.txt
+        run: .venv/bin/python -m pip install -r requirements.txt
       - name: Run full pytest suite
-        run: python -m pytest -q
+        run: .venv/bin/python -m pytest -q
       - name: Check JavaScript syntax
         if: always()
         run: node --check app/static/app.js
