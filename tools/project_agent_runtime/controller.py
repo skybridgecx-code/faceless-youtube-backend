@@ -25,7 +25,13 @@ DEFAULT_REPOSITORY_URL = "https://github.com/skybridgecx-code/faceless-youtube-b
 MANAGED_LAUNCHER_MARKER = "# YouMo managed launcher v1"
 _MANIFEST = "tools/project_agent_runtime/projects/youmo.json"
 _REQUIREMENTS = ("requirements.txt", "requirements-youmo-cli.txt")
-_LAUNCHERS = ("youmo", "youmo-build", "youmo-audit", "youmo-checkpoint", "youmo-controller")
+_LAUNCHERS = (
+    "youmo",
+    "youmo-build",
+    "youmo-audit",
+    "youmo-checkpoint",
+    "youmo-controller",
+)
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,34 @@ def _run(
     return completed.stdout.strip()
 
 
+def _is_ancestor(
+    repo: Path,
+    older: str,
+    newer: str,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> bool:
+    try:
+        completed = runner(
+            ["git", "merge-base", "--is-ancestor", older, newer],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ControllerError(f"failed to verify controller ancestry: {exc}") from exc
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+    detail = completed.stderr.strip() or completed.stdout.strip()
+    raise ControllerError(
+        f"controller ancestry check failed ({completed.returncode}): {detail}"
+    )
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -118,18 +152,26 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _dependency_identity(repo: Path, python_executable: str) -> dict[str, object]:
+def _dependency_identity(repo: Path, venv: Path) -> dict[str, object]:
+    python = venv / "bin" / "python"
+    if not python.is_file():
+        raise ControllerError(f"controller virtualenv has no bin/python: {venv}")
     hashes: dict[str, str] = {}
     for relative in _REQUIREMENTS:
         path = repo / relative
         if not path.is_file():
             raise ControllerError(f"controller requirement file missing: {relative}")
         hashes[relative] = _sha256_file(path)
-    return {
+    identity: dict[str, object] = {
         "schema_version": 1,
-        "python": str(Path(python_executable).resolve()),
+        "venv_path": str(venv.resolve()),
+        "python_path": str(python.absolute()),
         "requirements": hashes,
     }
+    pyvenv = venv / "pyvenv.cfg"
+    if pyvenv.is_file():
+        identity["pyvenv_cfg_sha256"] = _sha256_file(pyvenv)
+    return identity
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -148,14 +190,22 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + f".tmp-{os.getpid()}")
     try:
-        temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temp.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         os.chmod(temp, 0o600)
         temp.replace(path)
     finally:
         temp.unlink(missing_ok=True)
 
 
-def _metadata(layout: ControllerLayout, *, repository: str, source_ref: str, commit_sha: str) -> ControllerMetadata:
+def _metadata(
+    layout: ControllerLayout,
+    *,
+    repository: str,
+    source_ref: str,
+    commit_sha: str,
+) -> ControllerMetadata:
     return ControllerMetadata(
         schema_version=1,
         repository=repository,
@@ -194,6 +244,8 @@ def _load_metadata(layout: ControllerLayout) -> ControllerMetadata:
         raise ControllerError("controller metadata venv path does not match requested layout")
     if Path(metadata.bin_path).resolve() != layout.bin:
         raise ControllerError("controller metadata bin path does not match requested layout")
+    if metadata.runtime_branch != DEFAULT_RUNTIME_BRANCH:
+        raise ControllerError("controller metadata runtime branch is unexpected")
     return metadata
 
 
@@ -209,7 +261,8 @@ def _assert_safe_layout(layout: ControllerLayout, source_root: Path | None) -> N
         except ValueError:
             continue
         raise ControllerError(
-            f"dedicated controller path must not live inside the active source checkout: {candidate}"
+            "dedicated controller path must not live inside the active source checkout: "
+            f"{candidate}"
         )
 
 
@@ -230,7 +283,12 @@ def _controller_gate(repo: Path, expected_sha: str) -> None:
         raise ControllerError(f"controller HEAD mismatch: {state.head} != {expected_sha}")
 
 
-def _ensure_venv(layout: ControllerLayout, *, python_executable: str, runner: CommandRunner) -> None:
+def _ensure_venv(
+    layout: ControllerLayout,
+    *,
+    python_executable: str,
+    runner: CommandRunner,
+) -> None:
     python = layout.venv / "bin" / "python"
     if python.is_file():
         return
@@ -245,10 +303,9 @@ def _ensure_venv(layout: ControllerLayout, *, python_executable: str, runner: Co
 def _install_dependencies_if_needed(
     layout: ControllerLayout,
     *,
-    python_executable: str,
     runner: CommandRunner,
 ) -> bool:
-    identity = _dependency_identity(layout.repo, python_executable)
+    identity = _dependency_identity(layout.repo, layout.venv)
     if layout.dependency_stamp.is_file():
         try:
             current = _read_json(layout.dependency_stamp)
@@ -260,7 +317,14 @@ def _install_dependencies_if_needed(
     venv_python = layout.venv / "bin" / "python"
     for relative in _REQUIREMENTS:
         _run(
-            (str(venv_python), "-m", "pip", "install", "-r", str(layout.repo / relative)),
+            (
+                str(venv_python),
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                str(layout.repo / relative),
+            ),
             runner=runner,
             timeout=600,
         )
@@ -306,6 +370,15 @@ def _install_launchers(layout: ControllerLayout) -> None:
             temp.unlink(missing_ok=True)
 
 
+def _normalize_sha(value: str) -> str:
+    normalized = value.strip().lower()
+    if len(normalized) != 40 or any(ch not in "0123456789abcdef" for ch in normalized):
+        raise ControllerError(
+            "expected controller SHA must be a full 40-character hex commit"
+        )
+    return normalized
+
+
 def install_controller(
     *,
     expected_sha: str,
@@ -317,48 +390,62 @@ def install_controller(
     python_executable: str = sys.executable,
     runner: CommandRunner = subprocess.run,
 ) -> ControllerStatus:
-    if len(expected_sha) != 40 or any(ch not in "0123456789abcdef" for ch in expected_sha.lower()):
-        raise ControllerError("expected controller SHA must be a full 40-character hex commit")
+    expected_sha = _normalize_sha(expected_sha)
+    if not source_ref.strip():
+        raise ControllerError("controller source ref must be non-empty")
     layout = layout or default_layout()
     _assert_safe_layout(layout, source_root)
     if layout.metadata.exists() or layout.repo.exists() or layout.venv.exists():
         raise ControllerError(
-            "controller installation already exists or is partial; use status/refresh instead of replacing it"
+            "controller installation already exists or is partial; use status/refresh "
+            "instead of replacing it"
         )
 
     layout.home.mkdir(parents=True, exist_ok=True)
     clone_url = clone_source_url or repository_url
-    try:
-        _run(("git", "clone", "--no-checkout", clone_url, str(layout.repo)), runner=runner, timeout=600)
-        _run(("git", "fetch", "--no-tags", "origin", source_ref), cwd=layout.repo, runner=runner, timeout=600)
-        fetched = _run(("git", "rev-parse", "FETCH_HEAD"), cwd=layout.repo, runner=runner)
-        if fetched != expected_sha:
-            raise ControllerError(
-                f"controller source ref resolved to unexpected commit: {fetched} != {expected_sha}"
-            )
-        _run(("git", "checkout", "-B", DEFAULT_RUNTIME_BRANCH, expected_sha), cwd=layout.repo, runner=runner)
-        if clone_source_url is not None:
-            _run(("git", "remote", "set-url", "origin", repository_url), cwd=layout.repo, runner=runner)
-        _controller_gate(layout.repo, expected_sha)
-        _ensure_venv(layout, python_executable=python_executable, runner=runner)
-        _install_dependencies_if_needed(
-            layout, python_executable=python_executable, runner=runner
+    _run(
+        ("git", "clone", "--no-checkout", clone_url, str(layout.repo)),
+        runner=runner,
+        timeout=600,
+    )
+    _run(
+        ("git", "fetch", "--no-tags", "origin", source_ref),
+        cwd=layout.repo,
+        runner=runner,
+        timeout=600,
+    )
+    fetched = _run(("git", "rev-parse", "FETCH_HEAD"), cwd=layout.repo, runner=runner)
+    if fetched != expected_sha:
+        raise ControllerError(
+            f"controller source ref resolved to unexpected commit: {fetched} != {expected_sha}"
         )
-        _install_launchers(layout)
-        config = load_project_config(layout.repo, _MANIFEST)
-        metadata = _metadata(
-            layout,
-            repository=config.repository,
-            source_ref=source_ref,
-            commit_sha=expected_sha,
+    _run(
+        ("git", "checkout", "-B", DEFAULT_RUNTIME_BRANCH, expected_sha),
+        cwd=layout.repo,
+        runner=runner,
+    )
+    if clone_source_url is not None:
+        _run(
+            ("git", "remote", "set-url", "origin", repository_url),
+            cwd=layout.repo,
+            runner=runner,
         )
-        _atomic_json(layout.metadata, asdict(metadata))
-        return inspect_controller(layout)
-    except Exception:
-        if not layout.metadata.exists():
-            # A failed first installation is not silently deleted. Preserve evidence for inspection.
-            pass
-        raise
+    _controller_gate(layout.repo, expected_sha)
+    _ensure_venv(layout, python_executable=python_executable, runner=runner)
+    _install_dependencies_if_needed(layout, runner=runner)
+    _install_launchers(layout)
+    config = load_project_config(layout.repo, _MANIFEST)
+    metadata = _metadata(
+        layout,
+        repository=config.repository,
+        source_ref=source_ref,
+        commit_sha=expected_sha,
+    )
+    _atomic_json(layout.metadata, asdict(metadata))
+    status = inspect_controller(layout)
+    if not status.ready:
+        raise ControllerError(f"controller failed post-install readiness: {status.detail}")
+    return status
 
 
 def refresh_controller(
@@ -368,33 +455,38 @@ def refresh_controller(
     layout: ControllerLayout | None = None,
     runner: CommandRunner = subprocess.run,
 ) -> ControllerStatus:
+    expected_sha = _normalize_sha(expected_sha)
+    if not source_ref.strip():
+        raise ControllerError("controller source ref must be non-empty")
     layout = layout or default_layout()
     metadata = _load_metadata(layout)
     if metadata.repository != "skybridgecx-code/faceless-youtube-backend":
-        raise ControllerError(f"unexpected controller repository identity: {metadata.repository}")
+        raise ControllerError(
+            f"unexpected controller repository identity: {metadata.repository}"
+        )
     _controller_gate(layout.repo, metadata.commit_sha)
 
-    _run(("git", "fetch", "--no-tags", "origin", source_ref), cwd=layout.repo, runner=runner, timeout=600)
+    _run(
+        ("git", "fetch", "--no-tags", "origin", source_ref),
+        cwd=layout.repo,
+        runner=runner,
+        timeout=600,
+    )
     fetched = _run(("git", "rev-parse", "FETCH_HEAD"), cwd=layout.repo, runner=runner)
     if fetched != expected_sha:
         raise ControllerError(
             f"controller source ref resolved to unexpected commit: {fetched} != {expected_sha}"
         )
     if fetched != metadata.commit_sha:
-        ancestor = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", metadata.commit_sha, fetched],
-            cwd=layout.repo,
-            capture_output=True,
-            text=True,
-            check=False,
+        if not _is_ancestor(layout.repo, metadata.commit_sha, fetched, runner=runner):
+            raise ControllerError(
+                "controller refresh is not a fast-forward from installed commit"
+            )
+        _run(
+            ("git", "merge", "--ff-only", fetched), cwd=layout.repo, runner=runner
         )
-        if ancestor.returncode != 0:
-            raise ControllerError("controller refresh is not a fast-forward from installed commit")
-        _run(("git", "merge", "--ff-only", fetched), cwd=layout.repo, runner=runner)
     _controller_gate(layout.repo, fetched)
-    _install_dependencies_if_needed(
-        layout, python_executable=sys.executable, runner=runner
-    )
+    _install_dependencies_if_needed(layout, runner=runner)
     _install_launchers(layout)
     updated = ControllerMetadata(
         schema_version=1,
@@ -407,7 +499,10 @@ def refresh_controller(
         bin_path=metadata.bin_path,
     )
     _atomic_json(layout.metadata, asdict(updated))
-    return inspect_controller(layout)
+    status = inspect_controller(layout)
+    if not status.ready:
+        raise ControllerError(f"controller failed post-refresh readiness: {status.detail}")
+    return status
 
 
 def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStatus:
@@ -432,16 +527,17 @@ def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStat
         state = inspect_repo(layout.repo)
         config = load_project_config(layout.repo, _MANIFEST)
         gate = run_preflight_gate(layout.repo, config, state)
-        expected_identity = _dependency_identity(layout.repo, sys.executable)
         deps_ready = False
         if layout.dependency_stamp.is_file() and (layout.venv / "bin" / "python").is_file():
             try:
+                expected_identity = _dependency_identity(layout.repo, layout.venv)
                 deps_ready = _read_json(layout.dependency_stamp) == expected_identity
             except ControllerError:
                 deps_ready = False
         launchers_ready = all(
             (layout.bin / name).is_file()
-            and MANAGED_LAUNCHER_MARKER in (layout.bin / name).read_text(encoding="utf-8")
+            and MANAGED_LAUNCHER_MARKER
+            in (layout.bin / name).read_text(encoding="utf-8")
             for name in _LAUNCHERS
         )
         ready = (
@@ -463,7 +559,11 @@ def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStat
             clean=state.clean,
             dependencies_ready=deps_ready,
             launchers_ready=launchers_ready,
-            detail="controller ready" if ready else "controller installed but one or more readiness checks failed",
+            detail=(
+                "controller ready"
+                if ready
+                else "controller installed but one or more readiness checks failed"
+            ),
         )
     except Exception as exc:
         return ControllerStatus(
