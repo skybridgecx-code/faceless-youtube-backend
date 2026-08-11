@@ -60,7 +60,11 @@ def test_campaign_api_create_read_and_idempotent_start() -> None:
 
     created = client.post(
         "/campaigns",
-        json={"channel_id": channel_id, "risk_tier": "standard"},
+        json={
+            "channel_id": channel_id,
+            "risk_tier": "standard",
+            "policy_version": "i3-gate-v1",
+        },
     )
     assert created.status_code == 201, created.text
     campaign = created.json()
@@ -102,7 +106,10 @@ def test_campaign_api_create_read_and_idempotent_start() -> None:
 
 def test_campaign_create_does_not_start_workflow() -> None:
     channel_id = _create_channel()
-    response = TestClient(app).post("/campaigns", json={"channel_id": channel_id})
+    response = TestClient(app).post(
+        "/campaigns",
+        json={"channel_id": channel_id, "policy_version": "i3-gate-v1"},
+    )
 
     assert response.status_code == 201
     campaign_id = int(response.json()["id"])
@@ -129,7 +136,12 @@ def test_campaign_api_rejects_missing_channel_and_campaign() -> None:
 def test_campaign_start_fails_closed_on_conflicting_workflow_identity() -> None:
     channel_id = _create_channel()
     client = TestClient(app)
-    campaign_id = int(client.post("/campaigns", json={"channel_id": channel_id}).json()["id"])
+    campaign_id = int(
+        client.post(
+            "/campaigns",
+            json={"channel_id": channel_id, "policy_version": "i3-gate-v1"},
+        ).json()["id"]
+    )
     with SessionLocal() as db:
         campaign = db.get(Campaign, campaign_id)
         assert campaign is not None

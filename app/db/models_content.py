@@ -68,6 +68,12 @@ class Claim(Base):
             "state IN ('VERIFIED', 'OPINION', 'ESTIMATE', 'REJECTED')",
             name="ck_claims_state",
         ),
+        Index(
+            "uq_claims_replay_identity",
+            "campaign_id",
+            "claim_hash",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -75,6 +81,7 @@ class Claim(Base):
     assertion_text: Mapped[str] = mapped_column(Text)
     material: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     state: Mapped[str] = mapped_column(String(20), default="ESTIMATE", index=True)
+    claim_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     structured_value_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     unit: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -114,6 +121,7 @@ class Artifact(Base):
     provider_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     provider_model: Mapped[str | None] = mapped_column(String(240), nullable=True)
     prompt_template_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

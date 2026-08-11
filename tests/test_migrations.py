@@ -15,7 +15,8 @@ from scripts.migrate_db import CANONICAL_TABLES, LEGACY_TABLES, ORIGINAL_DATABAS
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = ROOT / ".venv" / "bin" / "python"
-HEAD_REVISION = "20260810_0002"
+HEAD_REVISION = "20260811_0003"
+I3_REVISION = "20260810_0002"
 I2_REVISION = "20260810_0001"
 BASELINE_REVISION = "22348998243b"
 
@@ -88,6 +89,17 @@ def unique_index_columns(path: Path, table_name: str) -> set[tuple[str, ...]]:
             )
             indexes.add(columns_for_index)
         return indexes
+    finally:
+        connection.close()
+
+
+def index_names(path: Path, table_name: str) -> set[str]:
+    connection = sqlite3.connect(path)
+    try:
+        return {
+            str(row[1])
+            for row in connection.execute(f'PRAGMA index_list("{table_name}")')
+        }
     finally:
         connection.close()
 
@@ -198,6 +210,12 @@ def test_blank_sqlite_upgrades_to_head_with_complete_schema_and_no_drift(tmp_pat
         "disclosure_state",
         "provider_upload_id",
     } <= columns(database, "publish_records")
+    assert "payload_json" in columns(database, "artifacts")
+    assert "claim_hash" in columns(database, "claims")
+    assert "ix_claims_claim_hash" in index_names(database, "claims")
+    assert ("campaign_id", "claim_hash") in unique_index_columns(
+        database, "claims"
+    )
     assert integrity(database) == "ok"
     assert ("workflow_id",) in unique_index_columns(database, "campaigns")
     assert (
@@ -280,16 +298,196 @@ def test_i2_database_upgrades_to_i3_with_legacy_and_canonical_rows_preserved(
         connection.close()
 
     before = row_counts(database, {"channels", "campaigns", "artifacts"})
+    alembic_upgrade(database, I3_REVISION)
+
+    assert revision(database) == I3_REVISION
+    assert row_counts(database, {"channels", "campaigns", "artifacts"}) == before
+    assert integrity(database) == "ok"
+
+
+def test_i3_database_upgrades_to_i4_with_legacy_and_canonical_rows_preserved(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "i3-to-i4.db"
+    alembic_upgrade(database, I3_REVISION)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I4 migration channel', 'engineering', 'builders', 'clear', "
+            "'documentary', CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_id = connection.execute(
+            "INSERT INTO campaigns "
+            "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+            "VALUES (?, 'research', 'campaign:1:i3', 'standard', 'i3-gate-v1', "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (channel_id,),
+        ).lastrowid
+        source_id = connection.execute(
+            "INSERT INTO sources "
+            "(campaign_id, source_uri, publisher, retrieved_at, content_sha256, source_class, "
+            "rights_status, evidence_snippet, provenance_json, created_at) "
+            "VALUES (?, 'https://example.com/evidence', 'Example Publisher', CURRENT_TIMESTAMP, ?, "
+            "'official', 'reference_only', 'Preserved evidence', '{\"scope\":\"snippet\"}', "
+            "CURRENT_TIMESTAMP)",
+            (campaign_id, "1" * 64),
+        ).lastrowid
+        claim_id = connection.execute(
+            "INSERT INTO claims "
+            "(campaign_id, assertion_text, material, state, structured_value_json, unit, created_at) "
+            "VALUES (?, 'Preserved canonical claim', 1, 'VERIFIED', "
+            "'{\"claim_type\":\"fact\"}', NULL, CURRENT_TIMESTAMP)",
+            (campaign_id,),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO claim_sources (claim_id, source_id, created_at) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (claim_id, source_id),
+        )
+        artifact_id = connection.execute(
+            "INSERT INTO artifacts "
+            "(campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, "
+            "provider_name, provider_model, prompt_template_version, provenance_json, created_at) "
+            "VALUES (?, 'i3_stub_topic', 'stub://campaign/1/topic/preserved', ?, 2, "
+            "'application/json', 'topic', 'stub', 'i3-deterministic-v1', "
+            "'i3-stage-request-v1', '{\"preserved\":true}', CURRENT_TIMESTAMP)",
+            (campaign_id, "2" * 64),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO generation_jobs "
+            "(campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+            "output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, "
+            "created_at, completed_at) "
+            "VALUES (?, NULL, 'stub', 'i3-deterministic-v1', 1, 'completed', ?, ?, "
+            "'stub:preserved', '{}', 0, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (campaign_id, "3" * 64, artifact_id),
+        )
+        connection.execute(
+            "INSERT INTO gate_decisions "
+            "(campaign_id, stage, outcome, policy_version, input_hash, output_hash, "
+            "reasons_json, created_at) "
+            "VALUES (?, 'topic', 'PASS', 'i3-gate-v1', ?, ?, '[]', CURRENT_TIMESTAMP)",
+            (campaign_id, "3" * 64, "2" * 64),
+        )
+        connection.commit()
+
+        preserved_queries = {
+            "channels": "SELECT id, name, niche, audience, brand_voice, visual_style FROM channels",
+            "campaigns": "SELECT id, channel_id, current_stage, workflow_id, risk_tier, policy_version FROM campaigns",
+            "sources": "SELECT id, campaign_id, source_uri, publisher, content_sha256, source_class, rights_status, evidence_snippet, provenance_json FROM sources",
+            "claims": "SELECT id, campaign_id, assertion_text, material, state, structured_value_json, unit FROM claims",
+            "claim_sources": "SELECT claim_id, source_id FROM claim_sources",
+            "artifacts": "SELECT id, campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, provider_name, provider_model, prompt_template_version, provenance_json FROM artifacts",
+            "generation_jobs": "SELECT id, campaign_id, provider, model, attempt, status, input_hash, output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json FROM generation_jobs",
+            "gate_decisions": "SELECT id, campaign_id, stage, outcome, policy_version, input_hash, output_hash, reasons_json FROM gate_decisions",
+        }
+        before_rows = {
+            table: list(connection.execute(query))
+            for table, query in preserved_queries.items()
+        }
+    finally:
+        connection.close()
+
+    before_counts = row_counts(database, set(preserved_queries))
     alembic_upgrade(database)
 
     assert revision(database) == HEAD_REVISION
-    assert row_counts(database, {"channels", "campaigns", "artifacts"}) == before
+    assert row_counts(database, set(preserved_queries)) == before_counts
+    connection = sqlite3.connect(database)
+    try:
+        assert {
+            table: list(connection.execute(query))
+            for table, query in preserved_queries.items()
+        } == before_rows
+        assert connection.execute(
+            "SELECT payload_json FROM artifacts WHERE id = ?", (artifact_id,)
+        ).fetchone() == (None,)
+        assert connection.execute(
+            "SELECT claim_hash FROM claims WHERE id = ?", (claim_id,)
+        ).fetchone() == (None,)
+    finally:
+        connection.close()
+    assert integrity(database) == "ok"
+
+
+def test_i4_claim_hash_indexes_enforce_campaign_scoped_replay_identity(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "i4-claim-constraints.db"
+    alembic_upgrade(database)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I4 claim constraints', 'test', 'test', 'test', 'test', CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_ids = [
+            connection.execute(
+                "INSERT INTO campaigns "
+                "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+                "VALUES (?, 'topic', NULL, 'standard', 'i4-editorial-v1', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (channel_id,),
+            ).lastrowid
+            for _ in range(2)
+        ]
+        claim_hash = "4" * 64
+        connection.execute(
+            "INSERT INTO claims "
+            "(campaign_id, assertion_text, material, state, claim_hash, structured_value_json, "
+            "unit, created_at) VALUES (?, 'First identity', 1, 'VERIFIED', ?, '{}', NULL, "
+            "CURRENT_TIMESTAMP)",
+            (campaign_ids[0], claim_hash),
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO claims "
+                "(campaign_id, assertion_text, material, state, claim_hash, "
+                "structured_value_json, unit, created_at) "
+                "VALUES (?, 'Conflicting identity', 1, 'REJECTED', ?, '{}', NULL, "
+                "CURRENT_TIMESTAMP)",
+                (campaign_ids[0], claim_hash),
+            )
+        connection.rollback()
+
+        connection.execute(
+            "INSERT INTO claims "
+            "(campaign_id, assertion_text, material, state, claim_hash, structured_value_json, "
+            "unit, created_at) VALUES (?, 'Other campaign', 1, 'VERIFIED', ?, '{}', NULL, "
+            "CURRENT_TIMESTAMP)",
+            (campaign_ids[1], claim_hash),
+        )
+        connection.executemany(
+            "INSERT INTO claims "
+            "(campaign_id, assertion_text, material, state, claim_hash, structured_value_json, "
+            "unit, created_at) VALUES (?, ?, 1, 'ESTIMATE', NULL, '{}', NULL, "
+            "CURRENT_TIMESTAMP)",
+            [
+                (campaign_ids[0], "Legacy null identity one"),
+                (campaign_ids[0], "Legacy null identity two"),
+            ],
+        )
+        connection.commit()
+
+        assert connection.execute("SELECT COUNT(*) FROM claims").fetchone() == (4,)
+    finally:
+        connection.close()
+
+    assert "ix_claims_claim_hash" in index_names(database, "claims")
+    assert ("campaign_id", "claim_hash") in unique_index_columns(
+        database, "claims"
+    )
     assert integrity(database) == "ok"
 
 
 def test_i3_replay_identity_constraints_reject_duplicates(tmp_path: Path) -> None:
     database = tmp_path / "i3-constraints.db"
-    alembic_upgrade(database)
+    alembic_upgrade(database, I3_REVISION)
     connection = sqlite3.connect(database)
     try:
         channel_id = connection.execute(
@@ -391,7 +589,7 @@ def test_i3_replay_identity_constraints_reject_duplicates(tmp_path: Path) -> Non
 
 def test_i3_downgrade_removes_only_replay_indexes(tmp_path: Path) -> None:
     database = tmp_path / "i3-downgrade.db"
-    alembic_upgrade(database)
+    alembic_upgrade(database, I3_REVISION)
     before_tables = table_names(database)
 
     run("-m", "alembic", "downgrade", I2_REVISION, path=database)
@@ -405,6 +603,76 @@ def test_i3_downgrade_removes_only_replay_indexes(tmp_path: Path) -> None:
         "policy_version",
         "input_hash",
     ) not in unique_index_columns(database, "gate_decisions")
+    assert integrity(database) == "ok"
+
+
+def test_i4_downgrade_removes_only_i4_columns_and_indexes(tmp_path: Path) -> None:
+    database = tmp_path / "i4-downgrade.db"
+    alembic_upgrade(database)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I4 downgrade channel', 'test', 'test', 'test', 'test', CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_id = connection.execute(
+            "INSERT INTO campaigns "
+            "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+            "VALUES (?, 'topic', NULL, 'standard', 'i4-editorial-v1', "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (channel_id,),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO artifacts "
+            "(campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, provider_name, "
+            "provider_model, prompt_template_version, payload_json, provenance_json, created_at) "
+            "VALUES (?, 'i4_editorial_seed', 'artifact://campaign/1/i4_editorial_seed/hash', ?, "
+            "2, 'application/json', 'topic', 'deterministic', 'i4-editorial-v1', "
+            "'i4-editorial-seed-v1', '{}', '{}', CURRENT_TIMESTAMP)",
+            (campaign_id, "5" * 64),
+        )
+        connection.execute(
+            "INSERT INTO claims "
+            "(campaign_id, assertion_text, material, state, claim_hash, structured_value_json, "
+            "unit, created_at) VALUES (?, 'I4 downgrade claim', 1, 'VERIFIED', ?, '{}', NULL, "
+            "CURRENT_TIMESTAMP)",
+            (campaign_id, "6" * 64),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    preserved_tables = {"channels", "campaigns", "artifacts", "claims"}
+    before_tables = table_names(database)
+    before_counts = row_counts(database, preserved_tables)
+
+    run("-m", "alembic", "downgrade", I3_REVISION, path=database)
+
+    assert revision(database) == I3_REVISION
+    assert table_names(database) == before_tables
+    assert row_counts(database, preserved_tables) == before_counts
+    assert "payload_json" not in columns(database, "artifacts")
+    assert "claim_hash" not in columns(database, "claims")
+    assert "ix_claims_claim_hash" not in index_names(database, "claims")
+    assert "uq_claims_replay_identity" not in index_names(database, "claims")
+    assert ("workflow_id",) in unique_index_columns(database, "campaigns")
+    assert (
+        "campaign_id",
+        "stage",
+        "policy_version",
+        "input_hash",
+    ) in unique_index_columns(database, "gate_decisions")
+    assert ("campaign_id", "kind", "sha256") in unique_index_columns(
+        database, "artifacts"
+    )
+    assert (
+        "campaign_id",
+        "provider",
+        "model",
+        "input_hash",
+        "attempt",
+    ) in unique_index_columns(database, "generation_jobs")
     assert integrity(database) == "ok"
 
 
@@ -649,6 +917,40 @@ def test_unmigrated_startup_fails_closed_without_schema_or_row_mutation(tmp_path
     assert "not Alembic-versioned" in result.stderr
     assert schema_digest(database) == before_schema
     assert row_counts(database, {"unrelated"}) == before_rows
+    assert not dbos_system_database.exists()
+
+
+def test_stale_i3_startup_fails_before_dbos_or_application_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "stale-i3.db"
+    alembic_upgrade(database, I3_REVISION)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('Stale I3 channel', 'test', 'test', 'test', 'test', CURRENT_TIMESTAMP)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    before_sha = sha256(database)
+    before_schema = schema_digest(database)
+    before_rows = row_counts(database, table_names(database) - {"alembic_version"})
+    dbos_system_database = database.parent / f"{database.stem}-dbos-system.db"
+
+    result = start_app(database, check=False)
+
+    assert result.returncode != 0
+    assert (
+        f"Database revision ['{I3_REVISION}'] is not the expected head {HEAD_REVISION}"
+        in result.stderr
+    )
+    assert revision(database) == I3_REVISION
+    assert sha256(database) == before_sha
+    assert schema_digest(database) == before_schema
+    assert row_counts(database, table_names(database) - {"alembic_version"}) == before_rows
     assert not dbos_system_database.exists()
 
 

@@ -144,7 +144,7 @@ LANE_TOPIC_BANK: dict[str, tuple[str, ...]] = {
 }
 
 
-def _load_json_response(url: str, *, timeout: int = 30) -> dict[str, Any]:
+def _load_json_response(url: str, *, timeout: float = 30) -> dict[str, Any]:
     request = urllib.request.Request(url=url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -155,9 +155,9 @@ def _load_json_response(url: str, *, timeout: int = 30) -> dict[str, Any]:
             raise ResearchSetupRequiredError("YOUTUBE_DATA_API_KEY is missing, invalid, or lacks required access.") from exc
         raise ResearchFetchError(f"YouTube API request failed with status {code}.") from exc
     except urllib.error.URLError as exc:  # pragma: no cover - network errors are environment-dependent
-        raise ResearchFetchError(f"YouTube API network error: {exc.reason}") from exc
+        raise ResearchFetchError("YouTube API network request failed.") from exc
     except Exception as exc:  # noqa: BLE001
-        raise ResearchFetchError(f"YouTube API request failed: {exc}") from exc
+        raise ResearchFetchError("YouTube API request failed.") from exc
 
     try:
         raw = json.loads(payload.decode("utf-8"))
@@ -166,8 +166,7 @@ def _load_json_response(url: str, *, timeout: int = 30) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ResearchFetchError("Unexpected YouTube API response shape.")
     if "error" in raw:
-        message = raw.get("error", {}).get("message", "Unknown API error")
-        raise ResearchFetchError(f"YouTube API error: {message}")
+        raise ResearchFetchError("YouTube API returned an error.")
     return raw
 
 
@@ -198,7 +197,13 @@ def _safe_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def fetch_youtube_sources(*, api_key: str, query: str, max_results: int) -> tuple[list[SourceVideo], list[SourceChannel]]:
+def fetch_youtube_sources(
+    *,
+    api_key: str,
+    query: str,
+    max_results: int,
+    timeout: float = 30,
+) -> tuple[list[SourceVideo], list[SourceChannel]]:
     normalized_query = query.strip()
     if not normalized_query:
         raise ResearchFetchError("Query is required.")
@@ -218,7 +223,7 @@ def fetch_youtube_sources(*, api_key: str, query: str, max_results: int) -> tupl
             "key": api_key,
         },
     )
-    search_payload = _load_json_response(search_url)
+    search_payload = _load_json_response(search_url, timeout=timeout)
     search_items = search_payload.get("items", [])
     if not isinstance(search_items, list):
         search_items = []
@@ -226,7 +231,8 @@ def fetch_youtube_sources(*, api_key: str, query: str, max_results: int) -> tupl
     video_ids: list[str] = []
     channel_ids: list[str] = []
     search_snippet_by_video_id: dict[str, dict[str, Any]] = {}
-    for item in search_items:
+    seen_video_ids: set[str] = set()
+    for item in search_items[:bounded_results]:
         if not isinstance(item, dict):
             continue
         id_node = item.get("id", {})
@@ -237,6 +243,9 @@ def fetch_youtube_sources(*, api_key: str, query: str, max_results: int) -> tupl
         channel_id = str(snippet.get("channelId") or "").strip()
         if not video_id:
             continue
+        if video_id in seen_video_ids:
+            continue
+        seen_video_ids.add(video_id)
         video_ids.append(video_id)
         if channel_id:
             channel_ids.append(channel_id)
@@ -254,18 +263,25 @@ def fetch_youtube_sources(*, api_key: str, query: str, max_results: int) -> tupl
             "key": api_key,
         },
     )
-    videos_payload = _load_json_response(videos_url)
+    videos_payload = _load_json_response(videos_url, timeout=timeout)
     videos_items = videos_payload.get("items", [])
     if not isinstance(videos_items, list):
         videos_items = []
 
     source_videos: list[SourceVideo] = []
-    for item in videos_items:
+    requested_video_ids = set(video_ids)
+    emitted_video_ids: set[str] = set()
+    for item in videos_items[:bounded_results]:
         if not isinstance(item, dict):
             continue
         video_id = str(item.get("id") or "").strip()
-        if not video_id:
+        if (
+            not video_id
+            or video_id not in requested_video_ids
+            or video_id in emitted_video_ids
+        ):
             continue
+        emitted_video_ids.add(video_id)
         snippet = item.get("snippet", {}) if isinstance(item.get("snippet"), dict) else {}
         statistics = item.get("statistics", {}) if isinstance(item.get("statistics"), dict) else {}
         content_details = item.get("contentDetails", {}) if isinstance(item.get("contentDetails"), dict) else {}
@@ -311,18 +327,25 @@ def fetch_youtube_sources(*, api_key: str, query: str, max_results: int) -> tupl
             "key": api_key,
         },
     )
-    channels_payload = _load_json_response(channels_url)
+    channels_payload = _load_json_response(channels_url, timeout=timeout)
     channels_items = channels_payload.get("items", [])
     if not isinstance(channels_items, list):
         channels_items = []
 
     source_channels: list[SourceChannel] = []
-    for item in channels_items:
+    requested_channel_ids = set(unique_channel_ids)
+    emitted_channel_ids: set[str] = set()
+    for item in channels_items[: min(50, len(unique_channel_ids))]:
         if not isinstance(item, dict):
             continue
         channel_id = str(item.get("id") or "").strip()
-        if not channel_id:
+        if (
+            not channel_id
+            or channel_id not in requested_channel_ids
+            or channel_id in emitted_channel_ids
+        ):
             continue
+        emitted_channel_ids.add(channel_id)
         snippet = item.get("snippet", {}) if isinstance(item.get("snippet"), dict) else {}
         statistics = item.get("statistics", {}) if isinstance(item.get("statistics"), dict) else {}
         source_channels.append(
