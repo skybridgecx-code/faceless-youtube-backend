@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,6 +52,10 @@ def test_fast_build_removes_only_disposable_test_caches(tmp_path: Path) -> None:
     _git(root, "add", ".")
     _git(root, "commit", "-m", "base")
 
+    validation_venv = tmp_path / "trusted-validation-venv"
+    (validation_venv / "bin").mkdir(parents=True)
+    os.symlink(Path(sys.executable).resolve(), validation_venv / "bin" / "python")
+
     result = asyncio.run(
         run_fast_guarded_build(
             workspace_root=root,
@@ -61,7 +67,7 @@ def test_fast_build_removes_only_disposable_test_caches(tmp_path: Path) -> None:
             reasoning="high",
             turn_runner=_WriteFeature(root),
             max_changed_files=5,
-            validation_venv=None,
+            validation_venv=validation_venv,
         )
     )
 
@@ -74,3 +80,5 @@ def test_fast_build_removes_only_disposable_test_caches(tmp_path: Path) -> None:
     assert not (root / ".pytest_cache").exists()
     assert not any(path.name == "__pycache__" for path in root.rglob("__pycache__"))
     assert not any(path.suffix == ".pyc" for path in root.rglob("*.pyc"))
+    assert not (root / ".venv").exists()
+    assert not (root / ".venv").is_symlink()
