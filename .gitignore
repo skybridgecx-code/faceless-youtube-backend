@@ -5,6 +5,10 @@ __pycache__/
 content_factory.db
 test_content_factory.db
 test_*.db
+dbos_system.db
+dbos_system.db-*
+test_dbos*.db
+test_dbos*.db-*
 out/
 .pytest_cache/
 

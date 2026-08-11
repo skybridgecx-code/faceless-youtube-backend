@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -13,6 +13,15 @@ class GenerationJob(Base):
     __tablename__ = "generation_jobs"
     __table_args__ = (
         CheckConstraint("attempt >= 1", name="ck_generation_jobs_attempt"),
+        Index(
+            "uq_generation_jobs_attempt_identity",
+            "campaign_id",
+            "provider",
+            "model",
+            "input_hash",
+            "attempt",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -37,6 +46,14 @@ class GateDecision(Base):
     __table_args__ = (
         CheckConstraint(f"stage IN ({_RUNTIME_STAGE_SQL})", name="ck_gate_decisions_stage"),
         CheckConstraint("outcome IN ('PASS', 'FAIL', 'NEEDS_HUMAN')", name="ck_gate_decisions_outcome"),
+        Index(
+            "uq_gate_decisions_replay_identity",
+            "campaign_id",
+            "stage",
+            "policy_version",
+            "input_hash",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "sqlite:///./content_factory.db"
+    dbos_system_database_url: str = "sqlite:///./dbos_system.db"
     output_dir: str = "./out"
     channel_default_name: str = "Local AI Operator"
     require_human_review: bool = True

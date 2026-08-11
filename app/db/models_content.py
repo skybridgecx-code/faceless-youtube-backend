@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -27,6 +27,7 @@ class Campaign(Base):
     __tablename__ = "campaigns"
     __table_args__ = (
         CheckConstraint(f"current_stage IN ({_RUNTIME_STAGE_SQL})", name="ck_campaigns_current_stage"),
+        Index("uq_campaigns_workflow_id", "workflow_id", unique=True),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -93,6 +94,13 @@ class Artifact(Base):
         CheckConstraint("length(sha256) = 64", name="ck_artifacts_sha256"),
         CheckConstraint("byte_size >= 0", name="ck_artifacts_byte_size"),
         CheckConstraint(f"source_stage IN ({_RUNTIME_STAGE_SQL})", name="ck_artifacts_source_stage"),
+        Index(
+            "uq_artifacts_replay_identity",
+            "campaign_id",
+            "kind",
+            "sha256",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

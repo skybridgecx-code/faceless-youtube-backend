@@ -73,6 +73,7 @@ def _prepare_isolated_environment() -> SmokeContext:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    os.environ["DBOS_SYSTEM_DATABASE_URL"] = f"sqlite:///{root_dir / 'dbos_system.db'}"
     os.environ["OUTPUT_DIR"] = str(output_dir)
     os.environ.setdefault("APP_ENV", "development")
     os.environ["INTERNAL_API_KEY"] = ""

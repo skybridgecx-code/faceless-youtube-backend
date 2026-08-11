@@ -18,6 +18,7 @@ from app.models import AuditEvent, PublishRecord, Video, VideoStatus, VisualAsse
 from app.routers import (
     agents,
     autopilot,
+    campaigns,
     channel_studio,
     channels,
     command_center,
@@ -39,6 +40,7 @@ from app.routers import (
 )
 from app.security import InMemoryRateLimiter, auth_error_payload, check_internal_api_key, client_ip, is_ai_cost_route, is_public_path, needs_auth
 from app.schemas import AuditEventRead, PipelineActionItem, PipelineSummary, VideoRead
+from app.workflows.dbos_runtime import launch_dbos_runtime, shutdown_dbos_runtime
 
 settings = get_settings()
 rate_limiter = InMemoryRateLimiter()
@@ -48,7 +50,11 @@ rate_limiter = InMemoryRateLimiter()
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings.validate_startup()
     init_db()
-    yield
+    launch_dbos_runtime(settings)
+    try:
+        yield
+    finally:
+        shutdown_dbos_runtime()
 
 
 app = FastAPI(
@@ -128,6 +134,7 @@ app.include_router(visual_generation.router)
 app.include_router(shorts.router)
 app.include_router(autopilot.router)
 app.include_router(autopilot.compat_router)
+app.include_router(campaigns.router)
 
 
 def has_preview_file(video: Video) -> bool:

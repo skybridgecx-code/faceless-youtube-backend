@@ -15,7 +15,8 @@ from scripts.migrate_db import CANONICAL_TABLES, LEGACY_TABLES, ORIGINAL_DATABAS
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = ROOT / ".venv" / "bin" / "python"
-HEAD_REVISION = "20260810_0001"
+HEAD_REVISION = "20260810_0002"
+I2_REVISION = "20260810_0001"
 BASELINE_REVISION = "22348998243b"
 
 
@@ -28,6 +29,9 @@ def isolated_environment(path: Path) -> dict[str, str]:
     environment.update(
         {
             "DATABASE_URL": database_url(path),
+            "DBOS_SYSTEM_DATABASE_URL": database_url(
+                path.parent / f"{path.stem}-dbos-system.db"
+            ),
             "OUTPUT_DIR": str(path.parent / "out"),
             "OPENAI_API_KEY": "",
             "ELEVENLABS_API_KEY": "",
@@ -67,6 +71,23 @@ def columns(path: Path, table_name: str) -> set[str]:
     connection = sqlite3.connect(path)
     try:
         return {row[1] for row in connection.execute(f'PRAGMA table_info("{table_name}")')}
+    finally:
+        connection.close()
+
+
+def unique_index_columns(path: Path, table_name: str) -> set[tuple[str, ...]]:
+    connection = sqlite3.connect(path)
+    try:
+        indexes: set[tuple[str, ...]] = set()
+        for row in connection.execute(f'PRAGMA index_list("{table_name}")'):
+            if not bool(row[2]):
+                continue
+            columns_for_index = tuple(
+                str(info[2])
+                for info in connection.execute(f'PRAGMA index_info("{row[1]}")')
+            )
+            indexes.add(columns_for_index)
+        return indexes
     finally:
         connection.close()
 
@@ -178,6 +199,23 @@ def test_blank_sqlite_upgrades_to_head_with_complete_schema_and_no_drift(tmp_pat
         "provider_upload_id",
     } <= columns(database, "publish_records")
     assert integrity(database) == "ok"
+    assert ("workflow_id",) in unique_index_columns(database, "campaigns")
+    assert (
+        "campaign_id",
+        "stage",
+        "policy_version",
+        "input_hash",
+    ) in unique_index_columns(database, "gate_decisions")
+    assert ("campaign_id", "kind", "sha256") in unique_index_columns(
+        database, "artifacts"
+    )
+    assert (
+        "campaign_id",
+        "provider",
+        "model",
+        "input_hash",
+        "attempt",
+    ) in unique_index_columns(database, "generation_jobs")
 
     checked = run("-m", "alembic", "check", path=database, check=False)
     assert checked.returncode == 0, checked.stderr
@@ -209,6 +247,165 @@ def test_known_versioned_baseline_upgrades_forward_without_adoption(tmp_path: Pa
     assert "Backup:" in result.stdout
     assert revision(database) == HEAD_REVISION
     assert CANONICAL_TABLES <= table_names(database)
+
+
+def test_i2_database_upgrades_to_i3_with_legacy_and_canonical_rows_preserved(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "i2-to-i3.db"
+    alembic_upgrade(database, I2_REVISION)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I3 migration channel', 'test', 'test', 'test', 'test', CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_id = connection.execute(
+            "INSERT INTO campaigns "
+            "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+            "VALUES (?, 'topic', NULL, 'standard', 'i3-gate-v1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (channel_id,),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO artifacts "
+            "(campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, "
+            "provider_name, provider_model, prompt_template_version, provenance_json, created_at) "
+            "VALUES (?, 'i2-evidence', 'stub://i2/evidence', ?, 2, 'application/json', "
+            "'topic', 'stub', 'i2', 'i2', '{}', CURRENT_TIMESTAMP)",
+            (campaign_id, "a" * 64),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    before = row_counts(database, {"channels", "campaigns", "artifacts"})
+    alembic_upgrade(database)
+
+    assert revision(database) == HEAD_REVISION
+    assert row_counts(database, {"channels", "campaigns", "artifacts"}) == before
+    assert integrity(database) == "ok"
+
+
+def test_i3_replay_identity_constraints_reject_duplicates(tmp_path: Path) -> None:
+    database = tmp_path / "i3-constraints.db"
+    alembic_upgrade(database)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I3 constraints channel', 'test', 'test', 'test', 'test', CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_id = connection.execute(
+            "INSERT INTO campaigns "
+            "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+            "VALUES (?, 'topic', 'campaign:1:i3', 'standard', 'i3-gate-v1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (channel_id,),
+        ).lastrowid
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO campaigns "
+                "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+                "VALUES (?, 'topic', 'campaign:1:i3', 'standard', 'i3-gate-v1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (channel_id,),
+            )
+        connection.rollback()
+
+        artifact_values = (
+            campaign_id,
+            "i3_stub_topic",
+            "stub://campaign/1/topic/hash",
+            "b" * 64,
+        )
+        connection.execute(
+            "INSERT INTO artifacts "
+            "(campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, "
+            "provider_name, provider_model, prompt_template_version, provenance_json, created_at) "
+            "VALUES (?, ?, ?, ?, 2, 'application/json', 'topic', 'stub', "
+            "'i3-deterministic-v1', 'i3-stage-request-v1', '{}', CURRENT_TIMESTAMP)",
+            artifact_values,
+        )
+        connection.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO artifacts "
+                "(campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, "
+                "provider_name, provider_model, prompt_template_version, provenance_json, created_at) "
+                "VALUES (?, ?, ?, ?, 2, 'application/json', 'topic', 'stub', "
+                "'i3-deterministic-v1', 'i3-stage-request-v1', '{}', CURRENT_TIMESTAMP)",
+                artifact_values,
+            )
+        connection.rollback()
+
+        gate_values = (campaign_id, "topic", "i3-gate-v1", "c" * 64)
+        connection.execute(
+            "INSERT INTO gate_decisions "
+            "(campaign_id, stage, outcome, policy_version, input_hash, output_hash, reasons_json, created_at) "
+            "VALUES (?, ?, 'PASS', ?, ?, ?, '[]', CURRENT_TIMESTAMP)",
+            (*gate_values, "d" * 64),
+        )
+        connection.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO gate_decisions "
+                "(campaign_id, stage, outcome, policy_version, input_hash, output_hash, reasons_json, created_at) "
+                "VALUES (?, ?, 'FAIL', ?, ?, NULL, '[\"conflict\"]', CURRENT_TIMESTAMP)",
+                gate_values,
+            )
+        connection.rollback()
+
+        job_values = (
+            campaign_id,
+            "stub",
+            "i3-deterministic-v1",
+            1,
+            "e" * 64,
+        )
+        connection.execute(
+            "INSERT INTO generation_jobs "
+            "(campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+            "output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, "
+            "created_at, completed_at) "
+            "VALUES (?, NULL, ?, ?, ?, 'completed', ?, NULL, 'stub:job', '{}', 0, NULL, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            job_values,
+        )
+        connection.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO generation_jobs "
+                "(campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+                "output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, "
+                "created_at, completed_at) "
+                "VALUES (?, NULL, ?, ?, ?, 'failed', ?, NULL, 'stub:conflict', '{}', 0, NULL, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                job_values,
+            )
+        connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_i3_downgrade_removes_only_replay_indexes(tmp_path: Path) -> None:
+    database = tmp_path / "i3-downgrade.db"
+    alembic_upgrade(database)
+    before_tables = table_names(database)
+
+    run("-m", "alembic", "downgrade", I2_REVISION, path=database)
+
+    assert revision(database) == I2_REVISION
+    assert table_names(database) == before_tables
+    assert ("workflow_id",) not in unique_index_columns(database, "campaigns")
+    assert (
+        "campaign_id",
+        "stage",
+        "policy_version",
+        "input_hash",
+    ) not in unique_index_columns(database, "gate_decisions")
+    assert integrity(database) == "ok"
 
 
 def test_current_head_is_a_read_only_noop_without_backup(tmp_path: Path) -> None:
@@ -444,6 +641,7 @@ def test_unmigrated_startup_fails_closed_without_schema_or_row_mutation(tmp_path
         connection.close()
     before_schema = schema_digest(database)
     before_rows = row_counts(database, {"unrelated"})
+    dbos_system_database = database.parent / f"{database.stem}-dbos-system.db"
 
     result = start_app(database, check=False)
 
@@ -451,6 +649,7 @@ def test_unmigrated_startup_fails_closed_without_schema_or_row_mutation(tmp_path
     assert "not Alembic-versioned" in result.stderr
     assert schema_digest(database) == before_schema
     assert row_counts(database, {"unrelated"}) == before_rows
+    assert not dbos_system_database.exists()
 
 
 def test_real_baseline_copy_adopts_without_mutating_protected_original(tmp_path: Path) -> None:
