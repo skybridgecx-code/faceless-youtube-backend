@@ -60,9 +60,8 @@ def _is_disposable_ignored_artifact(relative: str) -> bool:
     return pure.suffix in _DISPOSABLE_SUFFIXES
 
 
-def cleanup_ignored_untracked(root: Path, *, max_entries: int = 500) -> tuple[str, ...]:
-    base = root.resolve()
-    values = ignored_untracked_files(base)
+def plan_ignored_cleanup(root: Path, *, max_entries: int = 500) -> tuple[str, ...]:
+    values = ignored_untracked_files(root.resolve())
     if len(values) > max_entries:
         raise WorkspaceHygieneError(
             f"refusing to clean {len(values)} ignored artifacts; cap is {max_entries}"
@@ -78,6 +77,12 @@ def cleanup_ignored_untracked(root: Path, *, max_entries: int = 500) -> tuple[st
             "refusing to clean non-disposable ignored workspace artifacts: "
             f"{preview!r}{suffix}"
         )
+    return values
+
+
+def cleanup_ignored_untracked(root: Path, *, max_entries: int = 500) -> tuple[str, ...]:
+    base = root.resolve()
+    values = plan_ignored_cleanup(base, max_entries=max_entries)
 
     removed: list[str] = []
     parents: set[Path] = set()
