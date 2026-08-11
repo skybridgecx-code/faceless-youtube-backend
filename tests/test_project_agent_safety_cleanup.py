@@ -40,6 +40,7 @@ def test_fast_build_removes_only_disposable_test_caches(tmp_path: Path) -> None:
     )
     (root / "architecture.lock.json").write_text("{}\n", encoding="utf-8")
     (root / "app").mkdir()
+    (root / "app" / "__init__.py").write_text("\n", encoding="utf-8")
     (root / "app" / "base.py").write_text("BASE = 1\n", encoding="utf-8")
     (root / "tests").mkdir()
     (root / "tests" / "test_feature.py").write_text(
