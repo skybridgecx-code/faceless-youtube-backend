@@ -9,13 +9,16 @@ from pathlib import Path
 from typing import Sequence
 
 from .architecture import compile_context_capsule, load_architecture_snapshot
-from .build_engine import BuildGuardError, DEFAULT_VALIDATION_COMMANDS, run_guarded_build
+from .build_engine import BuildGuardError
 from .codex_transport import CodexTransportError, inspect_codex_sdk, run_codex_turn
 from .config import ProjectConfigError, load_project_config
 from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
+from .operation_lease import OperationLeaseError, operation_lease
 from .prompting import developer_instructions
+from .safe_build import run_fast_guarded_build
 from .state import state_directory
+from .validation_env import ValidationEnvironmentError, resolve_validation_venv
 from .workspace import WorkspaceError, verify_executor_workspace
 
 DEFAULT_MANIFEST = "tools/project_agent_runtime/projects/youmo.json"
@@ -105,6 +108,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     capsule = compile_context_capsule(config, executor_state, executor_arch)
     instructions = developer_instructions(capsule, mode="implement")
 
+    try:
+        validation_venv = resolve_validation_venv(control_state.root)
+    except ValidationEnvironmentError as exc:
+        print(f"STOP: validation environment failed: {exc}", file=sys.stderr)
+        return 6
+
     if not args.execute:
         print("CONTROL_PREFLIGHT=PASS")
         print("EXECUTOR_ISOLATION=PASS")
@@ -117,6 +126,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("SANDBOX=workspace_write")
         print(f"ALLOW_PATHS={json.dumps(args.allowed_paths)}")
         print(f"MAX_CHANGED_FILES={args.max_changed_files}")
+        print("BUILD_VALIDATION=TARGETED_FAST")
+        print("AUDIT_VALIDATION=FULL_REGRESSION")
+        print(f"VALIDATION_VENV={validation_venv or '<system-python>'}")
+        print("EXECUTOR_LEASE=NOT_ACQUIRED")
         print("CODEX_TRANSPORT=NOT_STARTED")
         print("RERUN_WITH=youmo-build ... --execute")
         return 0
@@ -127,21 +140,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 4
 
     try:
-        result = asyncio.run(
-            run_guarded_build(
-                workspace_root=workspace,
-                task=args.task,
-                allowed_paths=args.allowed_paths,
-                architecture_paths=(config.architecture_lock, *config.architecture_sources),
-                developer_instructions=instructions,
-                model=config.codex.implementation_model,
-                reasoning=config.codex.implementation_reasoning,
-                turn_runner=run_codex_turn,
-                max_changed_files=args.max_changed_files,
-                validation_commands=DEFAULT_VALIDATION_COMMANDS,
+        with operation_lease(control_state.root, config, workspace, "build"):
+            result = asyncio.run(
+                run_fast_guarded_build(
+                    workspace_root=workspace,
+                    task=args.task,
+                    allowed_paths=args.allowed_paths,
+                    architecture_paths=(config.architecture_lock, *config.architecture_sources),
+                    developer_instructions=instructions,
+                    model=config.codex.implementation_model,
+                    reasoning=config.codex.implementation_reasoning,
+                    turn_runner=run_codex_turn,
+                    max_changed_files=args.max_changed_files,
+                    validation_venv=validation_venv,
+                )
             )
-        )
-    except (BuildGuardError, CodexTransportError) as exc:
+    except (BuildGuardError, CodexTransportError, OperationLeaseError, ValidationEnvironmentError) as exc:
         print(f"STOP: guarded build failed: {exc}", file=sys.stderr)
         return 8
 
@@ -156,6 +170,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"EVIDENCE={evidence}")
     print(f"CHANGED_FILES={json.dumps(list(result.changed_files))}")
     print(f"DIFF_SHA256={result.diff_sha256 or '<none>'}")
+    print("BUILD_VALIDATION=TARGETED_FAST")
+    print("NEXT_REQUIRED_GATE=FULL_AUDIT")
     if result.violations:
         for violation in result.violations:
             print(f"VIOLATION={violation}")
