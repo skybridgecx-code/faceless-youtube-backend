@@ -80,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command = f"youmo-checkpoint --run-id {manifest.run_id}"
     else:
         print(f"RUN_ID={manifest.run_id}")
-        print(f"RUN_STAGE={manifest.stage}")
+        print(f"RESUME_FROM_STAGE={manifest.stage}")
         print(f"DIAGNOSIS={diagnosis.state}")
         print(f"DETAIL={diagnosis.detail}")
         print(f"NEXT_ACTION={diagnosis.next_action}")
@@ -91,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 11
 
     print(f"RUN_ID={manifest.run_id}")
-    print(f"RUN_STAGE={manifest.stage}")
+    print(f"RESUME_FROM_STAGE={manifest.stage}")
     print(f"DIAGNOSIS={diagnosis.state}")
     print(f"NEXT_GATE={action}")
     if not args.execute:
