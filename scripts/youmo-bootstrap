@@ -7,6 +7,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tools.project_agent_runtime.controller_cli import main
+from tools.project_agent_runtime.controller_release_cli import main
 
-raise SystemExit(main(["install", *sys.argv[1:]]))
+
+def _controller_args(argv: list[str]) -> list[str]:
+    global_args: list[str] = []
+    install_args: list[str] = []
+    index = 0
+    while index < len(argv):
+        value = argv[index]
+        if value == "--home":
+            if index + 1 >= len(argv):
+                return ["--home", "", "install", *install_args]
+            global_args.extend([value, argv[index + 1]])
+            index += 2
+            continue
+        if value.startswith("--home="):
+            global_args.append(value)
+            index += 1
+            continue
+        install_args.append(value)
+        index += 1
+    return [*global_args, "install", *install_args]
+
+
+raise SystemExit(main(_controller_args(sys.argv[1:])))
