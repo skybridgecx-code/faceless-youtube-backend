@@ -1,0 +1,31 @@
+name: YouMo CLI I17 Final Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i17-final-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Create repository virtualenv
+        run: python -m venv .venv
+      - name: Install repository requirements
+        run: .venv/bin/python -m pip install -r requirements.txt
+      - name: Compile YouMo tooling
+        run: .venv/bin/python -m py_compile tools/project_agent_runtime/*.py scripts/youmo*
+      - name: Run project-agent suite
+        run: .venv/bin/python -m pytest -q tests/test_project_agent_*.py
+      - name: Run full repository suite
+        run: .venv/bin/python -m pytest -q
+      - name: Check JavaScript syntax
+        run: node --check app/static/app.js
