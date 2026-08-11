@@ -33,6 +33,7 @@ ALL_LAUNCHERS = (
     "youmo-doctor",
     "youmo-resume",
     "youmo-pilot",
+    "youmo-publish",
 )
 
 
@@ -136,8 +137,8 @@ def _install(tmp_path: Path):
     return source, sha, layout, status
 
 
-def test_release_ref_is_current_i12_release() -> None:
-    assert CONTROLLER_RELEASE_REF == "tooling/youmo-cli-i12"
+def test_release_ref_is_current_i13_release() -> None:
+    assert CONTROLLER_RELEASE_REF == "tooling/youmo-cli-i13"
 
 
 def test_release_install_manages_all_user_facing_launchers(tmp_path: Path) -> None:
@@ -161,20 +162,25 @@ def test_release_install_manages_all_user_facing_launchers(tmp_path: Path) -> No
 def test_release_readiness_fails_if_managed_extra_wrapper_is_missing(tmp_path: Path) -> None:
     _, _, layout, status = _install(tmp_path)
     assert status.ready
-    assert EXTRA_LAUNCHERS == ("youmo-doctor", "youmo-resume", "youmo-pilot")
+    assert EXTRA_LAUNCHERS == (
+        "youmo-doctor",
+        "youmo-resume",
+        "youmo-pilot",
+        "youmo-publish",
+    )
 
-    (layout.bin / "youmo-pilot").unlink()
+    (layout.bin / "youmo-publish").unlink()
     observed = inspect_controller_release(layout)
     assert not observed.ready
     assert not observed.launchers_ready
-    assert "doctor/resume/pilot" in observed.detail
+    assert "doctor/resume/pilot/publish" in observed.detail
 
 
 def test_release_preflight_refuses_unmanaged_extra_launcher_before_clone(tmp_path: Path) -> None:
     source, sha = _synthetic_source(tmp_path)
     layout = default_layout(tmp_path / "controller")
     layout.bin.mkdir(parents=True)
-    collision = layout.bin / "youmo-resume"
+    collision = layout.bin / "youmo-publish"
     collision.write_text("#!/bin/sh\necho user-owned\n", encoding="utf-8")
 
     with pytest.raises(ControllerError, match="unmanaged launcher"):
@@ -216,6 +222,6 @@ def test_bootstrap_accepts_home_before_install_options_without_mutation(tmp_path
     assert completed.returncode == 0, completed.stderr
     assert "CONTROLLER_INSTALL=DRY_RUN" in completed.stdout
     assert f"CONTROLLER_REPO={home.resolve() / 'repo'}" in completed.stdout
-    assert "MANAGED_LAUNCHERS=youmo,youmo-build,youmo-audit,youmo-checkpoint,youmo-controller,youmo-doctor,youmo-resume,youmo-pilot" in completed.stdout
+    assert "MANAGED_LAUNCHERS=youmo,youmo-build,youmo-audit,youmo-checkpoint,youmo-controller,youmo-doctor,youmo-resume,youmo-pilot,youmo-publish" in completed.stdout
     assert "ACTIVE_PROJECT_CHECKOUT_MUTATION=NONE" in completed.stdout
     assert not home.exists()
