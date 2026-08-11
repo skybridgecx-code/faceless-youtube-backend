@@ -15,13 +15,19 @@ from .audit_engine import (
     run_guarded_audit,
     verify_audit_preconditions,
 )
-from .build_engine import DEFAULT_VALIDATION_COMMANDS
 from .codex_transport import CodexTransportError, inspect_codex_sdk, run_codex_turn
 from .config import ProjectConfigError, load_project_config
 from .gates import run_preflight_gate
 from .git_state import GitInspectionError, inspect_repo
+from .operation_lease import OperationLeaseError, operation_lease
 from .prompting import developer_instructions
 from .state import state_directory
+from .validation_env import (
+    ValidationEnvironmentError,
+    bound_workspace_validation_venv,
+    resolve_validation_venv,
+)
+from .validation_policy import FULL_VALIDATION_COMMANDS
 from .workspace import WorkspaceError, verify_executor_workspace
 
 DEFAULT_MANIFEST = "tools/project_agent_runtime/projects/youmo.json"
@@ -66,6 +72,15 @@ def _expected_architecture(config: object, snapshot: object) -> dict[str, str]:
     source_hashes = getattr(snapshot, "source_sha256")
     result.update({path: source_hashes[path] for path in sources})
     return result
+
+
+def _validation_commands(use_workspace_venv: bool) -> tuple[tuple[str, ...], ...]:
+    if not use_workspace_venv:
+        return FULL_VALIDATION_COMMANDS
+    return tuple(
+        tuple(".venv/bin/python" if part == "python3" else part for part in command)
+        for command in FULL_VALIDATION_COMMANDS
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -117,7 +132,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         head, branch, files, diff_sha = verify_audit_preconditions(
             workspace, args.task, evidence, expected_arch
         )
-    except AuditGuardError as exc:
+        validation_venv = resolve_validation_venv(control_state.root)
+    except (AuditGuardError, ValidationEnvironmentError) as exc:
         print(f"STOP: audit evidence preflight failed: {exc}", file=sys.stderr)
         return 9
 
@@ -137,6 +153,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"MODEL={config.codex.audit_model}")
         print(f"REASONING={config.codex.audit_reasoning}")
         print("SANDBOX=read_only")
+        print("AUDIT_VALIDATION=FULL_REGRESSION")
+        print(f"VALIDATION_VENV={validation_venv or '<system-python>'}")
+        print("EXECUTOR_LEASE=NOT_ACQUIRED")
         print("CODEX_TRANSPORT=NOT_STARTED")
         print("RERUN_WITH=youmo-audit ... --execute")
         return 0
@@ -147,20 +166,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 4
 
     try:
-        result = asyncio.run(
-            run_guarded_audit(
-                workspace_root=workspace,
-                task=args.task,
-                build_evidence=evidence,
-                expected_architecture=expected_arch,
-                developer_instructions=instructions,
-                model=config.codex.audit_model,
-                reasoning=config.codex.audit_reasoning,
-                turn_runner=run_codex_turn,
-                validation_commands=DEFAULT_VALIDATION_COMMANDS,
-            )
-        )
-    except (AuditGuardError, CodexTransportError) as exc:
+        with operation_lease(control_state.root, config, workspace, "audit"):
+            with bound_workspace_validation_venv(workspace, validation_venv) as bound:
+                result = asyncio.run(
+                    run_guarded_audit(
+                        workspace_root=workspace,
+                        task=args.task,
+                        build_evidence=evidence,
+                        expected_architecture=expected_arch,
+                        developer_instructions=instructions,
+                        model=config.codex.audit_model,
+                        reasoning=config.codex.audit_reasoning,
+                        turn_runner=run_codex_turn,
+                        validation_commands=_validation_commands(bound),
+                    )
+                )
+    except (
+        AuditGuardError,
+        CodexTransportError,
+        OperationLeaseError,
+        ValidationEnvironmentError,
+    ) as exc:
         print(f"STOP: guarded audit failed: {exc}", file=sys.stderr)
         return 9
 
