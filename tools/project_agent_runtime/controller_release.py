@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable
 
 from .controller import (
     MANAGED_LAUNCHER_MARKER,
@@ -19,8 +18,8 @@ from .controller import (
 )
 
 
-CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i9"
-EXTRA_LAUNCHERS: tuple[str, ...] = ("youmo-doctor", "youmo-resume")
+CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i12"
+EXTRA_LAUNCHERS: tuple[str, ...] = ("youmo-doctor", "youmo-resume", "youmo-pilot")
 
 
 def _extra_launcher_target(layout: ControllerLayout, name: str) -> Path:
@@ -89,7 +88,7 @@ def inspect_controller_release(
     if ready:
         detail = "controller release ready"
     elif base.ready and not extras_ready:
-        detail = "controller core ready but doctor/resume launchers are missing or stale"
+        detail = "controller core ready but doctor/resume/pilot launchers are missing or stale"
     else:
         detail = base.detail
     return replace(
