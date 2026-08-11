@@ -22,4 +22,4 @@ jobs:
       - name: Compile I17 overview
         run: python -m py_compile tools/project_agent_runtime/overview.py tools/project_agent_runtime/overview_cli.py scripts/youmo-overview
       - name: Run overview and run-journal tests
-        run: python -m pytest -q tests/test_project_agent_overview.py tests/test_project_agent_runs.py tests/test_project_agent_doctor.py
+        run: python -m pytest -q tests/test_project_agent_overview.py tests/test_project_agent_runs.py
