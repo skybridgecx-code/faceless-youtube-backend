@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .hygiene import WorkspaceHygieneError, require_no_ignored_untracked
+
 
 class CodexTransportError(RuntimeError):
     """Raised when the Codex SDK transport cannot be used safely."""
@@ -92,6 +94,14 @@ async def run_codex_turn(
 ) -> CodexTurnResult:
     if sandbox_name not in {"read_only", "workspace_write"}:
         raise CodexTransportError(f"unsupported sandbox preset: {sandbox_name}")
+
+    root = repo_root.resolve()
+    if sandbox_name == "workspace_write":
+        try:
+            require_no_ignored_untracked(root, context="before workspace-write Codex turn")
+        except WorkspaceHygieneError as exc:
+            raise CodexTransportError(str(exc)) from exc
+
     module = sdk or _load_sdk()
     try:
         sandbox = getattr(module.Sandbox, sandbox_name)
@@ -101,7 +111,7 @@ async def run_codex_turn(
     async with module.AsyncCodex() as codex:
         common = {
             "model": model,
-            "cwd": str(repo_root),
+            "cwd": str(root),
             "developer_instructions": developer_instructions,
             "sandbox": sandbox,
             "config": {"model_reasoning_effort": reasoning},
@@ -112,11 +122,19 @@ async def run_codex_turn(
             thread = await codex.thread_start(**common)
         result = await thread.run(
             prompt,
-            cwd=str(repo_root),
+            cwd=str(root),
             model=model,
             effort=reasoning,
             sandbox=sandbox,
         )
+
+    if sandbox_name == "workspace_write":
+        try:
+            require_no_ignored_untracked(root, context="after workspace-write Codex turn")
+        except WorkspaceHygieneError as exc:
+            raise CodexTransportError(
+                "workspace-write Codex turn created hidden/ignored artifacts; " + str(exc)
+            ) from exc
 
     actual_thread_id = getattr(thread, "id", None)
     turn_id = getattr(result, "id", None)
