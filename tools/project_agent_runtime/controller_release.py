@@ -18,8 +18,13 @@ from .controller import (
 )
 
 
-CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i12"
-EXTRA_LAUNCHERS: tuple[str, ...] = ("youmo-doctor", "youmo-resume", "youmo-pilot")
+CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i13"
+EXTRA_LAUNCHERS: tuple[str, ...] = (
+    "youmo-doctor",
+    "youmo-resume",
+    "youmo-pilot",
+    "youmo-publish",
+)
 
 
 def _extra_launcher_target(layout: ControllerLayout, name: str) -> Path:
@@ -88,7 +93,7 @@ def inspect_controller_release(
     if ready:
         detail = "controller release ready"
     elif base.ready and not extras_ready:
-        detail = "controller core ready but doctor/resume/pilot launchers are missing or stale"
+        detail = "controller core ready but doctor/resume/pilot/publish launchers are missing or stale"
     else:
         detail = base.detail
     return replace(
