@@ -22,6 +22,7 @@ class ControllerError(RuntimeError):
 DEFAULT_CONTROLLER_REF = "tooling/youmo-cli-i7"
 DEFAULT_RUNTIME_BRANCH = "tooling/controller-runtime"
 DEFAULT_REPOSITORY_URL = "https://github.com/skybridgecx-code/faceless-youtube-backend.git"
+DISABLED_PUSH_URL = "youmo-controller-read-only://disabled"
 MANAGED_LAUNCHER_MARKER = "# YouMo managed launcher v1"
 _MANIFEST = "tools/project_agent_runtime/projects/youmo.json"
 _REQUIREMENTS = ("requirements.txt", "requirements-youmo-cli.txt")
@@ -69,6 +70,7 @@ class ControllerStatus:
     clean: bool | None
     dependencies_ready: bool
     launchers_ready: bool
+    push_disabled: bool
     detail: str
 
     def to_json(self) -> str:
@@ -116,6 +118,26 @@ def _run(
     return completed.stdout.strip()
 
 
+def _run_optional(
+    argv: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int = 30,
+    runner: CommandRunner = subprocess.run,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return runner(
+            list(argv),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ControllerError(f"command failed to start: {argv!r}: {exc}") from exc
+
+
 def _is_ancestor(
     repo: Path,
     older: str,
@@ -123,17 +145,11 @@ def _is_ancestor(
     *,
     runner: CommandRunner = subprocess.run,
 ) -> bool:
-    try:
-        completed = runner(
-            ["git", "merge-base", "--is-ancestor", older, newer],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ControllerError(f"failed to verify controller ancestry: {exc}") from exc
+    completed = _run_optional(
+        ("git", "merge-base", "--is-ancestor", older, newer),
+        cwd=repo,
+        runner=runner,
+    )
     if completed.returncode == 0:
         return True
     if completed.returncode == 1:
@@ -266,7 +282,29 @@ def _assert_safe_layout(layout: ControllerLayout, source_root: Path | None) -> N
         )
 
 
-def _controller_gate(repo: Path, expected_sha: str) -> None:
+def _push_is_disabled(repo: Path, *, runner: CommandRunner = subprocess.run) -> bool:
+    completed = _run_optional(
+        ("git", "remote", "get-url", "--push", "origin"), cwd=repo, runner=runner
+    )
+    return completed.returncode == 0 and completed.stdout.strip() == DISABLED_PUSH_URL
+
+
+def _disable_push(repo: Path, *, runner: CommandRunner = subprocess.run) -> None:
+    _run(
+        ("git", "remote", "set-url", "--push", "origin", DISABLED_PUSH_URL),
+        cwd=repo,
+        runner=runner,
+    )
+    if not _push_is_disabled(repo, runner=runner):
+        raise ControllerError("controller push URL could not be disabled")
+
+
+def _controller_gate(
+    repo: Path,
+    expected_sha: str,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> None:
     state = inspect_repo(repo)
     config = load_project_config(repo, _MANIFEST)
     gate = run_preflight_gate(repo, config, state)
@@ -281,6 +319,8 @@ def _controller_gate(repo: Path, expected_sha: str) -> None:
         )
     if state.head != expected_sha:
         raise ControllerError(f"controller HEAD mismatch: {state.head} != {expected_sha}")
+    if not _push_is_disabled(repo, runner=runner):
+        raise ControllerError("controller origin push URL is not disabled")
 
 
 def _ensure_venv(
@@ -430,7 +470,8 @@ def install_controller(
             cwd=layout.repo,
             runner=runner,
         )
-    _controller_gate(layout.repo, expected_sha)
+    _disable_push(layout.repo, runner=runner)
+    _controller_gate(layout.repo, expected_sha, runner=runner)
     _ensure_venv(layout, python_executable=python_executable, runner=runner)
     _install_dependencies_if_needed(layout, runner=runner)
     _install_launchers(layout)
@@ -464,7 +505,7 @@ def refresh_controller(
         raise ControllerError(
             f"unexpected controller repository identity: {metadata.repository}"
         )
-    _controller_gate(layout.repo, metadata.commit_sha)
+    _controller_gate(layout.repo, metadata.commit_sha, runner=runner)
 
     _run(
         ("git", "fetch", "--no-tags", "origin", source_ref),
@@ -485,7 +526,7 @@ def refresh_controller(
         _run(
             ("git", "merge", "--ff-only", fetched), cwd=layout.repo, runner=runner
         )
-    _controller_gate(layout.repo, fetched)
+    _controller_gate(layout.repo, fetched, runner=runner)
     _install_dependencies_if_needed(layout, runner=runner)
     _install_launchers(layout)
     updated = ControllerMetadata(
@@ -520,6 +561,7 @@ def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStat
             clean=None,
             dependencies_ready=False,
             launchers_ready=False,
+            push_disabled=False,
             detail="controller is not installed",
         )
     try:
@@ -540,12 +582,14 @@ def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStat
             in (layout.bin / name).read_text(encoding="utf-8")
             for name in _LAUNCHERS
         )
+        push_disabled = _push_is_disabled(layout.repo)
         ready = (
             gate.passed
             and state.branch == metadata.runtime_branch
             and state.head == metadata.commit_sha
             and deps_ready
             and launchers_ready
+            and push_disabled
         )
         return ControllerStatus(
             installed=True,
@@ -559,6 +603,7 @@ def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStat
             clean=state.clean,
             dependencies_ready=deps_ready,
             launchers_ready=launchers_ready,
+            push_disabled=push_disabled,
             detail=(
                 "controller ready"
                 if ready
@@ -578,5 +623,6 @@ def inspect_controller(layout: ControllerLayout | None = None) -> ControllerStat
             clean=None,
             dependencies_ready=False,
             launchers_ready=False,
+            push_disabled=False,
             detail=f"controller inspection failed: {exc}",
         )
