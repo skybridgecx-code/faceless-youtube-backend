@@ -28,12 +28,18 @@ class Campaign(Base):
     __table_args__ = (
         CheckConstraint(f"current_stage IN ({_RUNTIME_STAGE_SQL})", name="ck_campaigns_current_stage"),
         Index("uq_campaigns_workflow_id", "workflow_id", unique=True),
+        Index(
+            "uq_campaigns_production_workflow_id",
+            "production_workflow_id",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
     current_stage: Mapped[str] = mapped_column(String(40), default="topic", index=True)
     workflow_id: Mapped[str | None] = mapped_column(String(240), nullable=True, index=True)
+    production_workflow_id: Mapped[str | None] = mapped_column(String(240), nullable=True)
     risk_tier: Mapped[str] = mapped_column(String(40), default="standard")
     policy_version: Mapped[str] = mapped_column(String(120), default="v1")
     legacy_video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id"), nullable=True, index=True)

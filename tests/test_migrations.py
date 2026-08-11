@@ -15,7 +15,8 @@ from scripts.migrate_db import CANONICAL_TABLES, LEGACY_TABLES, ORIGINAL_DATABAS
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = ROOT / ".venv" / "bin" / "python"
-HEAD_REVISION = "20260811_0003"
+HEAD_REVISION = "20260811_0004"
+I4_REVISION = "20260811_0003"
 I3_REVISION = "20260810_0002"
 I2_REVISION = "20260810_0001"
 BASELINE_REVISION = "22348998243b"
@@ -191,6 +192,104 @@ def create_unversioned_baseline(path: Path) -> None:
         connection.close()
 
 
+def test_i5_settings_defaults_are_locked_without_changing_legacy_defaults() -> None:
+    from app.config import Settings
+
+    settings = Settings(_env_file=None, openai_api_key="")
+
+    assert settings.image_generation_provider == "placeholder"
+    assert settings.image_generation_model == "gpt-image-1"
+    assert settings.i5_tts_provider == "openai"
+    assert settings.i5_tts_model == "tts-1-hd"
+    assert settings.i5_tts_fallback_model == "tts-1"
+    assert settings.i5_tts_voice == "onyx"
+    assert settings.i5_generated_image_provider == "openai"
+    assert settings.i5_generated_image_model == "gpt-image-2"
+    assert settings.i5_generated_image_size == "1280x720"
+    assert settings.i5_generated_image_primary_quality == "medium"
+    assert settings.i5_generated_image_fallback_quality == "low"
+    assert settings.i5_video_provider == "disabled"
+    assert settings.i5_video_model == "sora-2"
+    assert settings.i5_allow_deprecated_sora is False
+    settings.validate_startup()
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY is required"):
+        settings.validate_i5_production()
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value", "environment_name"),
+    [
+        ("i5_tts_provider", "legacy", "I5_TTS_PROVIDER"),
+        ("i5_tts_model", "gpt-4o-mini-tts", "I5_TTS_MODEL"),
+        ("i5_tts_fallback_model", "tts-1-hd", "I5_TTS_FALLBACK_MODEL"),
+        ("i5_tts_voice", "alloy", "I5_TTS_VOICE"),
+        ("i5_generated_image_provider", "legacy", "I5_GENERATED_IMAGE_PROVIDER"),
+        ("i5_generated_image_model", "gpt-image-1", "I5_GENERATED_IMAGE_MODEL"),
+        ("i5_generated_image_size", "1024x1024", "I5_GENERATED_IMAGE_SIZE"),
+        (
+            "i5_generated_image_primary_quality",
+            "high",
+            "I5_GENERATED_IMAGE_PRIMARY_QUALITY",
+        ),
+        (
+            "i5_generated_image_fallback_quality",
+            "medium",
+            "I5_GENERATED_IMAGE_FALLBACK_QUALITY",
+        ),
+        ("i5_video_provider", "legacy", "I5_VIDEO_PROVIDER"),
+        ("i5_video_model", "sora-2-pro", "I5_VIDEO_MODEL"),
+    ],
+)
+def test_i5_settings_reject_provider_catalog_drift(
+    field: str,
+    invalid_value: str,
+    environment_name: str,
+) -> None:
+    from app.config import Settings
+
+    settings = Settings(_env_file=None, **{field: invalid_value})
+
+    with pytest.raises(RuntimeError, match=environment_name):
+        settings.validate_i5_configuration()
+
+
+def test_i5_settings_enforce_sora_opt_in_and_image_key_precedence() -> None:
+    from app.config import Settings
+
+    blocked = Settings(
+        _env_file=None,
+        i5_video_provider="openai",
+        i5_allow_deprecated_sora=False,
+    )
+    with pytest.raises(RuntimeError, match="I5_ALLOW_DEPRECATED_SORA"):
+        blocked.validate_i5_configuration()
+
+    sora_alias = Settings(
+        _env_file=None,
+        i5_video_provider="sora",
+        i5_allow_deprecated_sora=True,
+    )
+    sora_alias.validate_i5_configuration()
+
+    configured = Settings(
+        _env_file=None,
+        openai_api_key="tts-key",
+        image_generation_api_key="image-key",
+        i5_video_provider="openai",
+        i5_allow_deprecated_sora=True,
+    )
+    configured.validate_i5_production()
+    assert configured.i5_image_generation_api_key == "image-key"
+    assert (
+        Settings(
+            _env_file=None,
+            openai_api_key="shared-key",
+            image_generation_api_key=" ",
+        ).i5_image_generation_api_key
+        == "shared-key"
+    )
+
+
 def test_blank_sqlite_upgrades_to_head_with_complete_schema_and_no_drift(tmp_path: Path) -> None:
     database = tmp_path / "blank.db"
     alembic_upgrade(database)
@@ -212,12 +311,18 @@ def test_blank_sqlite_upgrades_to_head_with_complete_schema_and_no_drift(tmp_pat
     } <= columns(database, "publish_records")
     assert "payload_json" in columns(database, "artifacts")
     assert "claim_hash" in columns(database, "claims")
+    assert "production_workflow_id" in columns(database, "campaigns")
+    assert "reserved_cost_microunits" in columns(database, "generation_jobs")
+    assert "campaign_budget_overrides" in tables
     assert "ix_claims_claim_hash" in index_names(database, "claims")
     assert ("campaign_id", "claim_hash") in unique_index_columns(
         database, "claims"
     )
     assert integrity(database) == "ok"
     assert ("workflow_id",) in unique_index_columns(database, "campaigns")
+    assert ("production_workflow_id",) in unique_index_columns(
+        database, "campaigns"
+    )
     assert (
         "campaign_id",
         "stage",
@@ -234,6 +339,9 @@ def test_blank_sqlite_upgrades_to_head_with_complete_schema_and_no_drift(tmp_pat
         "input_hash",
         "attempt",
     ) in unique_index_columns(database, "generation_jobs")
+    assert ("campaign_id", "override_hash") in unique_index_columns(
+        database, "campaign_budget_overrides"
+    )
 
     checked = run("-m", "alembic", "check", path=database, check=False)
     assert checked.returncode == 0, checked.stderr
@@ -253,6 +361,30 @@ def test_compatible_unversioned_legacy_database_is_verified_backed_up_and_adopte
     assert row_counts(database, {"campaigns"}) == {"campaigns": 0}
     assert integrity(database) == "ok"
     assert list(tmp_path.glob("legacy.db.pre-i2-*.bak"))
+
+
+def test_unversioned_legacy_with_i5_canonical_table_fails_before_adoption(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "legacy-with-i5-table.db"
+    create_unversioned_baseline(database)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            "CREATE TABLE campaign_budget_overrides (id INTEGER PRIMARY KEY)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    before = schema_digest(database)
+
+    result = migrate_with_utility(database, adopt_legacy=True, check=False)
+
+    assert result.returncode == 2
+    assert "already has canonical tables" in result.stderr
+    assert "campaign_budget_overrides" in result.stderr
+    assert alembic_versions(database) is None
+    assert schema_digest(database) == before
 
 
 def test_known_versioned_baseline_upgrades_forward_without_adoption(tmp_path: Path) -> None:
@@ -409,6 +541,201 @@ def test_i3_database_upgrades_to_i4_with_legacy_and_canonical_rows_preserved(
         ).fetchone() == (None,)
     finally:
         connection.close()
+    assert integrity(database) == "ok"
+
+
+def test_i4_database_upgrades_to_i5_with_all_prior_rows_preserved(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "i4-to-i5.db"
+    alembic_upgrade(database, I4_REVISION)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I5 migration channel', 'engineering', 'builders', 'clear', "
+            "'documentary', CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_id = connection.execute(
+            "INSERT INTO campaigns "
+            "(channel_id, current_stage, workflow_id, risk_tier, policy_version, created_at, updated_at) "
+            "VALUES (?, 'storyboard', 'campaign:1:i4:preserved', 'standard', "
+            "'i4-editorial-v1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (channel_id,),
+        ).lastrowid
+        source_id = connection.execute(
+            "INSERT INTO sources "
+            "(campaign_id, source_uri, publisher, retrieved_at, content_sha256, source_class, "
+            "rights_status, evidence_snippet, provenance_json, created_at) "
+            "VALUES (?, 'https://example.com/i5-preserved', 'Example Publisher', "
+            "CURRENT_TIMESTAMP, ?, 'official', 'reference_only', 'Preserved I4 evidence', "
+            "'{\"scope\":\"snippet\"}', CURRENT_TIMESTAMP)",
+            (campaign_id, "7" * 64),
+        ).lastrowid
+        claim_id = connection.execute(
+            "INSERT INTO claims "
+            "(campaign_id, assertion_text, material, state, claim_hash, structured_value_json, "
+            "unit, created_at) VALUES (?, 'Preserved I4 claim', 1, 'VERIFIED', ?, "
+            "'{\"claim_type\":\"fact\"}', NULL, CURRENT_TIMESTAMP)",
+            (campaign_id, "8" * 64),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO claim_sources (claim_id, source_id, created_at) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (claim_id, source_id),
+        )
+        artifact_id = connection.execute(
+            "INSERT INTO artifacts "
+            "(campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, "
+            "provider_name, provider_model, prompt_template_version, payload_json, "
+            "provenance_json, created_at) VALUES (?, 'i4_script', "
+            "'artifact://campaign/1/i4_script/preserved', ?, 2, 'application/json', "
+            "'script', 'deterministic', 'i4-editorial-v1', 'i4-script-v1', "
+            "'{\"preserved\":true}', '{\"preserved\":true}', CURRENT_TIMESTAMP)",
+            (campaign_id, "9" * 64),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO generation_jobs "
+            "(campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+            "output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, "
+            "created_at, completed_at) VALUES (?, NULL, 'deterministic', "
+            "'i4-script-v1', 1, 'completed', ?, ?, 'i4:preserved', '{}', 0, NULL, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (campaign_id, "a" * 64, artifact_id),
+        )
+        connection.execute(
+            "INSERT INTO gate_decisions "
+            "(campaign_id, stage, outcome, policy_version, input_hash, output_hash, "
+            "reasons_json, created_at) VALUES (?, 'script', 'PASS', 'i4-editorial-v1', "
+            "?, ?, '[]', CURRENT_TIMESTAMP)",
+            (campaign_id, "a" * 64, "9" * 64),
+        )
+        connection.commit()
+
+        preserved_queries = {
+            "channels": "SELECT id, name, niche, audience, brand_voice, visual_style FROM channels",
+            "campaigns": "SELECT id, channel_id, current_stage, workflow_id, risk_tier, policy_version, legacy_video_id, created_at, updated_at FROM campaigns",
+            "sources": "SELECT id, campaign_id, source_uri, publisher, retrieved_at, content_sha256, source_class, rights_status, evidence_snippet, provenance_json, created_at FROM sources",
+            "claims": "SELECT id, campaign_id, assertion_text, material, state, claim_hash, structured_value_json, unit, created_at FROM claims",
+            "claim_sources": "SELECT claim_id, source_id, created_at FROM claim_sources",
+            "artifacts": "SELECT id, campaign_id, kind, uri, sha256, byte_size, mime_type, source_stage, provider_name, provider_model, prompt_template_version, payload_json, provenance_json, created_at FROM artifacts",
+            "generation_jobs": "SELECT id, campaign_id, scene_id, provider, model, attempt, status, input_hash, output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, created_at, completed_at FROM generation_jobs",
+            "gate_decisions": "SELECT id, campaign_id, stage, outcome, policy_version, input_hash, output_hash, reasons_json, created_at FROM gate_decisions",
+        }
+        before_rows = {
+            table: list(connection.execute(query))
+            for table, query in preserved_queries.items()
+        }
+    finally:
+        connection.close()
+
+    alembic_upgrade(database)
+
+    assert revision(database) == HEAD_REVISION
+    connection = sqlite3.connect(database)
+    try:
+        assert {
+            table: list(connection.execute(query))
+            for table, query in preserved_queries.items()
+        } == before_rows
+        assert connection.execute(
+            "SELECT production_workflow_id FROM campaigns WHERE id = ?",
+            (campaign_id,),
+        ).fetchone() == (None,)
+        assert connection.execute(
+            "SELECT reserved_cost_microunits FROM generation_jobs WHERE campaign_id = ?",
+            (campaign_id,),
+        ).fetchone() == (None,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM campaign_budget_overrides"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()
+    assert integrity(database) == "ok"
+
+
+def test_i5_production_and_budget_constraints_fail_closed(tmp_path: Path) -> None:
+    database = tmp_path / "i5-constraints.db"
+    alembic_upgrade(database)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I5 constraints channel', 'test', 'test', 'test', 'test', "
+            "CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_ids = [
+            connection.execute(
+                "INSERT INTO campaigns "
+                "(channel_id, current_stage, workflow_id, production_workflow_id, "
+                "risk_tier, policy_version, created_at, updated_at) VALUES (?, "
+                "'storyboard', NULL, ?, 'standard', 'i4-editorial-v1', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (channel_id, production_workflow_id),
+            ).lastrowid
+            for production_workflow_id in ("campaign:1:i5:unique", None)
+        ]
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE campaigns SET production_workflow_id = ? WHERE id = ?",
+                ("campaign:1:i5:unique", campaign_ids[1]),
+            )
+        connection.rollback()
+
+        override_hash = "b" * 64
+        valid_values = (
+            campaign_ids[0],
+            "i5-budget-v1",
+            35_000_000,
+            40_000_000,
+            "owner@example.test",
+            "Authorize the required narration budget",
+            override_hash,
+        )
+        insert_override = (
+            "INSERT INTO campaign_budget_overrides "
+            "(campaign_id, policy_version, previous_authorized_cap_microunits, "
+            "new_authorized_cap_microunits, actor, reason, override_hash, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+        )
+        connection.execute(insert_override, valid_values)
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(insert_override, valid_values)
+        connection.rollback()
+
+        connection.execute(
+            insert_override,
+            (campaign_ids[1], *valid_values[1:]),
+        )
+        connection.commit()
+
+        invalid_values = (
+            (*valid_values[:3], 35_000_000, *valid_values[4:6], "c" * 64),
+            (*valid_values[:4], "   ", valid_values[5], "d" * 64),
+            (*valid_values[:5], "   ", "e" * 64),
+            (*valid_values[:6], "short-hash"),
+            (
+                valid_values[0],
+                valid_values[1],
+                -1,
+                valid_values[3],
+                *valid_values[4:6],
+                "f" * 64,
+            ),
+        )
+        for invalid in invalid_values:
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(insert_override, invalid)
+            connection.rollback()
+    finally:
+        connection.close()
+
     assert integrity(database) == "ok"
 
 
@@ -608,7 +935,7 @@ def test_i3_downgrade_removes_only_replay_indexes(tmp_path: Path) -> None:
 
 def test_i4_downgrade_removes_only_i4_columns_and_indexes(tmp_path: Path) -> None:
     database = tmp_path / "i4-downgrade.db"
-    alembic_upgrade(database)
+    alembic_upgrade(database, I4_REVISION)
     connection = sqlite3.connect(database)
     try:
         channel_id = connection.execute(
@@ -673,6 +1000,87 @@ def test_i4_downgrade_removes_only_i4_columns_and_indexes(tmp_path: Path) -> Non
         "input_hash",
         "attempt",
     ) in unique_index_columns(database, "generation_jobs")
+    assert integrity(database) == "ok"
+
+
+def test_i5_downgrade_removes_only_i5_additions(tmp_path: Path) -> None:
+    database = tmp_path / "i5-downgrade.db"
+    alembic_upgrade(database)
+    connection = sqlite3.connect(database)
+    try:
+        channel_id = connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('I5 downgrade channel', 'test', 'test', 'test', 'test', "
+            "CURRENT_TIMESTAMP)"
+        ).lastrowid
+        campaign_id = connection.execute(
+            "INSERT INTO campaigns "
+            "(channel_id, current_stage, workflow_id, production_workflow_id, risk_tier, "
+            "policy_version, created_at, updated_at) VALUES (?, 'storyboard', "
+            "'campaign:1:i4:downgrade', 'campaign:1:i5:downgrade', 'standard', "
+            "'i4-editorial-v1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (channel_id,),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO generation_jobs "
+            "(campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+            "output_artifact_id, provider_job_id, usage_json, cost_microunits, "
+            "reserved_cost_microunits, error_json, created_at, completed_at) "
+            "VALUES (?, NULL, 'openai', 'tts-1-hd', 1, 'reserved', ?, NULL, NULL, "
+            "NULL, NULL, 1200, NULL, CURRENT_TIMESTAMP, NULL)",
+            (campaign_id, "1" * 64),
+        )
+        connection.execute(
+            "INSERT INTO campaign_budget_overrides "
+            "(campaign_id, policy_version, previous_authorized_cap_microunits, "
+            "new_authorized_cap_microunits, actor, reason, override_hash, created_at) "
+            "VALUES (?, 'i5-budget-v1', 35000000, 40000000, 'owner', "
+            "'Required production budget', ?, CURRENT_TIMESTAMP)",
+            (campaign_id, "2" * 64),
+        )
+        connection.commit()
+        preserved_campaign = connection.execute(
+            "SELECT id, channel_id, current_stage, workflow_id, risk_tier, policy_version, "
+            "legacy_video_id, created_at, updated_at FROM campaigns WHERE id = ?",
+            (campaign_id,),
+        ).fetchone()
+        preserved_job = connection.execute(
+            "SELECT id, campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+            "output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, "
+            "created_at, completed_at FROM generation_jobs WHERE campaign_id = ?",
+            (campaign_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    before_tables = table_names(database)
+    run("-m", "alembic", "downgrade", I4_REVISION, path=database)
+
+    assert revision(database) == I4_REVISION
+    assert table_names(database) == before_tables - {"campaign_budget_overrides"}
+    assert "production_workflow_id" not in columns(database, "campaigns")
+    assert "reserved_cost_microunits" not in columns(database, "generation_jobs")
+    assert "uq_campaigns_production_workflow_id" not in index_names(
+        database, "campaigns"
+    )
+    assert "payload_json" in columns(database, "artifacts")
+    assert "claim_hash" in columns(database, "claims")
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute(
+            "SELECT id, channel_id, current_stage, workflow_id, risk_tier, policy_version, "
+            "legacy_video_id, created_at, updated_at FROM campaigns WHERE id = ?",
+            (campaign_id,),
+        ).fetchone() == preserved_campaign
+        assert connection.execute(
+            "SELECT id, campaign_id, scene_id, provider, model, attempt, status, input_hash, "
+            "output_artifact_id, provider_job_id, usage_json, cost_microunits, error_json, "
+            "created_at, completed_at FROM generation_jobs WHERE campaign_id = ?",
+            (campaign_id,),
+        ).fetchone() == preserved_job
+    finally:
+        connection.close()
     assert integrity(database) == "ok"
 
 
@@ -948,6 +1356,41 @@ def test_stale_i3_startup_fails_before_dbos_or_application_mutation(
         in result.stderr
     )
     assert revision(database) == I3_REVISION
+    assert sha256(database) == before_sha
+    assert schema_digest(database) == before_schema
+    assert row_counts(database, table_names(database) - {"alembic_version"}) == before_rows
+    assert not dbos_system_database.exists()
+
+
+def test_stale_i4_startup_fails_before_dbos_or_application_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "stale-i4.db"
+    alembic_upgrade(database, I4_REVISION)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            "INSERT INTO channels "
+            "(name, niche, audience, brand_voice, visual_style, created_at) "
+            "VALUES ('Stale I4 channel', 'test', 'test', 'test', 'test', "
+            "CURRENT_TIMESTAMP)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    before_sha = sha256(database)
+    before_schema = schema_digest(database)
+    before_rows = row_counts(database, table_names(database) - {"alembic_version"})
+    dbos_system_database = database.parent / f"{database.stem}-dbos-system.db"
+
+    result = start_app(database, check=False)
+
+    assert result.returncode != 0
+    assert (
+        f"Database revision ['{I4_REVISION}'] is not the expected head {HEAD_REVISION}"
+        in result.stderr
+    )
+    assert revision(database) == I4_REVISION
     assert sha256(database) == before_sha
     assert schema_digest(database) == before_schema
     assert row_counts(database, table_names(database) - {"alembic_version"}) == before_rows

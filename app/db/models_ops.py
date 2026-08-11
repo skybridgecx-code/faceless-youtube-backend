@@ -36,9 +36,54 @@ class GenerationJob(Base):
     provider_job_id: Mapped[str | None] = mapped_column(String(240), nullable=True, index=True)
     usage_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost_microunits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reserved_cost_microunits: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CampaignBudgetOverride(Base):
+    """Immutable, append-only owner authorization for a higher campaign cap."""
+
+    __tablename__ = "campaign_budget_overrides"
+    __table_args__ = (
+        CheckConstraint(
+            "previous_authorized_cap_microunits >= 0",
+            name="ck_campaign_budget_overrides_previous_cap_nonnegative",
+        ),
+        CheckConstraint(
+            "new_authorized_cap_microunits > previous_authorized_cap_microunits",
+            name="ck_campaign_budget_overrides_cap_increase",
+        ),
+        CheckConstraint(
+            "length(trim(actor)) > 0",
+            name="ck_campaign_budget_overrides_actor_nonblank",
+        ),
+        CheckConstraint(
+            "length(trim(reason)) > 0",
+            name="ck_campaign_budget_overrides_reason_nonblank",
+        ),
+        CheckConstraint(
+            "length(override_hash) = 64",
+            name="ck_campaign_budget_overrides_hash",
+        ),
+        Index(
+            "uq_campaign_budget_overrides_replay_identity",
+            "campaign_id",
+            "override_hash",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    policy_version: Mapped[str] = mapped_column(String(120))
+    previous_authorized_cap_microunits: Mapped[int] = mapped_column(Integer)
+    new_authorized_cap_microunits: Mapped[int] = mapped_column(Integer)
+    actor: Mapped[str] = mapped_column(String(240))
+    reason: Mapped[str] = mapped_column(Text)
+    override_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class GateDecision(Base):

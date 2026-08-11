@@ -1175,6 +1175,157 @@ def persist_script_stage(packet: dict[str, object]) -> dict[str, object]:
     return persist_i4_stage("script", packet)
 
 
+def _verify_exact_i4_predecessor_effect_set(
+    db: Session,
+    campaign_id: int,
+) -> None:
+    seed_rows = list(
+        db.scalars(
+            select(Artifact).where(
+                Artifact.campaign_id == campaign_id,
+                Artifact.kind == I4_SEED_KIND,
+            )
+        )
+    )
+    if len(seed_rows) != 1:
+        raise WorkflowReplayConflict(
+            "Campaign must contain exactly one bound I4 editorial seed"
+        )
+
+    stages = (
+        ("topic", I4_TOPIC_KIND),
+        ("research", I4_RESEARCH_KIND),
+        ("script", I4_SCRIPT_KIND),
+    )
+    expected_job_ids: set[int] = set()
+    for stage, kind in stages:
+        artifacts = list(
+            db.scalars(
+                select(Artifact).where(
+                    Artifact.campaign_id == campaign_id,
+                    Artifact.kind == kind,
+                )
+            )
+        )
+        if len(artifacts) != 1:
+            raise WorkflowReplayConflict(
+                f"Campaign I4 {stage} artifact effect set is not exact"
+            )
+        artifact = artifacts[0]
+        payload = _decode_canonical_artifact_payload(artifact)
+        spec = _stage_spec(stage, payload)
+        _verify_artifact_fields(
+            artifact,
+            cast(Mapping[str, object], spec["artifact"]),
+        )
+
+        gates = list(
+            db.scalars(
+                select(GateDecision).where(
+                    GateDecision.campaign_id == campaign_id,
+                    GateDecision.stage == stage,
+                )
+            )
+        )
+        if len(gates) != 1:
+            raise WorkflowReplayConflict(
+                f"Campaign I4 {stage} gate effect set is not exact"
+            )
+        _verify_gate(gates[0], spec)
+
+        jobs = list(
+            db.scalars(
+                select(GenerationJob).where(
+                    GenerationJob.campaign_id == campaign_id,
+                    GenerationJob.provider == spec["provider"],
+                    GenerationJob.model == spec["model"],
+                )
+            )
+        )
+        if len(jobs) != 1:
+            raise WorkflowReplayConflict(
+                f"Campaign I4 {stage} generation-job effect set is not exact"
+            )
+        canonical_job = _reconcile_job(
+            db,
+            spec,
+            artifact.id,
+            allow_create=False,
+        )
+        if canonical_job.id != jobs[0].id or canonical_job.id in expected_job_ids:
+            raise WorkflowReplayConflict(
+                f"Campaign I4 {stage} generation-job identity conflicts"
+            )
+        expected_job_ids.add(canonical_job.id)
+
+
+def reconcile_accepted_i4_script_packet(
+    db: Session,
+    campaign_id: int,
+) -> dict[str, object]:
+    """Reconcile the accepted I4 script and all of its immutable effects in ``db``."""
+
+    campaign = db.get(Campaign, campaign_id)
+    if campaign is None:
+        raise CampaignNotFoundError(f"Campaign {campaign_id} does not exist")
+    if campaign.policy_version != I4_POLICY_VERSION:
+        raise WorkflowTransitionError(
+            "Canonical production requires an I4-governed campaign"
+        )
+    if campaign.current_stage not in {
+        "storyboard",
+        "media",
+        "assembly",
+        "machine_qa",
+    }:
+        raise WorkflowTransitionError(
+            "Canonical production requires an accepted I4 script at storyboard"
+        )
+
+    artifacts = list(
+        db.scalars(
+            select(Artifact).where(
+                Artifact.campaign_id == campaign_id,
+                Artifact.kind == I4_SCRIPT_KIND,
+            )
+        )
+    )
+    if len(artifacts) != 1:
+        raise WorkflowReplayConflict(
+            "Campaign must contain exactly one accepted I4 script artifact"
+        )
+    artifact = artifacts[0]
+    payload = _verify_packet_artifact(
+        db,
+        campaign_id,
+        kind=I4_SCRIPT_KIND,
+        expected_hash=artifact.sha256,
+    )
+    if dict(payload.get("gate") or {}).get("outcome") != "PASS":
+        raise WorkflowTransitionError("I4 script gate is not PASS")
+    _verify_bound_stage_lineage(db, campaign, "script", payload)
+    _verify_exact_i4_predecessor_effect_set(db, campaign_id)
+    return {
+        "artifact_id": artifact.id,
+        "campaign_id": campaign_id,
+        "payload": payload,
+        "script_hash": artifact.sha256,
+        "workflow_id": campaign.workflow_id,
+    }
+
+
+def load_accepted_i4_script_packet(campaign_id: int) -> dict[str, object]:
+    """Load and fully reconcile the exact I4 script effect set accepted by a campaign.
+
+    I5 uses this public boundary instead of reaching through I4 private helpers.  The
+    read fails closed when the script artifact, its gate/job, any predecessor effect,
+    or the persisted source/claim lineage has drifted since I4 completed.
+    """
+
+    with SessionLocal() as db:
+        return reconcile_accepted_i4_script_packet(db, campaign_id)
+
+
 def _latest_artifact_payload(
     db: Session,
     campaign_id: int,

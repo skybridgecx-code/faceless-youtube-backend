@@ -14,11 +14,15 @@ from app.editorial.persistence import (
 )
 from app.models import Channel
 from app.workflows.api_models import (
+    CampaignBudgetOverrideRead,
+    CampaignBudgetOverrideRequest,
     CampaignCreateRequest,
     CampaignRead,
     CampaignWorkflowStartRead,
     EditorialSeedRead,
     EditorialSnapshotRead,
+    ProductionSnapshotRead,
+    ProductionWorkflowStartRead,
 )
 from app.workflows.campaign_workflow import (
     I3_POLICY_VERSION,
@@ -28,6 +32,15 @@ from app.workflows.dbos_runtime import DBOSRuntimeError
 from app.workflows.i4_campaign_workflow import (
     I4ConfigurationError,
     start_i4_campaign_workflow,
+)
+from app.workflows.i5_production_workflow import (
+    I5ConfigurationError,
+    send_i5_budget_override,
+    start_i5_production_workflow,
+)
+from app.production.persistence import (
+    create_budget_override,
+    production_snapshot,
 )
 from app.workflows.persistence import (
     CampaignNotFoundError,
@@ -186,4 +199,106 @@ def start_campaign_workflow(
         campaign=CampaignRead.model_validate(campaign),
         workflow_id=workflow_id,
         durable_status=handle.get_status().status,
+    )
+
+
+@router.post(
+    "/{campaign_id}/production/start",
+    response_model=ProductionWorkflowStartRead,
+)
+def start_production_workflow(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+) -> ProductionWorkflowStartRead:
+    try:
+        handle = start_i5_production_workflow(campaign_id)
+        snapshot = production_snapshot(campaign_id)
+    except CampaignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Campaign not found") from exc
+    except (WorkflowReplayConflict, WorkflowTransitionError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except I5ConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DBOSRuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Durable workflow runtime unavailable",
+        ) from exc
+
+    db.expire_all()
+    campaign = _campaign_or_404(db, campaign_id)
+    profile_hash = snapshot.get("production_profile_hash")
+    if not isinstance(profile_hash, str):
+        raise HTTPException(status_code=409, detail="Production profile is unavailable")
+    return ProductionWorkflowStartRead(
+        campaign=CampaignRead.model_validate(campaign),
+        production_workflow_id=handle.get_workflow_id(),
+        production_profile_hash=profile_hash,
+        durable_status=handle.get_status().status,
+    )
+
+
+@router.get(
+    "/{campaign_id}/production",
+    response_model=ProductionSnapshotRead,
+)
+def read_production_snapshot(campaign_id: int) -> ProductionSnapshotRead:
+    try:
+        return ProductionSnapshotRead.model_validate(production_snapshot(campaign_id))
+    except CampaignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Campaign not found") from exc
+    except (WorkflowReplayConflict, WorkflowTransitionError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{campaign_id}/production/budget/override",
+    response_model=CampaignBudgetOverrideRead,
+)
+def create_production_budget_override(
+    campaign_id: int,
+    payload: CampaignBudgetOverrideRequest,
+) -> CampaignBudgetOverrideRead:
+    try:
+        persisted = create_budget_override(
+            campaign_id=campaign_id,
+            new_authorized_cap_microusd=payload.new_authorized_cap_microusd,
+            actor=payload.actor,
+            reason=payload.reason,
+        )
+    except CampaignNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Campaign not found") from exc
+    except (ValueError, WorkflowReplayConflict, WorkflowTransitionError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    workflow_id = str(persisted["production_workflow_id"])
+    override_hash = str(persisted["override_hash"])
+    message = {
+        "campaign_id": campaign_id,
+        "override_hash": override_hash,
+        "production_workflow_id": workflow_id,
+    }
+    try:
+        send_i5_budget_override(
+            workflow_id=workflow_id,
+            message=message,
+            idempotency_key=override_hash,
+        )
+    except Exception as exc:
+        # The immutable application row is intentionally already committed.
+        # An exact endpoint retry reconciles it and resends the same key.
+        raise HTTPException(
+            status_code=503,
+            detail="Budget override persisted; durable message delivery is unavailable",
+        ) from exc
+    return CampaignBudgetOverrideRead(
+        created=bool(persisted["created"]),
+        message_delivered=True,
+        new_authorized_cap_microusd=int(persisted["new_authorized_cap_microusd"]),
+        override_hash=override_hash,
+        override_id=int(persisted["override_id"]),
+        previous_authorized_cap_microusd=int(
+            persisted["previous_authorized_cap_microusd"]
+        ),
+        production_workflow_id=workflow_id,
     )

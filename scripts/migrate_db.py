@@ -27,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
 BASELINE_REVISION = "22348998243b"
 ORIGINAL_DATABASE = (REPO_ROOT / "content_factory.db").resolve()
 CANONICAL_TABLES = {
+    "campaign_budget_overrides",
     "campaigns",
     "sources",
     "claims",

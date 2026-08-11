@@ -21,6 +21,7 @@ class CampaignRead(BaseModel):
     channel_id: int
     current_stage: str
     workflow_id: str | None
+    production_workflow_id: str | None
     risk_tier: str
     policy_version: str
     created_at: datetime
@@ -57,3 +58,48 @@ class EditorialSnapshotRead(BaseModel):
     script_runtime_estimate_minutes: float | None
     last_gate_outcome: str | None
     seed_present: bool
+
+
+class ProductionWorkflowStartRead(BaseModel):
+    campaign: CampaignRead
+    production_workflow_id: str
+    production_profile_hash: str
+    durable_status: str
+
+
+class ProductionSnapshotRead(BaseModel):
+    assembly_manifest_hash: str | None
+    authorized_hard_cap_microusd: int
+    campaign_id: int
+    current_effective_campaign_cost_microusd: int
+    current_stage: str
+    final_render_hash: str | None
+    generated_media_counts: dict[str, object]
+    i4_script_hash: str
+    latest_budget_block: dict[str, object] | None
+    latest_i5_gate: dict[str, object] | None
+    media_manifest_hash: str | None
+    production_profile_hash: str | None
+    production_workflow_id: str | None
+    reserved_cost_microusd: int
+    scene_count: int
+    soft_warning_active: bool
+    storyboard_hash: str | None
+    visual_mode_counts: dict[str, int]
+    voiceover_hash: str | None
+
+
+class CampaignBudgetOverrideRequest(BaseModel):
+    new_authorized_cap_microusd: int = Field(gt=0)
+    actor: str = Field(min_length=1, max_length=240)
+    reason: str = Field(min_length=1, max_length=4_000)
+
+
+class CampaignBudgetOverrideRead(BaseModel):
+    created: bool
+    message_delivered: bool
+    new_authorized_cap_microusd: int
+    override_hash: str
+    override_id: int
+    previous_authorized_cap_microusd: int
+    production_workflow_id: str

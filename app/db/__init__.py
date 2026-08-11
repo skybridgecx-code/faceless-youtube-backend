@@ -2,7 +2,13 @@
 
 from .base import Base
 from .models_content import Artifact, Campaign, Claim, ClaimSource, Scene, Source
-from .models_ops import Approval, GateDecision, GenerationJob, MetricSnapshot
+from .models_ops import (
+    Approval,
+    CampaignBudgetOverride,
+    GateDecision,
+    GenerationJob,
+    MetricSnapshot,
+)
 from .schema import DatabaseSchemaError, validate_database_schema
 from .session import SessionLocal, engine, get_db
 
@@ -21,6 +27,7 @@ __all__ = [
     "Artifact",
     "Base",
     "Campaign",
+    "CampaignBudgetOverride",
     "Claim",
     "ClaimSource",
     "DatabaseSchemaError",
