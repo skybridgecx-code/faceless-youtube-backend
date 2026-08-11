@@ -65,7 +65,11 @@ def test_fast_build_removes_only_disposable_test_caches(tmp_path: Path) -> None:
         )
     )
 
-    assert result.ready_for_audit
+    diagnostics = [
+        {"argv": item.argv, "returncode": item.returncode, "stdout": item.stdout, "stderr": item.stderr}
+        for item in result.validations
+    ]
+    assert result.ready_for_audit, diagnostics
     assert any("pytest" in item.argv for item in result.validations)
     assert not (root / ".pytest_cache").exists()
     assert not any(path.name == "__pycache__" for path in root.rglob("__pycache__"))
