@@ -109,8 +109,8 @@ def _bind_evidence(build: dict[str, Any], audit: dict[str, Any]) -> None:
 
 
 def _verify_identity(root: Path) -> None:
-    name = _run_git(root, "config", "user.name", allow_failure=True).strip()
-    email = _run_git(root, "config", "user.email", allow_failure=True).strip()
+    name = _run_git(root, "config", "--local", "--get", "user.name", allow_failure=True).strip()
+    email = _run_git(root, "config", "--local", "--get", "user.email", allow_failure=True).strip()
     if not name or not email:
         raise CheckpointError(
             "Git user.name and user.email must already be configured; checkpoint will not rewrite Git config"
