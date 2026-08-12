@@ -285,7 +285,9 @@ def test_resume_dry_run_dispatches_only_exact_next_gate(tmp_path: Path, capsys: 
     assert "MUTATIONS=NONE" in captured.out
 
 
-def test_resume_refuses_older_run_when_newer_run_exists(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_resume_explicitly_requested_valid_run_ignores_newer_failed_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     control, executor, config, manifest_path, old_run, _ = _ready_run(tmp_path)
     architecture = load_architecture_snapshot(control, config)
     newer = create_run_manifest(
@@ -299,13 +301,17 @@ def test_resume_refuses_older_run_when_newer_run_exists(tmp_path: Path, capsys: 
         max_changed_files=10,
         architecture_lock_sha256=architecture.lock_sha256,
     )
-    transition_run(
+    newer = transition_run(
         control,
         config,
         newer,
         new_stage="BUILD_FAILED",
         last_error="synthetic newer run",
     )
+
+    diagnosis = diagnose_workspace(control, config, executor, run_id=old_run.run_id)
+    assert diagnosis.state == "READY_FOR_AUDIT"
+    assert diagnosis.run_id == old_run.run_id
 
     rc = resume_main(
         [
@@ -318,5 +324,91 @@ def test_resume_refuses_older_run_when_newer_run_exists(tmp_path: Path, capsys: 
         ]
     )
     captured = capsys.readouterr()
-    assert rc == 11
-    assert "not the latest bound run" in captured.err
+    assert rc == 0
+    assert "NEXT_GATE=AUDIT" in captured.out
+    assert "EXECUTION=DRY_RUN" in captured.out
+    assert "MUTATIONS=NONE" in captured.out
+
+    resumed = load_run_manifest(control, config, old_run.run_id)
+    assert resumed.stage == "READY_FOR_AUDIT"
+    assert resumed.workspace == old_run.workspace
+    assert resumed.build_evidence == old_run.build_evidence
+    assert load_run_manifest(control, config, newer.run_id).stage == "BUILD_FAILED"
+
+
+@pytest.mark.parametrize(
+    ("stage", "with_build_evidence", "branch", "base_head", "architecture_lock"),
+    (
+        ("READY_FOR_AUDIT", False, "phase/run-test", None, None),
+        ("BUILD_FAILED", True, "phase/run-test", None, None),
+        ("BUILD_FAILED", False, "phase/other", None, None),
+        ("BUILD_FAILED", False, "phase/run-test", "0" * 40, None),
+        ("BUILD_FAILED", False, "phase/run-test", None, "f" * 64),
+    ),
+    ids=("ready", "failed-with-build-evidence", "different-branch", "different-base", "different-architecture"),
+)
+def test_explicit_run_blocks_newer_owning_or_conflicting_manifest(
+    tmp_path: Path,
+    stage: str,
+    with_build_evidence: bool,
+    branch: str,
+    base_head: str | None,
+    architecture_lock: str | None,
+) -> None:
+    control, executor, config, _, old_run, build = _ready_run(tmp_path)
+    architecture = load_architecture_snapshot(control, config)
+    newer = create_run_manifest(
+        control,
+        config,
+        workspace=executor,
+        branch=branch,
+        base_head=base_head or old_run.base_head,
+        task="newer conflicting run",
+        allowed_paths=("app",),
+        max_changed_files=10,
+        architecture_lock_sha256=architecture_lock or architecture.lock_sha256,
+    )
+    if stage == "READY_FOR_AUDIT":
+        binding = write_run_evidence(
+            control, config, newer, stage_name="build", payload=json.dumps(build) + "\n"
+        )
+        transition_run(control, config, newer, new_stage=stage, build_evidence=binding)
+    else:
+        binding = (
+            write_run_evidence(
+                control, config, newer, stage_name="build", payload=json.dumps(build) + "\n"
+            )
+            if with_build_evidence
+            else None
+        )
+        transition_run(
+            control, config, newer, new_stage=stage, build_evidence=binding,
+            last_error="synthetic collision",
+        )
+
+    diagnosis = diagnose_workspace(control, config, executor, run_id=old_run.run_id)
+    assert diagnosis.state == "STALE_EVIDENCE"
+    assert diagnosis.run_id == old_run.run_id
+    assert "newer blocking run=" in diagnosis.detail
+
+
+def test_default_diagnosis_still_reports_newest_manifest(tmp_path: Path) -> None:
+    control, executor, config, _, old_run, _ = _ready_run(tmp_path)
+    architecture = load_architecture_snapshot(control, config)
+    newer = create_run_manifest(
+        control,
+        config,
+        workspace=executor,
+        branch="phase/run-test",
+        base_head=old_run.base_head,
+        task="newest collision",
+        allowed_paths=("app",),
+        max_changed_files=10,
+        architecture_lock_sha256=architecture.lock_sha256,
+    )
+    newer = transition_run(
+        control, config, newer, new_stage="BUILD_FAILED", last_error="synthetic collision"
+    )
+    diagnosis = diagnose_workspace(control, config, executor)
+    assert diagnosis.run_id == newer.run_id
+    assert diagnosis.state == "BUILD_FAILED"

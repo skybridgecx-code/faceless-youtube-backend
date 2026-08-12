@@ -4,9 +4,10 @@ import hashlib
 import json
 import os
 import subprocess
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Sequence
+from typing import Any, Awaitable, Callable, ContextManager, Sequence
 
 from .usage import UsageRecord, capture_turn_usage
 
@@ -59,6 +60,7 @@ class AuditResult:
 
 
 TurnRunner = Callable[..., Awaitable[Any]]
+ValidationContextFactory = Callable[[], ContextManager[object]]
 
 
 def _run_git(root: Path, *args: str, timeout: int = 30, allow_failure: bool = False) -> str:
@@ -302,13 +304,29 @@ async def run_guarded_audit(
     turn_runner: TurnRunner,
     run_id: str | None = None,
     validation_commands: Sequence[Sequence[str]] = DEFAULT_VALIDATION_COMMANDS,
+    validation_context: ValidationContextFactory | None = None,
 ) -> AuditResult:
     root = workspace_root.resolve()
     head, branch, _files, diff_sha = _evidence_preflight(
         root, task, build_evidence, expected_architecture
     )
 
-    validations = _run_validations(root, validation_commands)
+    with (validation_context() if validation_context is not None else nullcontext()):
+        validations = _run_validations(root, validation_commands)
+
+    # Validation runs in a temporarily-bound environment.  Re-prove the immutable
+    # build evidence after that binding has been removed, before a model can inspect
+    # the workspace.  This deliberately runs even after a validation failure.
+    post_validation_head, post_validation_branch, _post_validation_files, post_validation_diff = (
+        _evidence_preflight(root, task, build_evidence, expected_architecture)
+    )
+    if (
+        post_validation_head != head
+        or post_validation_branch != branch
+        or post_validation_diff != diff_sha
+    ):
+        raise AuditGuardError("executor state changed during deterministic validation")
+
     failed = next((item for item in validations if not item.passed), None)
     if failed is not None:
         return AuditResult(

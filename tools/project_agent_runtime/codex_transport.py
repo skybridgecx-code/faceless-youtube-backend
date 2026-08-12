@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .hygiene import WorkspaceHygieneError, require_no_ignored_untracked
+from .hygiene import (
+    WorkspaceHygieneError,
+    cleanup_ignored_untracked,
+    require_no_ignored_untracked,
+)
 
 
 class CodexTransportError(RuntimeError):
@@ -130,10 +134,11 @@ async def run_codex_turn(
 
     if sandbox_name == "workspace_write":
         try:
+            cleanup_ignored_untracked(root)
             require_no_ignored_untracked(root, context="after workspace-write Codex turn")
         except WorkspaceHygieneError as exc:
             raise CodexTransportError(
-                "workspace-write Codex turn created hidden/ignored artifacts; " + str(exc)
+                "workspace-write Codex turn left unsafe hidden/ignored artifacts; " + str(exc)
             ) from exc
 
     actual_thread_id = getattr(thread, "id", None)

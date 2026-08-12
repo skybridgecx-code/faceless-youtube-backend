@@ -15,6 +15,7 @@ from .run_manifest import (
     RunManifest,
     RunManifestError,
     list_run_manifests,
+    load_run_manifest,
     resolve_evidence,
     run_directory,
 )
@@ -114,6 +115,35 @@ def _latest_run(control_root: Path, config: ProjectConfig, workspace: Path) -> R
     return runs[0] if runs else None
 
 
+def _is_ignorable_failed_collision(requested: RunManifest, newer: RunManifest) -> bool:
+    return (
+        newer.stage == "BUILD_FAILED"
+        and newer.build_evidence is None
+        and newer.audit_evidence is None
+        and newer.checkpoint_evidence is None
+        and newer.checkpoint_commit is None
+        and Path(newer.workspace).expanduser().resolve()
+        == Path(requested.workspace).expanduser().resolve()
+        and newer.branch == requested.branch
+        and newer.base_head == requested.base_head
+        and newer.architecture_lock_sha256 == requested.architecture_lock_sha256
+    )
+
+
+def _newer_runs_for_requested(
+    control_root: Path,
+    config: ProjectConfig,
+    workspace: Path,
+    requested: RunManifest,
+) -> tuple[RunManifest, ...]:
+    requested_key = (requested.created_at, requested.run_id)
+    return tuple(
+        candidate
+        for candidate in list_run_manifests(control_root, config, workspace=workspace)
+        if (candidate.created_at, candidate.run_id) > requested_key
+    )
+
+
 def _evidence_for_run(
     control_root: Path,
     config: ProjectConfig,
@@ -150,6 +180,8 @@ def diagnose_workspace(
     control_root: Path,
     config: ProjectConfig,
     workspace: Path,
+    *,
+    run_id: str | None = None,
 ) -> WorkspaceDiagnosis:
     control = control_root.resolve()
     target = workspace.expanduser().resolve()
@@ -252,7 +284,11 @@ def diagnose_workspace(
         )
 
     try:
-        run = _latest_run(control, config, target)
+        run = (
+            _latest_run(control, config, target)
+            if run_id is None
+            else load_run_manifest(control, config, run_id)
+        )
     except RunManifestError as exc:
         return WorkspaceDiagnosis(
             workspace=str(target),
@@ -268,6 +304,53 @@ def diagnose_workspace(
             next_action="inspect malformed run state; resume is disabled",
             detail=str(exc),
         )
+
+    if run is not None and Path(run.workspace).expanduser().resolve() != target:
+        return WorkspaceDiagnosis(
+            workspace=str(target),
+            state="STALE_EVIDENCE",
+            run_id=run.run_id,
+            run_stage=run.stage,
+            branch=state.branch,
+            head=state.head,
+            clean=state.clean,
+            lease=lease.detail,
+            ignored_artifacts=ignored,
+            warnings=tuple(warnings),
+            next_action="do not resume; requested run belongs to a different executor workspace",
+            detail=(
+                f"run workspace={Path(run.workspace).expanduser().resolve()}; "
+                f"requested workspace={target}"
+            ),
+        )
+
+    if run is not None and run_id is not None:
+        blocking = next(
+            (
+                candidate
+                for candidate in _newer_runs_for_requested(control, config, target, run)
+                if not _is_ignorable_failed_collision(run, candidate)
+            ),
+            None,
+        )
+        if blocking is not None:
+            return WorkspaceDiagnosis(
+                workspace=str(target),
+                state="STALE_EVIDENCE",
+                run_id=run.run_id,
+                run_stage=run.stage,
+                branch=state.branch,
+                head=state.head,
+                clean=state.clean,
+                lease=lease.detail,
+                ignored_artifacts=ignored,
+                warnings=tuple(warnings),
+                next_action="do not resume; a newer manifest owns or conflicts with this executor state",
+                detail=(
+                    f"newer blocking run={blocking.run_id}; stage={blocking.stage}; "
+                    "it is not an evidence-free failed collision"
+                ),
+            )
 
     if lease.active:
         return WorkspaceDiagnosis(

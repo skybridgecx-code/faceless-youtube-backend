@@ -95,6 +95,16 @@ def _validation_commands(use_workspace_venv: bool) -> tuple[tuple[str, ...], ...
     )
 
 
+def _require_external_validation_venv(workspace: Path, validation_venv: Path | None) -> None:
+    if validation_venv is None:
+        return
+    try:
+        validation_venv.resolve().relative_to(workspace.resolve())
+    except ValueError:
+        return
+    raise ValidationEnvironmentError("validation virtualenv must live outside the executor workspace")
+
+
 def _resolve_run_inputs(
     control_root: Path,
     config: ProjectConfig,
@@ -197,6 +207,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             workspace, task, evidence, expected_arch
         )
         validation_venv = resolve_validation_venv(control_state.root)
+        _require_external_validation_venv(workspace, validation_venv)
     except (AuditGuardError, ValidationEnvironmentError) as exc:
         print(f"STOP: audit evidence preflight failed: {exc}", file=sys.stderr)
         return 9
@@ -257,21 +268,25 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         with operation_lease(control_state.root, config, workspace, "audit"):
-            with bound_workspace_validation_venv(workspace, validation_venv) as bound:
-                result = asyncio.run(
-                    run_guarded_audit(
-                        workspace_root=workspace,
-                        task=task,
-                        build_evidence=evidence,
-                        expected_architecture=expected_arch,
-                        developer_instructions=instructions,
-                        model=config.codex.audit_model,
-                        reasoning=config.codex.audit_reasoning,
-                        turn_runner=run_codex_turn,
-                        run_id=manifest.run_id if manifest is not None else None,
-                        validation_commands=_validation_commands(bound),
-                    )
+            result = asyncio.run(
+                run_guarded_audit(
+                    workspace_root=workspace,
+                    task=task,
+                    build_evidence=evidence,
+                    expected_architecture=expected_arch,
+                    developer_instructions=instructions,
+                    model=config.codex.audit_model,
+                    reasoning=config.codex.audit_reasoning,
+                    turn_runner=run_codex_turn,
+                    run_id=manifest.run_id if manifest is not None else None,
+                    validation_commands=_validation_commands(validation_venv is not None),
+                    validation_context=(
+                        (lambda: bound_workspace_validation_venv(workspace, validation_venv))
+                        if validation_venv is not None
+                        else None
+                    ),
                 )
+            )
     except (
         AuditGuardError,
         CodexTransportError,

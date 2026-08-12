@@ -54,15 +54,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 11
 
     diagnosis = diagnose_workspace(
-        control_state.root, config, Path(manifest.workspace)
+        control_state.root, config, Path(manifest.workspace), run_id=manifest.run_id
     )
-    if diagnosis.run_id != manifest.run_id and diagnosis.state != "LEASE_ACTIVE":
-        print(
-            "STOP: requested run is not the latest bound run for its executor; "
-            "resume will not bypass a newer run.",
-            file=sys.stderr,
-        )
-        return 11
 
     if diagnosis.state == "CHECKPOINTED_CLEAN":
         print(f"RUN_ID={manifest.run_id}")
