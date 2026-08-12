@@ -20,13 +20,14 @@ jobs:
           python-version: '3.11'
       - name: Provenance
         run: |
-          test "$(git rev-parse HEAD^)" = "1010577426420bba8f18e0858b7d890825cb257f"
+          test "$(git rev-parse HEAD^)" = "c7ed0a9c5d4b4500ce59eace527d4f71c1264889"
           test "$(git merge-base HEAD a8ebeeb2aa136b5a49a854f93971ee8b04e113dc)" = "a8ebeeb2aa136b5a49a854f93971ee8b04e113dc"
           echo "HEAD=$(git rev-parse HEAD)"
       - name: Apply bounded telemetry patch
         run: |
           python tools/_apply_usage_telemetry_patch.py
           python tools/_fix_usage_telemetry_test_expectations.py
+          python tools/_fix_usage_telemetry_safe_build.py
           git status --short
           ACTUAL="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u)"
           EXPECTED="$(printf '%s\n' \
@@ -37,6 +38,7 @@ jobs:
             tools/project_agent_runtime/build_engine.py \
             tools/project_agent_runtime/overview.py \
             tools/project_agent_runtime/overview_cli.py \
+            tools/project_agent_runtime/safe_build.py \
             tools/project_agent_runtime/usage.py | sort)"
           test "$ACTUAL" = "$EXPECTED"
       - name: Create repository virtualenv
@@ -50,13 +52,22 @@ jobs:
           python -m py_compile \
             tools/project_agent_runtime/usage.py \
             tools/project_agent_runtime/build_engine.py \
+            tools/project_agent_runtime/safe_build.py \
             tools/project_agent_runtime/audit_engine.py \
             tools/project_agent_runtime/build_cli.py \
             tools/project_agent_runtime/audit_cli.py \
             tools/project_agent_runtime/overview.py \
             tools/project_agent_runtime/overview_cli.py
-      - name: Focused usage telemetry tests
-        run: pytest -q tests/test_project_agent_usage.py tests/test_project_agent_overview.py
+      - name: Focused usage and integration tests
+        run: |
+          pytest -q \
+            tests/test_project_agent_usage.py \
+            tests/test_project_agent_overview.py \
+            tests/test_project_agent_end_to_end.py::test_simulated_cli_pilot_build_audit_checkpoint_doctor \
+            tests/test_project_agent_failure_recovery.py::test_build_transport_failure_is_terminal_and_diagnosable \
+            tests/test_project_agent_failure_recovery.py::test_operational_audit_failure_rolls_back_to_ready_for_audit \
+            tests/test_project_agent_failure_recovery.py::test_semantic_audit_fail_is_terminal_not_checkpointable \
+            tests/test_project_agent_failure_recovery.py::test_checkpoint_failure_is_retryable_after_local_identity_fix
       - name: All YouMo tests
         run: pytest -q tests/test_project_agent_*.py
       - name: Install FFmpeg and ffprobe
@@ -83,6 +94,7 @@ jobs:
           git add \
             tools/project_agent_runtime/usage.py \
             tools/project_agent_runtime/build_engine.py \
+            tools/project_agent_runtime/safe_build.py \
             tools/project_agent_runtime/audit_engine.py \
             tools/project_agent_runtime/build_cli.py \
             tools/project_agent_runtime/audit_cli.py \
@@ -91,4 +103,4 @@ jobs:
             tests/test_project_agent_usage.py
           git diff --cached --check
           git commit -m "YouMo: add usage telemetry governor"
-          git push origin HEAD:tooling/youmo-cli-usage-telemetry-validated
+          git push --force origin HEAD:tooling/youmo-cli-usage-telemetry-validated
