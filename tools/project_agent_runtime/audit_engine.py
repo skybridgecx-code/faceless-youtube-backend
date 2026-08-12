@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Sequence
 
+from .usage import UsageRecord, capture_turn_usage
+
 from .build_engine import (
     DEFAULT_VALIDATION_COMMANDS,
     ValidationResult,
@@ -44,6 +46,7 @@ class AuditResult:
     validations: tuple[ValidationResult, ...]
     violations: tuple[str, ...]
     raw_response: str | None
+    usage: UsageRecord | None = None
 
     @property
     def passed(self) -> bool:
@@ -297,6 +300,7 @@ async def run_guarded_audit(
     model: str,
     reasoning: str,
     turn_runner: TurnRunner,
+    run_id: str | None = None,
     validation_commands: Sequence[Sequence[str]] = DEFAULT_VALIDATION_COMMANDS,
 ) -> AuditResult:
     root = workspace_root.resolve()
@@ -313,7 +317,7 @@ async def run_guarded_audit(
             base_head=head, branch=branch, task_sha256=build_evidence["task_sha256"],
             diff_sha256=diff_sha, validations=validations,
             violations=(f"deterministic validation failed ({' '.join(failed.argv)}): exit {failed.returncode}",),
-            raw_response=None,
+            raw_response=None, usage=None,
         )
 
     turn = await turn_runner(
@@ -324,6 +328,14 @@ async def run_guarded_audit(
         reasoning=reasoning,
         sandbox_name="read_only",
         thread_id=None,
+    )
+
+    usage = capture_turn_usage(
+        getattr(turn, "usage", None),
+        run_id=run_id,
+        stage="audit",
+        model=model,
+        reasoning_effort=reasoning,
     )
 
     violations: list[str] = []
@@ -367,4 +379,5 @@ async def run_guarded_audit(
         validations=validations,
         violations=tuple(violations),
         raw_response=raw,
+        usage=usage,
     )

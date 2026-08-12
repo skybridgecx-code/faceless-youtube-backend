@@ -58,6 +58,7 @@ async def run_fast_guarded_build(
     model: str,
     reasoning: str,
     turn_runner: TurnRunner,
+    run_id: str | None = None,
     max_changed_files: int,
     validation_venv: Path | None,
 ) -> BuildResult:
@@ -70,6 +71,7 @@ async def run_fast_guarded_build(
         model=model,
         reasoning=reasoning,
         turn_runner=turn_runner,
+        run_id=run_id,
         max_changed_files=max_changed_files,
         validation_commands=(),
     )

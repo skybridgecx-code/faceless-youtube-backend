@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Awaitable, Callable, Sequence
 
+from .usage import UsageRecord, capture_turn_usage
+
 
 class BuildGuardError(RuntimeError):
     """Raised when a guarded build cannot be proven safe."""
@@ -42,6 +44,7 @@ class BuildResult:
     validations: tuple[ValidationResult, ...]
     violations: tuple[str, ...]
     model_response: str | None
+    usage: UsageRecord | None = None
 
     @property
     def ready_for_audit(self) -> bool:
@@ -297,6 +300,7 @@ async def run_guarded_build(
     model: str,
     reasoning: str,
     turn_runner: TurnRunner,
+    run_id: str | None = None,
     max_changed_files: int = 20,
     validation_commands: Sequence[Sequence[str]] = DEFAULT_VALIDATION_COMMANDS,
 ) -> BuildResult:
@@ -330,6 +334,14 @@ async def run_guarded_build(
         reasoning=reasoning,
         sandbox_name="workspace_write",
         thread_id=None,
+    )
+
+    usage = capture_turn_usage(
+        getattr(result, "usage", None),
+        run_id=run_id,
+        stage="build",
+        model=model,
+        reasoning_effort=reasoning,
     )
 
     violations: list[str] = []
@@ -395,4 +407,5 @@ async def run_guarded_build(
         validations=validations,
         violations=tuple(violations),
         model_response=getattr(result, "final_response", None),
+        usage=usage,
     )

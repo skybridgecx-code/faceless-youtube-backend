@@ -268,6 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         model=config.codex.audit_model,
                         reasoning=config.codex.audit_reasoning,
                         turn_runner=run_codex_turn,
+                        run_id=manifest.run_id if manifest is not None else None,
                         validation_commands=_validation_commands(bound),
                     )
                 )
