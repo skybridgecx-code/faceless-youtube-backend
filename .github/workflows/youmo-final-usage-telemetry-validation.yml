@@ -20,15 +20,16 @@ jobs:
           python-version: '3.11'
       - name: Provenance
         run: |
-          test "$(git rev-parse HEAD^)" = "8d7b4af2e08f39ddea0487208aebff97c222be21"
-          test "$(git rev-parse HEAD^^)" = "4f66ccc36f4b60135a3ce2079754023644599efd"
-          test "$(git rev-parse HEAD^^^)" = "a8ebeeb2aa136b5a49a854f93971ee8b04e113dc"
+          test "$(git rev-parse HEAD^)" = "95e0ab66a3609fc528459386e670d91d2098abb3"
+          test "$(git rev-parse HEAD^^)" = "8d7b4af2e08f39ddea0487208aebff97c222be21"
+          test "$(git rev-parse HEAD^^^)" = "4f66ccc36f4b60135a3ce2079754023644599efd"
+          test "$(git rev-parse HEAD^^^^)" = "a8ebeeb2aa136b5a49a854f93971ee8b04e113dc"
           echo "HEAD=$(git rev-parse HEAD)"
       - name: Apply bounded telemetry patch
         run: |
           python tools/_apply_usage_telemetry_patch.py
           git status --short
-          ACTUAL="$(git diff --name-only | sort)"
+          ACTUAL="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u)"
           EXPECTED="$(printf '%s\n' \
             tests/test_project_agent_usage.py \
             tools/project_agent_runtime/audit_cli.py \
