@@ -3,13 +3,34 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from .config import ProjectConfig
 from .doctor import diagnose_workspace
-from .run_manifest import RunManifest, RunManifestError, load_run_manifest, run_directory
+from .run_manifest import (
+    EvidenceBinding,
+    RunManifest,
+    RunManifestError,
+    load_run_manifest,
+    resolve_evidence,
+    run_directory,
+)
 from .state import state_directory
+from .usage import (
+    CACHE_RATIO_DEFINITION,
+    UsageError,
+    UsageRecord,
+    UsageTotals,
+    UsageWarningThresholds,
+    aggregate_usage,
+    load_usage_record,
+    usage_by_model,
+    usage_for_utc_date,
+    usage_warnings,
+    warning_thresholds_from_env,
+)
 
 
 class OverviewError(RuntimeError):
@@ -38,6 +59,10 @@ class RunOverview:
     next_command: str
     workspace_exists: bool
     cleanup_classification: str
+    build_usage: UsageRecord | None
+    audit_usage: UsageRecord | None
+    usage_total: UsageTotals
+    usage_warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -50,6 +75,13 @@ class OverviewReport:
     blocked_latest_runs: int
     missing_workspaces: int
     historical_runs: int
+    usage_all_time: UsageTotals
+    usage_today_utc: UsageTotals
+    usage_today_utc_date: str
+    usage_by_model: dict[str, UsageTotals]
+    usage_warning_thresholds: UsageWarningThresholds
+    usage_warnings: tuple[str, ...]
+    cache_ratio_definition: str
     items: tuple[RunOverview, ...]
 
     def to_json(self) -> str:
@@ -119,6 +151,40 @@ def _next_command(manifest: RunManifest, doctor_state: str) -> str:
     return f"youmo-doctor --workspace {json.dumps(workspace)}"
 
 
+def _bound_usage(
+    control_root: Path,
+    config: ProjectConfig,
+    manifest: RunManifest,
+    binding: EvidenceBinding | None,
+    *,
+    expected_stage: str,
+) -> UsageRecord | None:
+    if binding is None:
+        return None
+    try:
+        path = resolve_evidence(
+            binding,
+            expected_parent=run_directory(control_root, config, manifest.run_id),
+        )
+        record = load_usage_record(path)
+    except (RunManifestError, UsageError) as exc:
+        raise OverviewError(
+            f"usage evidence verification failed for run {manifest.run_id} {expected_stage}: {exc}"
+        ) from exc
+    # Legacy evidence created before telemetry is valid and remains immutable.
+    if record is None:
+        return None
+    if record.run_id != manifest.run_id:
+        raise OverviewError(
+            f"usage run_id mismatch for {expected_stage}: {record.run_id!r} != {manifest.run_id!r}"
+        )
+    if record.stage != expected_stage:
+        raise OverviewError(
+            f"usage stage mismatch for run {manifest.run_id}: {record.stage!r} != {expected_stage!r}"
+        )
+    return record
+
+
 def build_overview(
     control_root: Path,
     config: ProjectConfig,
@@ -129,6 +195,32 @@ def build_overview(
     root = state_directory(control, config.state_dir)
     manifests = discover_run_manifests(control, config)
     latest = _latest_by_workspace(control, config, manifests)
+    try:
+        thresholds = warning_thresholds_from_env()
+    except UsageError as exc:
+        raise OverviewError(f"usage warning threshold configuration is invalid: {exc}") from exc
+
+    usage_by_run: dict[str, tuple[UsageRecord | None, UsageRecord | None]] = {}
+    all_records: list[UsageRecord] = []
+    report_warnings: list[str] = []
+    for manifest in manifests:
+        build_usage = _bound_usage(
+            control, config, manifest, manifest.build_evidence, expected_stage="build"
+        )
+        audit_usage = _bound_usage(
+            control, config, manifest, manifest.audit_evidence, expected_stage="audit"
+        )
+        usage_by_run[manifest.run_id] = (build_usage, audit_usage)
+        run_records = tuple(record for record in (build_usage, audit_usage) if record is not None)
+        all_records.extend(run_records)
+        for warning in usage_warnings(run_records, thresholds):
+            report_warnings.append(f"run {manifest.run_id}: {warning}")
+
+    today = datetime.now(timezone.utc).date()
+    all_tuple = tuple(all_records)
+    all_time = aggregate_usage(all_tuple)
+    today_usage = aggregate_usage(usage_for_utc_date(all_tuple, today))
+    by_model = usage_by_model(all_tuple)
     items: list[RunOverview] = []
 
     for manifest in manifests:
@@ -152,6 +244,8 @@ def build_overview(
             cleanup = "HISTORICAL_RUN_KEEP_EVIDENCE"
         else:
             cleanup = "KEEP"
+        build_usage, audit_usage = usage_by_run[manifest.run_id]
+        run_records = tuple(record for record in (build_usage, audit_usage) if record is not None)
         items.append(
             RunOverview(
                 run_id=manifest.run_id,
@@ -165,6 +259,10 @@ def build_overview(
                 next_command=_next_command(manifest, doctor_state),
                 workspace_exists=exists,
                 cleanup_classification=cleanup,
+                build_usage=build_usage,
+                audit_usage=audit_usage,
+                usage_total=aggregate_usage(run_records),
+                usage_warnings=usage_warnings(run_records, thresholds),
             )
         )
 
@@ -179,5 +277,12 @@ def build_overview(
         blocked_latest_runs=sum(1 for item in latest_items if not item.safe_to_flow),
         missing_workspaces=sum(1 for item in latest_items if not item.workspace_exists),
         historical_runs=max(0, len(manifests) - len(latest)),
+        usage_all_time=all_time,
+        usage_today_utc=today_usage,
+        usage_today_utc_date=today.isoformat(),
+        usage_by_model=by_model,
+        usage_warning_thresholds=thresholds,
+        usage_warnings=tuple(report_warnings),
+        cache_ratio_definition=CACHE_RATIO_DEFINITION,
         items=tuple(items),
     )

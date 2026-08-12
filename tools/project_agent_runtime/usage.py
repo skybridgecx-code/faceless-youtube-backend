@@ -119,7 +119,7 @@ class UsageRecord:
                 value.get("estimated_credits"), "estimated_credits"
             ),
             credit_rate_snapshot=CreditRateSnapshot.from_mapping(snapshot_raw),
-            timestamp=_required_string(value.get("timestamp"), "usage timestamp"),
+            timestamp=_validated_timestamp(value.get("timestamp")),
             usage_available=available,
             sdk_total_tokens=_optional_token(value.get("sdk_total_tokens"), "sdk_total_tokens"),
             sdk_reasoning_output_tokens=_optional_token(
@@ -190,6 +190,17 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _validated_timestamp(value: object) -> str:
+    raw = _required_string(value, "usage timestamp")
+    try:
+        observed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise UsageError("usage timestamp must be ISO-8601") from exc
+    if observed.tzinfo is None:
+        raise UsageError("usage timestamp must include a timezone")
+    return raw
+
+
 def credit_rate_snapshot(model: str) -> CreditRateSnapshot:
     rates = _RATE_CARD.get(model.lower())
     return CreditRateSnapshot(
@@ -204,7 +215,7 @@ def credit_rate_snapshot(model: str) -> CreditRateSnapshot:
     )
 
 
-def _estimate_credits(
+def estimate_credits(
     *,
     input_tokens: int,
     cached_input_tokens: int,
@@ -277,7 +288,7 @@ def capture_turn_usage(
     )
     credits = None
     if available:
-        credits = _estimate_credits(
+        credits = estimate_credits(
             input_tokens=input_tokens,
             cached_input_tokens=cached_input_tokens,
             output_tokens=output_tokens,

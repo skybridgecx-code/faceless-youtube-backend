@@ -162,6 +162,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     model=config.codex.implementation_model,
                     reasoning=config.codex.implementation_reasoning,
                     turn_runner=run_codex_turn,
+                    run_id=manifest.run_id,
                     max_changed_files=manifest.max_changed_files,
                     validation_venv=validation_venv,
                 )
