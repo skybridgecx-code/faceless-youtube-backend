@@ -1,0 +1,94 @@
+name: YouMo Final Usage Telemetry Validation
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-usage-telemetry
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Provenance
+        run: |
+          test "$(git rev-parse HEAD^)" = "8d7b4af2e08f39ddea0487208aebff97c222be21"
+          test "$(git rev-parse HEAD^^)" = "4f66ccc36f4b60135a3ce2079754023644599efd"
+          test "$(git rev-parse HEAD^^^)" = "a8ebeeb2aa136b5a49a854f93971ee8b04e113dc"
+          echo "HEAD=$(git rev-parse HEAD)"
+      - name: Apply bounded telemetry patch
+        run: |
+          python tools/_apply_usage_telemetry_patch.py
+          git status --short
+          ACTUAL="$(git diff --name-only | sort)"
+          EXPECTED="$(printf '%s\n' \
+            tests/test_project_agent_usage.py \
+            tools/project_agent_runtime/audit_cli.py \
+            tools/project_agent_runtime/audit_engine.py \
+            tools/project_agent_runtime/build_cli.py \
+            tools/project_agent_runtime/build_engine.py \
+            tools/project_agent_runtime/overview.py \
+            tools/project_agent_runtime/overview_cli.py \
+            tools/project_agent_runtime/usage.py | sort)"
+          test "$ACTUAL" = "$EXPECTED"
+      - name: Create repository virtualenv
+        run: |
+          python -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install repository requirements
+        run: python -m pip --python .venv/bin/python install -r requirements.txt
+      - name: Compile telemetry tooling
+        run: |
+          python -m py_compile \
+            tools/project_agent_runtime/usage.py \
+            tools/project_agent_runtime/build_engine.py \
+            tools/project_agent_runtime/audit_engine.py \
+            tools/project_agent_runtime/build_cli.py \
+            tools/project_agent_runtime/audit_cli.py \
+            tools/project_agent_runtime/overview.py \
+            tools/project_agent_runtime/overview_cli.py
+      - name: Focused usage telemetry tests
+        run: pytest -q tests/test_project_agent_usage.py tests/test_project_agent_overview.py
+      - name: All YouMo tests
+        run: pytest -q tests/test_project_agent_*.py
+      - name: Install FFmpeg and ffprobe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+      - name: Full repository suite
+        run: pytest -q
+      - name: JavaScript syntax
+        run: node --check app/static/app.js
+      - name: Diff and governance gates
+        run: |
+          git diff --check
+          git diff --exit-code a8ebeeb2aa136b5a49a854f93971ee8b04e113dc -- \
+            architecture.lock.json ARCHITECTURE.md COMMERCIAL_SUCCESS.md .agents/rules/youtube-automation-project.md
+          test -z "$(git diff --name-only a8ebeeb2aa136b5a49a854f93971ee8b04e113dc -- app migrations scripts/migrate_db.py | cat)"
+          test -z "$(git diff --name-only a8ebeeb2aa136b5a49a854f93971ee8b04e113dc | grep -E '(^|/)content_factory\.db$' || true)"
+      - name: Commit validated semantic patch on validation branch
+        run: |
+          git config user.name "YouMo Validation"
+          git config user.email "youmo-validation@example.invalid"
+          git add \
+            tools/project_agent_runtime/usage.py \
+            tools/project_agent_runtime/build_engine.py \
+            tools/project_agent_runtime/audit_engine.py \
+            tools/project_agent_runtime/build_cli.py \
+            tools/project_agent_runtime/audit_cli.py \
+            tools/project_agent_runtime/overview.py \
+            tools/project_agent_runtime/overview_cli.py \
+            tests/test_project_agent_usage.py
+          git diff --cached --check
+          git commit -m "YouMo: add usage telemetry governor"
+          git push origin HEAD:tooling/youmo-cli-usage-telemetry-validated
