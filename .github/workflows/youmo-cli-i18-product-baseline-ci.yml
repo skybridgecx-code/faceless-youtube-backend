@@ -1,0 +1,38 @@
+name: Product I5 Baseline Validation for YouMo I18
+
+on:
+  push:
+    branches:
+      - tooling/youmo-cli-i18-product-baseline-ci
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Provenance
+        run: |
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "BRANCH=$(git branch --show-current)"
+          git status --porcelain=v1
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+      - name: Create repository virtualenv
+        run: python -m venv .venv
+      - name: Install repository requirements
+        run: .venv/bin/python -m pip install -r requirements.txt
+      - name: Run full repository suite
+        run: .venv/bin/python -m pytest -q
+      - name: Check JavaScript syntax
+        run: node --check app/static/app.js
