@@ -11,5 +11,6 @@ test_dbos*.db
 test_dbos*.db-*
 out/
 .pytest_cache/
+.youmo/
 
 .claude/

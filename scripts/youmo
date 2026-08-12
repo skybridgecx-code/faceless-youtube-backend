@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from tools.project_agent_runtime.cli import main
+
+raise SystemExit(
+    main(
+        [
+            "--repo",
+            str(ROOT),
+            "--project",
+            "tools/project_agent_runtime/projects/youmo.json",
+            *sys.argv[1:],
+        ]
+    )
+)
