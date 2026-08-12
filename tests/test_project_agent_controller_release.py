@@ -141,8 +141,8 @@ def _install(tmp_path: Path):
     return source, sha, layout, status
 
 
-def test_release_ref_is_current_i18_release() -> None:
-    assert CONTROLLER_RELEASE_REF == "tooling/youmo-cli-i18"
+def test_release_ref_is_final_release() -> None:
+    assert CONTROLLER_RELEASE_REF == "tooling/youmo-cli-final"
 
 
 def test_release_install_manages_all_user_facing_launchers(tmp_path: Path) -> None:

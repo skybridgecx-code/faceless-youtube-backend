@@ -18,7 +18,7 @@ from .controller import (
 )
 
 
-CONTROLLER_RELEASE_REF = "tooling/youmo-cli-i18"
+CONTROLLER_RELEASE_REF = "tooling/youmo-cli-final"
 EXTRA_LAUNCHERS: tuple[str, ...] = (
     "youmo-doctor",
     "youmo-resume",
