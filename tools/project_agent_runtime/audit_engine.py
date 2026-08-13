@@ -63,6 +63,9 @@ TurnRunner = Callable[..., Awaitable[Any]]
 ValidationContextFactory = Callable[[], ContextManager[object]]
 
 
+DEFAULT_AUDIT_VALIDATION_TIMEOUT_SECONDS = 1200
+
+
 def _run_git(root: Path, *args: str, timeout: int = 30, allow_failure: bool = False) -> str:
     env = dict(os.environ)
     env.update({"GIT_OPTIONAL_LOCKS": "0", "GIT_PAGER": "cat", "LC_ALL": "C"})
@@ -137,7 +140,14 @@ def git_safety_violations(root: Path) -> tuple[str, ...]:
     return tuple(violations)
 
 
-def _run_validations(root: Path, commands: Sequence[Sequence[str]]) -> tuple[ValidationResult, ...]:
+def _run_validations(
+    root: Path,
+    commands: Sequence[Sequence[str]],
+    *,
+    timeout_seconds: int = DEFAULT_AUDIT_VALIDATION_TIMEOUT_SECONDS,
+) -> tuple[ValidationResult, ...]:
+    if type(timeout_seconds) is not int or timeout_seconds <= 0:
+        raise AuditGuardError("validation timeout must be a positive integer number of seconds")
     results: list[ValidationResult] = []
     for command in commands:
         argv = tuple(str(part) for part in command)
@@ -146,7 +156,7 @@ def _run_validations(root: Path, commands: Sequence[Sequence[str]]) -> tuple[Val
         try:
             completed = subprocess.run(
                 list(argv), cwd=root, capture_output=True, text=True,
-                timeout=300, check=False,
+                timeout=timeout_seconds, check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             results.append(ValidationResult(argv, 125, "", str(exc)))
@@ -305,6 +315,7 @@ async def run_guarded_audit(
     run_id: str | None = None,
     validation_commands: Sequence[Sequence[str]] = DEFAULT_VALIDATION_COMMANDS,
     validation_context: ValidationContextFactory | None = None,
+    validation_timeout_seconds: int = DEFAULT_AUDIT_VALIDATION_TIMEOUT_SECONDS,
 ) -> AuditResult:
     root = workspace_root.resolve()
     head, branch, _files, diff_sha = _evidence_preflight(
@@ -312,7 +323,11 @@ async def run_guarded_audit(
     )
 
     with (validation_context() if validation_context is not None else nullcontext()):
-        validations = _run_validations(root, validation_commands)
+        validations = _run_validations(
+            root,
+            validation_commands,
+            timeout_seconds=validation_timeout_seconds,
+        )
 
     # Validation runs in a temporarily-bound environment.  Re-prove the immutable
     # build evidence after that binding has been removed, before a model can inspect

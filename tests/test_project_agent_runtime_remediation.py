@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from tools.project_agent_runtime import audit_cli
+from tools.project_agent_runtime import audit_engine
 from tools.project_agent_runtime.architecture import load_architecture_snapshot
 from tools.project_agent_runtime.build_engine import changed_files, diff_fingerprint
 from tools.project_agent_runtime.codex_transport import CodexTransportError, run_codex_turn
@@ -409,6 +410,156 @@ def test_audit_rejects_validation_venv_inside_executor(
         "--repo", str(control), "--project", str(manifest_path), "--run-id", run.run_id, "--execute"
     ]) == 9
     assert "validation virtualenv must live outside the executor workspace" in capsys.readouterr().err
+
+
+def _guarded_audit_kwargs(tmp_path: Path, turn_runner: object) -> dict[str, object]:
+    return {
+        "workspace_root": tmp_path,
+        "task": TASK,
+        "build_evidence": {
+            "task_sha256": "task-sha256",
+            "base_head": "base-head",
+            "branch": "tooling/remediation",
+            "allowed_paths": [],
+            "changed_files": [],
+            "diff_sha256": "diff-sha256",
+        },
+        "expected_architecture": {},
+        "developer_instructions": "rules",
+        "model": "gpt-5.6-sol",
+        "reasoning": "high",
+        "turn_runner": turn_runner,
+    }
+
+
+def _stub_audit_preflight(*_: object) -> tuple[str, str, tuple[str, ...], str]:
+    return "base-head", "tooling/remediation", (), "diff-sha256"
+
+
+def test_audit_validation_default_timeout_is_1200_seconds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: list[int] = []
+
+    def successful_run(*_: object, **kwargs: object) -> object:
+        received.append(kwargs["timeout"])
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(audit_engine.subprocess, "run", successful_run)
+    results = audit_engine._run_validations(tmp_path, (("test-default",),))
+
+    assert audit_engine.DEFAULT_AUDIT_VALIDATION_TIMEOUT_SECONDS == 1200
+    assert audit_engine.DEFAULT_AUDIT_VALIDATION_TIMEOUT_SECONDS > 300
+    assert results[0].passed
+    assert received == [1200]
+
+
+def test_audit_threads_explicit_validation_timeout_to_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: list[int] = []
+
+    def successful_run(*_: object, **kwargs: object) -> object:
+        received.append(kwargs["timeout"])
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    async def passing_turn(**_: object) -> object:
+        return SimpleNamespace(
+            thread_id="audit-thread",
+            turn_id="audit-turn",
+            status="completed",
+            final_response=json.dumps({"verdict": "PASS", "summary": "passed", "findings": []}),
+            usage=None,
+        )
+
+    monkeypatch.setattr(audit_engine, "_evidence_preflight", _stub_audit_preflight)
+    monkeypatch.setattr(audit_engine.subprocess, "run", successful_run)
+    result = asyncio.run(audit_engine.run_guarded_audit(
+        **_guarded_audit_kwargs(tmp_path, passing_turn),
+        validation_commands=(("test-explicit",),),
+        validation_timeout_seconds=451,
+    ))
+
+    assert result.passed
+    assert received == [451]
+
+
+def test_audit_validation_timeout_fails_closed_without_starting_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands = (("test-timeout",), ("must-not-run",))
+    executed: list[tuple[str, ...]] = []
+
+    def timeout_run(argv: list[str], **kwargs: object) -> object:
+        executed.append(tuple(argv))
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    async def must_not_start(**_: object) -> object:
+        raise AssertionError("semantic auditor must not start after validation timeout")
+
+    monkeypatch.setattr(audit_engine, "_evidence_preflight", _stub_audit_preflight)
+    monkeypatch.setattr(audit_engine.subprocess, "run", timeout_run)
+    result = asyncio.run(audit_engine.run_guarded_audit(
+        **_guarded_audit_kwargs(tmp_path, must_not_start), validation_commands=commands
+    ))
+
+    assert result.status == "AUDIT_FAIL"
+    assert result.validations[0].argv == commands[0]
+    assert result.validations[0].returncode == 125
+    assert executed == [commands[0]]
+
+
+def test_audit_nonzero_validation_stops_sequence_without_starting_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands = (("test-failure",), ("must-not-run",))
+    executed: list[tuple[str, ...]] = []
+
+    def failed_run(argv: list[str], **_: object) -> object:
+        executed.append(tuple(argv))
+        return SimpleNamespace(returncode=37, stdout="failure", stderr="details")
+
+    async def must_not_start(**_: object) -> object:
+        raise AssertionError("semantic auditor must not start after validation failure")
+
+    monkeypatch.setattr(audit_engine, "_evidence_preflight", _stub_audit_preflight)
+    monkeypatch.setattr(audit_engine.subprocess, "run", failed_run)
+    result = asyncio.run(audit_engine.run_guarded_audit(
+        **_guarded_audit_kwargs(tmp_path, must_not_start), validation_commands=commands
+    ))
+
+    assert result.status == "AUDIT_FAIL"
+    assert result.validations[0].returncode == 37
+    assert executed == [commands[0]]
+
+
+def test_audit_validation_commands_preserve_declared_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands = (("first", "one"), ("second",), ("third", "three"))
+    executed: list[tuple[str, ...]] = []
+
+    def successful_run(argv: list[str], **_: object) -> object:
+        executed.append(tuple(argv))
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(audit_engine.subprocess, "run", successful_run)
+    results = audit_engine._run_validations(tmp_path, commands)
+
+    assert all(result.passed for result in results)
+    assert executed == list(commands)
+
+
+@pytest.mark.parametrize("timeout_seconds", (0, -1, True, 1.5, "1200"))
+def test_audit_rejects_invalid_validation_timeout(
+    tmp_path: Path, timeout_seconds: object
+) -> None:
+    with pytest.raises(audit_engine.AuditGuardError, match="positive integer"):
+        audit_engine._run_validations(
+            tmp_path,
+            (("must-not-run",),),
+            timeout_seconds=timeout_seconds,
+        )
 
 
 def test_explicit_run_diagnosis_uses_requested_manifest_and_stays_fail_closed(
