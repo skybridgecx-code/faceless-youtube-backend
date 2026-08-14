@@ -1,0 +1,76 @@
+{
+  "architecture_status": "target_architecture_with_current_m1_compatibility",
+  "action_authorization": {
+    "action_digest_role": "exact_authorization_approval_identity",
+    "action_id_role": "execution_identity",
+    "approval_bound_fields": ["project_id", "run_id", "action_digest", "arguments", "target", "risk_class", "capabilities", "artifact_hashes", "architecture_hash", "policy_hash", "protected_resource_state", "expiry"],
+    "effect_states": ["CONFIRMED", "FAILED", "UNCERTAIN", "RECONCILED"],
+    "idempotency_key_role": "duplicate_effect_prevention_identity",
+    "relevant_mutation_invalidates_approval": true,
+    "single_use_by_default_risk_classes": ["R3_CONSEQUENTIAL", "R4_IRREVERSIBLE_HIGH_IMPACT"],
+    "uncertain_requires_reconciliation_before_retry": true
+  },
+  "authority_role": "implementation-grade refinement of parent blueprint; not a replacement for root YouMo architecture.lock.json",
+  "capability_policy": {
+    "precedence": ["DENY", "APPROVAL_REQUIRED", "SCOPED_ALLOW", "DEFAULT_POLICY"],
+    "representative_capabilities": ["repo.read", "repo.write", "shell.execute", "network.http", "secrets.read", "git.branch.create", "git.commit", "git.push", "github.pr.create", "database.read", "database.write", "email.send", "deploy.production", "architecture.modify", "policy.modify"],
+    "risk_classes": ["R0_READ_ONLY", "R1_LOCAL_REVERSIBLE", "R2_EXTERNAL_REVERSIBLE", "R3_CONSEQUENTIAL", "R4_IRREVERSIBLE_HIGH_IMPACT"],
+    "risk_classification_grants_authority": false
+  },
+  "control_plane": {
+    "approval_can_mutate_action": false,
+    "clients_can_directly_set_lifecycle_state": false,
+    "command_metadata_fields": ["command_id", "actor", "expected_resource_version", "idempotency_identity", "requested_effect", "policy_decision", "audit_evidence"],
+    "mutation_model": "COMMAND_ORIENTED",
+    "port": "RuntimeControlPort",
+    "streams": "PROJECTIONS"
+  },
+  "current_live_lifecycle_authority": "RunManifest / ManifestBackend remains sole active lifecycle authority during migration/M1",
+  "contract_derivation_rule": "Parent blueprint sets target direction; supporting hashed references provide context; this package refines implementation-grade contracts without authorizing unrecorded deviations. Conflict with current root YouMo product authority or M1 boundary stops implementation pending explicit reconciliation.",
+  "external_supporting_authorities": [
+    {"filename": "SkyBridgeCx_Runtime_Project_Instructions_Optimized(1).md", "sha256": "49d43f7c5f0fdb38c35c63bc7a5bd6fc32a21b25bb0b40a72a3a10e6b10ad434"},
+    {"filename": "SkyBridgeCx_Runtime_Project_Specification(1).md", "sha256": "92037214ee366d3f5b79daea722a3e46fdd51e20e404d02bb43e964a357d3905"},
+    {"filename": "SkyBridgeCx_M0_Baseline_Evidence_2026-08-12(1).md", "sha256": "25b1cbbae263c0e0f80b12488fa605448206a37e7ff2a768dfd16c9ac472beee"},
+    {"filename": "SkyBridgeCx_M1_Generic_Contracts_Design_2026-08-12(1).md", "sha256": "ab8a0300a6239cd0b170d837784d95482363955b9db0e7d9a52be3c783071d09"},
+    {"filename": "SkyBridgeCx_Runtime_Operational_State_Runtime_Remediation_2026-08-12(1).md", "sha256": "472bb48a374c0e4c554eb2d3c1879a7633856a16950515dfec9eaa7ff5d87e73"}
+  ],
+  "failure_classes": ["MODEL_ERROR", "MODEL_REFUSAL", "TOOL_ERROR", "TOOL_TIMEOUT", "NETWORK_ERROR", "RATE_LIMIT", "VALIDATION_FAILURE", "POLICY_DENIED", "CAPABILITY_DENIED", "APPROVAL_REQUIRED", "ARCHITECTURE_DRIFT", "REPOSITORY_DRIFT", "WORKSPACE_DIRTY", "LEASE_CONFLICT", "BUDGET_EXCEEDED", "EVAL_REGRESSION", "EXTERNAL_STATE_CONFLICT", "UNKNOWN"],
+  "forbidden_dependency_direction": "generic runtime MUST NOT depend on YouMo or another product workflow",
+  "generic_runtime_path": "tools/project_agent_runtime",
+  "harness_and_context_invariants": ["model brain emits typed proposals only", "runtime harness owns validation policy budgets dispatch persistence and recovery", "memory retrieval is bounded attributed untrusted data", "coding agent preflight freezes repository workspace policy architecture and protected resource facts", "release gate records exact diff validation evidence approval and serialized promotion state"],
+  "global_invariants": ["no_second_runtime", "generic_runtime_and_product_workflow_separated", "exactly_one_lifecycle_authority_per_run", "one_durability_backend_per_run", "models_propose_runtime_policy_authorizes", "no_privileged_model_output_to_side_effect_shortcut", "consequential_effects_define_idempotency_and_reconciliation", "historical_accepted_evidence_is_immutable", "approvals_bind_exact_action_state_and_artifact_hashes", "untrusted_content_is_data_never_authority", "concurrent_writers_use_physically_separate_workspaces", "canonical_promotion_is_serialized", "parallel_work_reconciles_to_newest_canonical_before_promotion", "model_tool_harness_and_routing_changes_require_eval_evidence", "opentelemetry_is_telemetry_canon_not_lifecycle_authority", "mcp_is_interoperability_adapter_not_domain_model", "missing_usage_cost_telemetry_is_never_fabricated", "current_runmanifest_authority_preserved_until_explicit_migration", "m1_forbids_active_event_ledger_migration_and_duplicate_canonical_usagerecord", "no_package_extraction_before_two_real_project_profiles"],
+  "m1_compatibility_invariants": ["RunManifest compatibility lifecycle authority remains active", "no active RunEvent ledger migration", "no competing canonical UsageRecord", "current YouMo compatibility behavior is preserved", "package extraction is not authorized"],
+  "minimum_project_profiles_before_package_extraction": 2,
+  "migration_policy": {
+    "atomic_run_event_projection_version_transition_required": true,
+    "in_flight_dual_lifecycle_authority": "PROHIBITED",
+    "optimistic_concurrency": "EXPECTED_VERSION",
+    "production_migrations": "EXPLICIT",
+    "schema_domains": ["DOMAIN", "PERSISTENCE", "API", "PROVIDER"],
+    "silent_startup_production_schema_mutation": "PROHIBITED"
+  },
+  "model_routing": {
+    "allowed_fallback_causes": ["PROVIDER_UNAVAILABLE", "RATE_LIMIT", "MODEL_UNAVAILABLE", "CAPABILITY_UNSUPPORTED", "CERTIFIED_COST_OPTIMIZATION"],
+    "behavioral_release_subjects": ["model", "tool", "harness", "policy", "routing"],
+    "certification_required": true,
+    "prohibited_silent_fallback_causes": ["QUALITY_FAILURE", "POLICY_DENIAL", "SECURITY_FAILURE", "AUDIT_FAILURE"]
+  },
+  "normative_documents": ["docs/skybridgecx/README.md", "docs/skybridgecx/ARCHITECTURE.md", "docs/skybridgecx/PLATFORM_CONTRACTS.md", "docs/skybridgecx/SECURITY_AND_CAPABILITIES.md", "docs/skybridgecx/EVALUATION_AND_MODEL_ROUTING.md", "docs/skybridgecx/DURABILITY_AND_RECOVERY.md", "docs/skybridgecx/EXECUTION_TOOLS_AND_MCP.md", "docs/skybridgecx/EVIDENCE_TELEMETRY_AND_COST.md", "docs/skybridgecx/DATA_AND_MIGRATION.md", "docs/skybridgecx/CONTROL_PLANE.md", "docs/skybridgecx/DEPLOYMENT_AND_PORTABILITY.md", "docs/skybridgecx/IMPLEMENTATION_ROADMAP.md"],
+  "parent_blueprint": {"filename": "Skybridge_Agent_Runtime_Competitive_Architecture_Blueprint_2026-08-12.pdf", "sha256": "e37b4a82b54e14a84ce0ac936395a370ebd327c52759653c2cde25ce05766fad"},
+  "product_workflow_path": "app/workflows",
+  "repository": {"branch_base": "youmo-clone-v2", "name": "skybridgecx-code/faceless-youtube-backend", "required_base_sha": "de3ac86f7ccbdb38fc0989a65856c3aaf115c67b"},
+  "source_lock_provenance": {"constrains_current_execution": false, "historical_source_lock_commit": "2fc39ca0f72081f8b340a514e644079def01e21b", "initial_derivation_base_sha": "76c49a2092a140f1d63c4d17b68ab5b34b26eef2", "reconciled_runtime_base_sha": "de3ac86f7ccbdb38fc0989a65856c3aaf115c67b"},
+  "risk_classes": ["R0_READ_ONLY", "R1_LOCAL_REVERSIBLE", "R2_EXTERNAL_REVERSIBLE", "R3_CONSEQUENTIAL", "R4_IRREVERSIBLE_HIGH_IMPACT"],
+  "schema_version": 1,
+  "target_lifecycle_migration_rule": "Existing/current runs remain solely RunManifest/ManifestBackend authoritative. Future event-backed LifecycleEngine plus transactional RunEventStore may govern only runs created under that backend; never dual-authorize an in-flight run.",
+  "eval_suite_classes": ["REGRESSION", "CAPABILITY", "SECURITY", "PERFORMANCE", "INTEGRATION"],
+  "execution_policy": {
+    "credential_policy": ["SCOPED", "JIT", "EXPIRING", "NO_AMBIENT_MODEL_READABLE_SECRET_VALUES"],
+    "filesystem_paths": "CANONICAL_RESOLVED",
+    "mcp_role": "ADAPTER_INTEROPERABILITY_ONLY",
+    "network_default": "DENY",
+    "remote_mcp_metadata_trust": "UNTRUSTED",
+    "tool_spec_required_fields": ["namespace", "name", "version", "input_schema", "output_schema", "risk", "capabilities", "idempotency", "timeout", "retry_class", "concurrency_limit", "result_size_limit", "provider"]
+  },
+  "adr_files": ["docs/adr/ADR-013-runtime-evolution-boundary.md", "docs/adr/ADR-014-lifecycle-and-durability-authority.md", "docs/adr/ADR-015-capability-policy-authority.md", "docs/adr/ADR-016-approval-idempotency-and-effect-receipts.md", "docs/adr/ADR-017-eval-certified-model-routing.md", "docs/adr/ADR-018-execution-environment-and-mcp-boundary.md", "docs/adr/ADR-019-evidence-otel-and-cost-provenance.md", "docs/adr/ADR-020-control-plane-command-and-persistence-model.md", "docs/adr/ADR-021-two-project-proof-before-extraction.md"]
+}
