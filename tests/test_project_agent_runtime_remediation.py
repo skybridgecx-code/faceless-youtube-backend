@@ -80,7 +80,7 @@ def _transport_repo(tmp_path: Path) -> Path:
     _git(root, "config", "user.name", "Runtime Test")
     _git(root, "config", "user.email", "runtime@example.invalid")
     (root / ".gitignore").write_text(
-        ".pytest_cache/\n__pycache__/\n*.pyc\nprotected.bin\n", encoding="utf-8"
+        ".pytest_cache/\n.ruff_cache/\n__pycache__/\n*.pyc\nprotected.bin\n", encoding="utf-8"
     )
     (root / "app").mkdir()
     (root / "app" / "base.py").write_text("BASE = 1\n", encoding="utf-8")
@@ -91,7 +91,12 @@ def _transport_repo(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(
     ("relative", "contents"),
-    (("app/__pycache__/feature.pyc", "bytecode"), (".pytest_cache/v/cache/nodeids", "cache")),
+    (
+        ("app/__pycache__/feature.pyc", "bytecode"),
+        (".pytest_cache/v/cache/nodeids", "cache"),
+        (".ruff_cache/metadata.json", "metadata"),
+        (".ruff_cache/0.12.0/cache/content", "cache"),
+    ),
 )
 def test_workspace_write_cleans_only_disposable_ignored_artifacts(
     tmp_path: Path, relative: str, contents: str
@@ -175,7 +180,9 @@ def _runtime_fixture(
     _git(control, "config", "user.name", "Runtime Test")
     _git(control, "config", "user.email", "runtime@example.invalid")
     _git(control, "remote", "add", "origin", f"git@github.com:{REPOSITORY}.git")
-    (control / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    (control / ".gitignore").write_text(
+        ".venv/\n.pytest_cache/\n__pycache__/\n*.pyc\n", encoding="utf-8"
+    )
     lock = {
         "schema_version": 3,
         "architecture_status": "target_during_controlled_migration",
@@ -297,6 +304,8 @@ def _runtime_fixture(
 def test_audit_binds_external_venv_only_during_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     control, executor, _, manifest_path, run = _runtime_fixture(tmp_path)
     trusted = tmp_path / "trusted-venv"
     (trusted / "bin").mkdir(parents=True)

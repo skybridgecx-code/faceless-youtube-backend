@@ -9,7 +9,7 @@ class WorkspaceHygieneError(RuntimeError):
     """Raised when hidden/ignored workspace artifacts cannot be handled safely."""
 
 
-_DISPOSABLE_DIR_NAMES = frozenset({".pytest_cache", "__pycache__"})
+_DISPOSABLE_DIR_NAMES = frozenset({".pytest_cache", ".ruff_cache", "__pycache__"})
 _DISPOSABLE_SUFFIXES = frozenset({".pyc", ".pyo"})
 
 
