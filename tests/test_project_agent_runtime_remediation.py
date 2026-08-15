@@ -80,7 +80,7 @@ def _transport_repo(tmp_path: Path) -> Path:
     _git(root, "config", "user.name", "Runtime Test")
     _git(root, "config", "user.email", "runtime@example.invalid")
     (root / ".gitignore").write_text(
-        ".pytest_cache/\n__pycache__/\n*.pyc\nprotected.bin\n", encoding="utf-8"
+        ".pytest_cache/\n.ruff_cache/\n__pycache__/\n*.pyc\nprotected.bin\n", encoding="utf-8"
     )
     (root / "app").mkdir()
     (root / "app" / "base.py").write_text("BASE = 1\n", encoding="utf-8")
@@ -118,6 +118,36 @@ def test_workspace_write_cleans_only_disposable_ignored_artifacts(
     assert result.status == "completed"
     assert (root / "app" / "feature.py").read_text(encoding="utf-8") == "VALUE = 2\n"
     assert not (root / relative).exists()
+
+
+def test_workspace_write_cleans_ruff_cache_artifacts(tmp_path: Path) -> None:
+    root = _transport_repo(tmp_path)
+    artifacts = {
+        ".ruff_cache/CACHEDIR.TAG": "ruff cache",
+        ".ruff_cache/0.12.0/123/cache": "nested ruff cache",
+    }
+
+    async def action() -> None:
+        (root / "app" / "feature.py").write_text("VALUE = 2\n", encoding="utf-8")
+        for relative, contents in artifacts.items():
+            artifact = root / relative
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text(contents, encoding="utf-8")
+
+    result = asyncio.run(
+        run_codex_turn(
+            repo_root=root,
+            prompt="implement",
+            developer_instructions="rules",
+            model="gpt-5.6-terra",
+            reasoning="high",
+            sandbox_name="workspace_write",
+            sdk=_transport_sdk(action),
+        )
+    )
+    assert result.status == "completed"
+    for relative in artifacts:
+        assert not (root / relative).exists()
 
 
 def test_workspace_write_preserves_non_disposable_ignored_artifact(tmp_path: Path) -> None:
