@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass
+import hashlib
+import json
 import re
 import struct
 import time
@@ -10,6 +12,9 @@ import zlib
 from typing import Callable, Literal, Protocol
 
 import httpx
+
+from app.editorial.contracts import canonical_json
+from app.qa.contracts import CriticArtifact, CriticResponse, SoftReviewRequest
 
 
 OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -41,6 +46,96 @@ I5_SORA_SIZE = "1280x720"
 I5_SORA_MAX_POLLS = 120
 I5_SORA_RESERVATION_PER_SECOND_MICROUSD = 120_000
 I5_SORA_COST_PER_SECOND_MICROUSD = 100_000
+
+I6_SOFT_REVIEW_MODEL = "gpt-5.6-terra"
+I6_SOFT_REVIEW_PROMPT_TEMPLATE_VERSION = "i6-soft-critic-prompt-v1"
+I6_SOFT_REVIEW_INPUT_TOKEN_MICROUSD_NUMERATOR = 5
+I6_SOFT_REVIEW_INPUT_TOKEN_MICROUSD_DENOMINATOR = 2
+I6_SOFT_REVIEW_OUTPUT_TOKEN_MICROUSD_NUMERATOR = 15
+I6_SOFT_REVIEW_OUTPUT_TOKEN_MICROUSD_DENOMINATOR = 1
+I6_SOFT_REVIEW_CACHE_WRITE_INPUT_MULTIPLIER_NUMERATOR = 5
+I6_SOFT_REVIEW_CACHE_WRITE_INPUT_MULTIPLIER_DENOMINATOR = 4
+I6_SOFT_REVIEW_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD = 272_000
+I6_SOFT_REVIEW_LONG_CONTEXT_INPUT_MULTIPLIER_NUMERATOR = 2
+I6_SOFT_REVIEW_LONG_CONTEXT_INPUT_MULTIPLIER_DENOMINATOR = 1
+I6_SOFT_REVIEW_LONG_CONTEXT_OUTPUT_MULTIPLIER_NUMERATOR = 3
+I6_SOFT_REVIEW_LONG_CONTEXT_OUTPUT_MULTIPLIER_DENOMINATOR = 2
+I6_SOFT_REVIEW_RESERVATION_MARGIN_PERCENT = 120
+
+
+@dataclass(frozen=True, slots=True)
+class SoftReviewExecutionProfile:
+    """A locked, bounded execution profile for the I6-B2A text critic."""
+
+    name: Literal["primary", "lower_cost_fallback"]
+    reasoning_effort: Literal["medium", "low"]
+    max_output_tokens: int
+
+    def __post_init__(self) -> None:
+        expected = {
+            "primary": ("medium", 4_096),
+            "lower_cost_fallback": ("low", 2_048),
+        }
+        if expected.get(self.name) != (self.reasoning_effort, self.max_output_tokens):
+            raise ValueError("I6 soft-review execution profile conflicts with the locked contract")
+
+
+I6_SOFT_REVIEW_PRIMARY_PROFILE = SoftReviewExecutionProfile(
+    name="primary",
+    reasoning_effort="medium",
+    max_output_tokens=4_096,
+)
+I6_SOFT_REVIEW_FALLBACK_PROFILE = SoftReviewExecutionProfile(
+    name="lower_cost_fallback",
+    reasoning_effort="low",
+    max_output_tokens=2_048,
+)
+
+_I6_SOFT_REVIEW_PROFILES = {
+    I6_SOFT_REVIEW_PRIMARY_PROFILE.name: I6_SOFT_REVIEW_PRIMARY_PROFILE,
+    I6_SOFT_REVIEW_FALLBACK_PROFILE.name: I6_SOFT_REVIEW_FALLBACK_PROFILE,
+}
+
+_I6_SOFT_REVIEW_SYSTEM_PROMPT = """You are a bounded editorial-quality critic for an Autonomous YouTube Studio.
+Judge only the requested editorial-quality criterion for each supplied target. Do not determine factual truth or claim support. Do not override deterministic findings. Do not infer facts from outside the supplied canonical content. Return NEEDS_HUMAN when the supplied evidence is inadequate. Return exactly one judgment per supplied target and no judgments for any other target."""
+
+# This is semantically equivalent to the canonical CriticResponse Pydantic model,
+# expressed inline so the Responses API receives a strict, self-contained schema.
+_I6_SOFT_REVIEW_RESPONSE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "judgments": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "target_id": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64,
+                        "pattern": "^[0-9a-f]{64}$",
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["PASS", "FAIL", "NEEDS_HUMAN"],
+                    },
+                    "rationale": {"type": "string", "minLength": 1, "maxLength": 2_000},
+                    "observations": {
+                        "type": "array",
+                        "maxItems": 24,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+                    },
+                },
+                "required": ["target_id", "outcome", "rationale", "observations"],
+            },
+        }
+    },
+    "required": ["judgments"],
+}
 
 _SAFE_PROVIDER_ID = re.compile(r"[A-Za-z0-9_-]{1,160}")
 _SPACE = re.compile(r"\s+")
@@ -710,3 +805,333 @@ def _sora_job_from_response(
     }:
         raise ProviderError(f"{operation} returned an invalid job status") from None
     return SoraJob(provider_job_id=provider_job_id, status=status)
+
+
+@dataclass(frozen=True, slots=True)
+class SoftReviewProviderResult:
+    """Ephemeral outcome with a conservative provider-cost upper bound."""
+
+    artifact: CriticArtifact
+    provider_response_id: str
+    actual_model: str
+    input_tokens: int
+    output_tokens: int
+    metered_cost_microusd: int
+    reserved_cost_microusd: int
+    selected_profile: SoftReviewExecutionProfile
+    raw_response_sha256: str
+
+
+def build_openai_soft_review_payload(
+    request: SoftReviewRequest,
+    profile: SoftReviewExecutionProfile,
+) -> dict[str, object]:
+    """Build the complete text-only Responses request from canonical B1 context."""
+
+    request.require_bound_unique_targets()
+    _require_soft_review_profile(profile)
+    return {
+        "model": I6_SOFT_REVIEW_MODEL,
+        "store": False,
+        "reasoning": {"effort": profile.reasoning_effort},
+        "max_output_tokens": profile.max_output_tokens,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": _I6_SOFT_REVIEW_SYSTEM_PROMPT}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": canonical_json(request.model_dump(mode="json")),
+                    }
+                ],
+            },
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "i6_soft_review_critic_response",
+                "strict": True,
+                "schema": _I6_SOFT_REVIEW_RESPONSE_SCHEMA,
+            }
+        },
+    }
+
+
+def soft_review_reservation_microusd(
+    request: SoftReviewRequest,
+    profile: SoftReviewExecutionProfile,
+) -> int:
+    """Reserve conservatively for every serialized request byte and max output token."""
+
+    payload = build_openai_soft_review_payload(request, profile)
+    input_token_upper_bound = len(canonical_json(payload).encode("utf-8"))
+    base_cost = soft_review_conservative_cost_microusd(
+        input_tokens=input_token_upper_bound,
+        output_tokens=profile.max_output_tokens,
+    )
+    return (
+        base_cost * I6_SOFT_REVIEW_RESERVATION_MARGIN_PERCENT + 99
+    ) // 100
+
+
+def soft_review_conservative_cost_microusd(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+) -> int:
+    """Return the locked integer upper bound for reported soft-review token usage."""
+
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (input_tokens, output_tokens)
+    ):
+        raise ValueError("soft-review token usage must be non-negative integers")
+    input_numerator = (
+        I6_SOFT_REVIEW_INPUT_TOKEN_MICROUSD_NUMERATOR
+        * I6_SOFT_REVIEW_CACHE_WRITE_INPUT_MULTIPLIER_NUMERATOR
+    )
+    input_denominator = (
+        I6_SOFT_REVIEW_INPUT_TOKEN_MICROUSD_DENOMINATOR
+        * I6_SOFT_REVIEW_CACHE_WRITE_INPUT_MULTIPLIER_DENOMINATOR
+    )
+    output_numerator = I6_SOFT_REVIEW_OUTPUT_TOKEN_MICROUSD_NUMERATOR
+    output_denominator = I6_SOFT_REVIEW_OUTPUT_TOKEN_MICROUSD_DENOMINATOR
+    if input_tokens > I6_SOFT_REVIEW_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD:
+        input_numerator *= I6_SOFT_REVIEW_LONG_CONTEXT_INPUT_MULTIPLIER_NUMERATOR
+        input_denominator *= I6_SOFT_REVIEW_LONG_CONTEXT_INPUT_MULTIPLIER_DENOMINATOR
+        output_numerator *= I6_SOFT_REVIEW_LONG_CONTEXT_OUTPUT_MULTIPLIER_NUMERATOR
+        output_denominator *= I6_SOFT_REVIEW_LONG_CONTEXT_OUTPUT_MULTIPLIER_DENOMINATOR
+    return _ceil_div(input_tokens * input_numerator, input_denominator) + _ceil_div(
+        output_tokens * output_numerator,
+        output_denominator,
+    )
+
+
+def _ceil_div(numerator: int, denominator: int) -> int:
+    return (numerator + denominator - 1) // denominator
+
+
+class OpenAISoftReviewProvider:
+    """State-free OpenAI Responses adapter for one canonical B1 hook review."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        client: _HttpClient | None = None,
+        base_url: str = OPENAI_API_BASE_URL,
+        timeout_seconds: float = 60.0,
+    ) -> None:
+        self._api_key = _required_api_key(api_key)
+        self._client = client
+        self._base_url = base_url.rstrip("/")
+        self._timeout_seconds = timeout_seconds
+
+    def review(
+        self,
+        request: SoftReviewRequest,
+        *,
+        profile: SoftReviewExecutionProfile,
+        reserved_cost_microusd: int,
+    ) -> SoftReviewProviderResult:
+        if (
+            isinstance(reserved_cost_microusd, bool)
+            or not isinstance(reserved_cost_microusd, int)
+            or reserved_cost_microusd < 0
+        ):
+            raise ValueError("soft-review reservation must be a non-negative integer")
+        payload = build_openai_soft_review_payload(request, profile)
+        expected_reservation_microusd = soft_review_reservation_microusd(
+            request, profile
+        )
+        if reserved_cost_microusd != expected_reservation_microusd:
+            raise ProviderError(
+                "OpenAI soft review reservation conflicts with the request preflight"
+            ) from None
+        response = _single_post(
+            client=self._client,
+            url=f"{self._base_url}/responses",
+            api_key=self._api_key,
+            payload=payload,
+            timeout_seconds=self._timeout_seconds,
+            operation="OpenAI soft review",
+        )
+        body = _response_json(response, operation="OpenAI soft review")
+        provider_response_id, actual_model, input_tokens, output_tokens, parsed = (
+            _parse_openai_soft_review_response(body)
+        )
+        _require_exact_soft_review_coverage(request, parsed)
+        artifact = CriticArtifact(
+            request_sha256=request.sha256(),
+            machine_input_sha256=request.machine_input_sha256,
+            machine_result_sha256=request.machine_result_sha256,
+            provider="openai",
+            model=actual_model,
+            prompt_template_version=I6_SOFT_REVIEW_PROMPT_TEMPLATE_VERSION,
+            provider_response_sha256=parsed.sha256(),
+            provider_response=parsed,
+            judgments=parsed.judgments,
+        )
+        try:
+            raw_response_sha256 = hashlib.sha256(bytes(response.content)).hexdigest()
+        except Exception:
+            raise ProviderError("OpenAI soft review returned unreadable response bytes") from None
+        result = SoftReviewProviderResult(
+            artifact=artifact,
+            provider_response_id=provider_response_id,
+            actual_model=actual_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            metered_cost_microusd=soft_review_conservative_cost_microusd(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            ),
+            reserved_cost_microusd=reserved_cost_microusd,
+            selected_profile=profile,
+            raw_response_sha256=raw_response_sha256,
+        )
+        validate_soft_review_provider_result(
+            request=request,
+            result=result,
+            expected_profile=profile,
+            expected_reservation_microusd=reserved_cost_microusd,
+        )
+        return result
+
+
+def validate_soft_review_provider_result(
+    *,
+    request: SoftReviewRequest,
+    result: SoftReviewProviderResult,
+    expected_profile: SoftReviewExecutionProfile,
+    expected_reservation_microusd: int,
+) -> None:
+    """Verify the provider outcome remains bound to the selected B2A request."""
+
+    if (
+        isinstance(expected_reservation_microusd, bool)
+        or not isinstance(expected_reservation_microusd, int)
+        or expected_reservation_microusd < 0
+    ):
+        raise ProviderError("soft-review reservation must be a non-negative integer") from None
+    _require_soft_review_profile(expected_profile)
+    if result.selected_profile != expected_profile:
+        raise ProviderError("OpenAI soft review returned a conflicting execution profile") from None
+    if (
+        isinstance(result.reserved_cost_microusd, bool)
+        or not isinstance(result.reserved_cost_microusd, int)
+        or result.reserved_cost_microusd != expected_reservation_microusd
+    ):
+        raise ProviderError("OpenAI soft review returned a conflicting reservation") from None
+    if result.actual_model != I6_SOFT_REVIEW_MODEL or result.artifact.model != I6_SOFT_REVIEW_MODEL:
+        raise ProviderError("OpenAI soft review returned an unsupported model") from None
+    if result.artifact.provider != "openai":
+        raise ProviderError("OpenAI soft review returned an invalid provider identity") from None
+    if (
+        result.artifact.request_sha256 != request.sha256()
+        or result.artifact.machine_input_sha256 != request.machine_input_sha256
+        or result.artifact.machine_result_sha256 != request.machine_result_sha256
+    ):
+        raise ProviderError("OpenAI soft review returned an unbound critic artifact") from None
+    if result.artifact.provider_response_sha256 != result.artifact.provider_response.sha256():
+        raise ProviderError("OpenAI soft review returned an invalid critic response hash") from None
+    if result.artifact.provider_response.judgments != result.artifact.judgments:
+        raise ProviderError("OpenAI soft review returned inconsistent critic judgments") from None
+    _require_exact_soft_review_coverage(request, result.artifact.provider_response)
+    if (
+        not isinstance(result.provider_response_id, str)
+        or not result.provider_response_id.strip()
+        or len(result.provider_response_id) > 240
+    ):
+        raise ProviderError("OpenAI soft review returned an invalid response identity") from None
+    if not re.fullmatch(r"[0-9a-f]{64}", result.raw_response_sha256):
+        raise ProviderError("OpenAI soft review returned an invalid response hash") from None
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (result.input_tokens, result.output_tokens, result.metered_cost_microusd)
+    ):
+        raise ProviderError("OpenAI soft review returned invalid usage") from None
+    expected_cost = soft_review_conservative_cost_microusd(
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+    if result.metered_cost_microusd != expected_cost:
+        raise ProviderError("OpenAI soft review returned an invalid metered cost") from None
+    if result.metered_cost_microusd > result.reserved_cost_microusd:
+        raise ProviderError("OpenAI soft review exceeded its preflight reservation") from None
+
+
+def _require_soft_review_profile(profile: SoftReviewExecutionProfile) -> None:
+    if _I6_SOFT_REVIEW_PROFILES.get(profile.name) != profile:
+        raise ValueError("I6 soft-review execution profile conflicts with the locked contract")
+
+
+def _parse_openai_soft_review_response(
+    body: dict[str, object],
+) -> tuple[str, str, int, int, CriticResponse]:
+    response_id = body.get("id")
+    model = body.get("model")
+    if not isinstance(response_id, str) or not response_id.strip() or len(response_id) > 240:
+        raise ProviderError("OpenAI soft review returned an invalid response identity") from None
+    if model != I6_SOFT_REVIEW_MODEL:
+        raise ProviderError("OpenAI soft review returned an unsupported model") from None
+    if body.get("status") != "completed":
+        raise ProviderError("OpenAI soft review did not complete") from None
+    text = _openai_soft_review_output_text(body)
+    try:
+        parsed_json = json.loads(text)
+        if not isinstance(parsed_json, dict):
+            raise TypeError
+        parsed = CriticResponse.model_validate(parsed_json)
+    except Exception:
+        raise ProviderError("OpenAI soft review returned invalid structured output") from None
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        raise ProviderError("OpenAI soft review returned invalid usage") from None
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (input_tokens, output_tokens)
+    ):
+        raise ProviderError("OpenAI soft review returned invalid usage") from None
+    return response_id, model, input_tokens, output_tokens, parsed
+
+
+def _openai_soft_review_output_text(body: dict[str, object]) -> str:
+    output = body.get("output")
+    if not isinstance(output, list):
+        raise ProviderError("OpenAI soft review returned no output text") from None
+    texts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "output_text":
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    texts.append(text)
+    if len(texts) != 1:
+        raise ProviderError("OpenAI soft review returned no output text") from None
+    return texts[0]
+
+
+def _require_exact_soft_review_coverage(
+    request: SoftReviewRequest,
+    response: CriticResponse,
+) -> None:
+    requested = {target.target_id for target in request.targets}
+    observed = [judgment.target_id for judgment in response.judgments]
+    if len(observed) != len(set(observed)):
+        raise ProviderError("OpenAI soft review returned duplicate target judgments") from None
+    if set(observed) - requested:
+        raise ProviderError("OpenAI soft review returned an unknown target") from None
+    if set(observed) != requested:
+        raise ProviderError("OpenAI soft review did not cover every requested target") from None
