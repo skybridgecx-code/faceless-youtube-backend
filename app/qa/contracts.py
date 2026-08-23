@@ -4,7 +4,14 @@ import json
 import re
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.editorial.contracts import canonical_json, canonical_sha256, normalize_key
 
@@ -16,6 +23,8 @@ I6_MAX_THUMBNAIL_TEXT_CHARACTERS = 42
 I6_MIN_THUMBNAIL_TEXT_HEIGHT_PX = 24
 I6_MIN_THUMBNAIL_TEXT_HEIGHT_RATIO = 0.04
 I6_SOFT_REVIEW_POLICY_VERSION = "i6-soft-review-v1"
+I6_THUMBNAIL_RENDER_POLICY_VERSION = "i6-thumbnail-render-v1"
+I6_THUMBNAIL_RENDERER_VERSION = "i6-thumbnail-renderer-v1"
 I6_SOFT_REVIEW_CHECK_IDS: tuple[str, ...] = (
     "hook_unnecessary_introduction",
     "hook_information_density",
@@ -223,6 +232,133 @@ class ThumbnailLayout(FrozenQAModel):
         payload = self.model_dump(mode="json")
         del payload["layout_spec_sha256"]
         return payload
+
+
+class VisualSourceBinding(FrozenQAModel):
+    """An explicit I5 PNG source binding for one raw thumbnail visual slot."""
+
+    visual_index: int = Field(ge=0)
+    source_artifact_sha256: str = Field(min_length=64, max_length=64)
+    fit_mode: Literal["cover"] = "cover"
+
+    @field_validator("visual_index", mode="before")
+    @classmethod
+    def require_plain_nonnegative_integer(cls, value: object) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("visual_index must be a non-negative integer")
+        return value
+
+    @field_validator("source_artifact_sha256")
+    @classmethod
+    def require_source_sha256(cls, value: str) -> str:
+        return _require_sha256(value, "source_artifact_sha256")
+
+
+class ThumbnailRenderSpec(FrozenQAModel):
+    """Immutable, content-addressed instructions for one thumbnail render."""
+
+    policy_version: Literal["i6-thumbnail-render-v1"] = (
+        I6_THUMBNAIL_RENDER_POLICY_VERSION
+    )
+    concept_id: str = Field(min_length=1, max_length=80)
+    layout_spec_sha256: str = Field(min_length=64, max_length=64)
+    visual_bindings: tuple[VisualSourceBinding, ...] = Field(
+        default_factory=tuple, max_length=256
+    )
+    renderer_version: Literal["i6-thumbnail-renderer-v1"] = (
+        I6_THUMBNAIL_RENDERER_VERSION
+    )
+
+    @field_validator("concept_id")
+    @classmethod
+    def normalize_render_concept_id(cls, value: str) -> str:
+        return normalize_key(value)
+
+    @field_validator("layout_spec_sha256")
+    @classmethod
+    def require_layout_sha256(cls, value: str) -> str:
+        return _require_sha256(value, "layout_spec_sha256")
+
+    @model_validator(mode="after")
+    def require_unique_visual_indexes(self) -> ThumbnailRenderSpec:
+        indexes = tuple(binding.visual_index for binding in self.visual_bindings)
+        if indexes != tuple(range(len(indexes))):
+            raise ValueError(
+                "visual_bindings must be canonically ordered with exact slot coverage"
+            )
+        return self
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+    def canonical_sha256(self) -> str:
+        return self.sha256()
+
+
+def revalidate_thumbnail_render_spec(render_spec: ThumbnailRenderSpec) -> ThumbnailRenderSpec:
+    """Re-establish the external-input boundary after ``model_copy`` mutations."""
+
+    try:
+        revalidated = ThumbnailRenderSpec.model_validate(
+            render_spec.model_dump(mode="python")
+        )
+    except (AttributeError, TypeError, ValidationError) as exc:
+        raise ValueError("thumbnail render spec fails runtime validation") from exc
+
+    if revalidated != render_spec:
+        raise ValueError("thumbnail render spec changes during runtime validation")
+
+    return revalidated
+
+
+class RenderedThumbnailEvidence(FrozenQAModel):
+    """Content-addressed evidence for exact deterministic thumbnail PNG bytes."""
+
+    policy_version: Literal["i6-thumbnail-render-v1"] = (
+        I6_THUMBNAIL_RENDER_POLICY_VERSION
+    )
+    machine_input_sha256: str = Field(min_length=64, max_length=64)
+    machine_result_sha256: str = Field(min_length=64, max_length=64)
+    campaign_id: int = Field(ge=1)
+    concept_id: str = Field(min_length=1, max_length=80)
+    layout_spec_sha256: str = Field(min_length=64, max_length=64)
+    render_spec_sha256: str = Field(min_length=64, max_length=64)
+    source_artifact_sha256s: tuple[str, ...] = Field(default_factory=tuple, max_length=256)
+    png_sha256: str = Field(min_length=64, max_length=64)
+    byte_size: int = Field(gt=0)
+    mime_type: Literal["image/png"] = "image/png"
+    width: Literal[1280] = 1280
+    height: Literal[720] = 720
+    renderer_version: Literal["i6-thumbnail-renderer-v1"] = (
+        I6_THUMBNAIL_RENDERER_VERSION
+    )
+
+    @field_validator(
+        "machine_input_sha256",
+        "machine_result_sha256",
+        "layout_spec_sha256",
+        "render_spec_sha256",
+        "png_sha256",
+    )
+    @classmethod
+    def require_evidence_sha256(cls, value: str, info: object) -> str:
+        return _require_sha256(value, getattr(info, "field_name", "hash"))
+
+    @field_validator("source_artifact_sha256s")
+    @classmethod
+    def require_source_sha256s(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(_require_sha256(value, "source_artifact_sha256s") for value in values)
+
+    @field_validator("concept_id")
+    @classmethod
+    def normalize_evidence_concept_id(cls, value: str) -> str:
+        return normalize_key(value)
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+    def canonical_sha256(self) -> str:
+        return self.sha256()
 
 
 class PackagingQAInput(FrozenQAModel):
