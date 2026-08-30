@@ -25,6 +25,13 @@ I6_MIN_THUMBNAIL_TEXT_HEIGHT_RATIO = 0.04
 I6_SOFT_REVIEW_POLICY_VERSION = "i6-soft-review-v1"
 I6_THUMBNAIL_RENDER_POLICY_VERSION = "i6-thumbnail-render-v1"
 I6_THUMBNAIL_RENDERER_VERSION = "i6-thumbnail-renderer-v1"
+I6_THUMBNAIL_CRITIC_POLICY_VERSION = "i6-thumbnail-critic-v1"
+I6_THUMBNAIL_CRITIC_PROMPT_TEMPLATE_VERSION = "i6-thumbnail-critic-prompt-v1"
+I6_THUMBNAIL_CRITIC_PRICE_POLICY_VERSION = "openai-gpt-5.6-terra-2026-08-23-v1"
+I6_THUMBNAIL_CRITIC_CHECK_IDS: tuple[str, str] = (
+    "thumbnail_dominant_idea",
+    "thumbnail_hierarchy",
+)
 I6_SOFT_REVIEW_CHECK_IDS: tuple[str, ...] = (
     "hook_unnecessary_introduction",
     "hook_information_density",
@@ -433,9 +440,346 @@ class MachineQAResult(FrozenQAModel):
         return canonical_sha256(self.model_dump(mode="json"))
 
 
+class FrozenThumbnailCriticModel(BaseModel):
+    """Immutable B2B2 wire/value contract with no normalization shortcuts."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ThumbnailCriticTarget(FrozenThumbnailCriticModel):
+    target_id: str = Field(min_length=64, max_length=64)
+    check_id: Literal["thumbnail_dominant_idea", "thumbnail_hierarchy"]
+    machine_input_sha256: str = Field(min_length=64, max_length=64)
+    machine_result_sha256: str = Field(min_length=64, max_length=64)
+    evidence_sha256: str = Field(min_length=64, max_length=64)
+    campaign_id: int = Field(ge=1)
+    concept_id: str = Field(min_length=1, max_length=80)
+    layout_spec_sha256: str = Field(min_length=64, max_length=64)
+    render_spec_sha256: str = Field(min_length=64, max_length=64)
+    source_artifact_sha256s: tuple[str, ...] = Field(max_length=256)
+    png_sha256: str = Field(min_length=64, max_length=64)
+    png_byte_size: int = Field(gt=0)
+    mime_type: Literal["image/png"] = "image/png"
+    width: Literal[1280] = 1280
+    height: Literal[720] = 720
+    renderer_version: Literal["i6-thumbnail-renderer-v1"] = I6_THUMBNAIL_RENDERER_VERSION
+    original_human_finding: HumanReviewFinding
+
+    @field_validator(
+        "target_id", "machine_input_sha256", "machine_result_sha256",
+        "evidence_sha256", "layout_spec_sha256", "render_spec_sha256", "png_sha256",
+    )
+    @classmethod
+    def _hashes(cls, value: str, info: object) -> str:
+        return _require_sha256(value, getattr(info, "field_name", "hash"))
+
+    @field_validator("source_artifact_sha256s")
+    @classmethod
+    def _source_hashes(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(_require_sha256(value, "source_artifact_sha256s") for value in values)
+
+    @model_validator(mode="after")
+    def _content_addressed(self) -> ThumbnailCriticTarget:
+        payload = self.model_dump(mode="json")
+        target_id = payload.pop("target_id")
+        if target_id != canonical_sha256(payload):
+            raise ValueError("thumbnail critic target_id is not content addressed")
+        if self.original_human_finding.check_id != self.check_id:
+            raise ValueError("thumbnail critic target does not bind its human finding")
+        return self
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ThumbnailCriticRequest(FrozenThumbnailCriticModel):
+    policy_version: Literal["i6-thumbnail-critic-v1"] = I6_THUMBNAIL_CRITIC_POLICY_VERSION
+    prompt_template_version: Literal["i6-thumbnail-critic-prompt-v1"] = I6_THUMBNAIL_CRITIC_PROMPT_TEMPLATE_VERSION
+    price_policy_version: Literal["openai-gpt-5.6-terra-2026-08-23-v1"] = I6_THUMBNAIL_CRITIC_PRICE_POLICY_VERSION
+    machine_input_sha256: str = Field(min_length=64, max_length=64)
+    machine_result_sha256: str = Field(min_length=64, max_length=64)
+    evidence: RenderedThumbnailEvidence
+    evidence_sha256: str = Field(min_length=64, max_length=64)
+    targets: tuple[ThumbnailCriticTarget, ThumbnailCriticTarget]
+
+    @field_validator("machine_input_sha256", "machine_result_sha256", "evidence_sha256")
+    @classmethod
+    def _hashes(cls, value: str, info: object) -> str:
+        return _require_sha256(value, getattr(info, "field_name", "hash"))
+
+    @model_validator(mode="after")
+    def _bindings(self) -> ThumbnailCriticRequest:
+        evidence = self.evidence
+        if (
+            self.evidence_sha256 != evidence.sha256()
+            or self.machine_input_sha256 != evidence.machine_input_sha256
+            or self.machine_result_sha256 != evidence.machine_result_sha256
+        ):
+            raise ValueError("thumbnail critic request evidence identity is invalid")
+        if tuple(target.check_id for target in self.targets) != I6_THUMBNAIL_CRITIC_CHECK_IDS:
+            raise ValueError("thumbnail critic targets must use canonical authorized order")
+        for target in self.targets:
+            if (
+                target.machine_input_sha256, target.machine_result_sha256,
+                target.evidence_sha256, target.campaign_id, target.concept_id,
+                target.layout_spec_sha256, target.render_spec_sha256,
+                target.source_artifact_sha256s, target.png_sha256, target.png_byte_size,
+                target.mime_type, target.width, target.height, target.renderer_version,
+            ) != (
+                self.machine_input_sha256, self.machine_result_sha256,
+                self.evidence_sha256, evidence.campaign_id, evidence.concept_id,
+                evidence.layout_spec_sha256, evidence.render_spec_sha256,
+                evidence.source_artifact_sha256s, evidence.png_sha256, evidence.byte_size,
+                evidence.mime_type, evidence.width, evidence.height, evidence.renderer_version,
+            ):
+                raise ValueError("thumbnail critic target is not fully bound to evidence")
+        return self
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ThumbnailCriticJudgment(FrozenThumbnailCriticModel):
+    target_id: str = Field(min_length=64, max_length=64)
+    check_id: Literal["thumbnail_dominant_idea", "thumbnail_hierarchy"]
+    outcome: GateOutcome
+    rationale: str = Field(min_length=1, max_length=2_000)
+    visual_observations: tuple[str, ...] = Field(min_length=1, max_length=24)
+
+    @field_validator("target_id")
+    @classmethod
+    def _target_hash(cls, value: str) -> str:
+        return _require_sha256(value, "target_id")
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str) -> str:
+        """Require content without rewriting the provider's canonical text."""
+
+        if not value.strip():
+            raise ValueError("rationale must be a bounded nonblank string")
+        return value
+
+    @field_validator("visual_observations")
+    @classmethod
+    def _observations(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not value.strip() or len(value) > 1_000 for value in values):
+            raise ValueError("visual_observations must be bounded nonblank strings")
+        return values
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ThumbnailCriticResponse(FrozenThumbnailCriticModel):
+    judgments: tuple[ThumbnailCriticJudgment, ThumbnailCriticJudgment]
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ThumbnailCriticReservation(FrozenThumbnailCriticModel):
+    """Identity-bound V10 preflight using byte length, never a tokenizer estimate."""
+
+    request_sha256: str = Field(min_length=64, max_length=64)
+    price_policy_version: Literal["openai-gpt-5.6-terra-2026-08-23-v1"] = I6_THUMBNAIL_CRITIC_PRICE_POLICY_VERSION
+    profile_name: Literal["primary", "lower_cost_fallback"]
+    reasoning_effort: Literal["medium", "low"]
+    max_output_tokens: int = Field(gt=0)
+    envelope_sha256: str = Field(min_length=64, max_length=64)
+    conservative_text_input_token_ceiling: int = Field(ge=0)
+    image_input_tokens: Literal[920] = 920
+    total_input_token_ceiling: int = Field(gt=0)
+    reserved_cost_microusd: int = Field(ge=0)
+
+    @field_validator("request_sha256", "envelope_sha256")
+    @classmethod
+    def _hashes(cls, value: str, info: object) -> str:
+        return _require_sha256(value, getattr(info, "field_name", "hash"))
+
+    @model_validator(mode="after")
+    def _identity(self) -> ThumbnailCriticReservation:
+        profiles = {"primary": ("medium", 2048), "lower_cost_fallback": ("low", 1024)}
+        if profiles.get(self.profile_name) != (self.reasoning_effort, self.max_output_tokens):
+            raise ValueError("thumbnail critic reservation profile is invalid")
+        if self.total_input_token_ceiling != self.conservative_text_input_token_ceiling + self.image_input_tokens:
+            raise ValueError("thumbnail critic reservation input ceiling is invalid")
+        return self
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ThumbnailCriticArtifact(FrozenThumbnailCriticModel):
+    policy_version: Literal["i6-thumbnail-critic-v1"] = I6_THUMBNAIL_CRITIC_POLICY_VERSION
+    prompt_template_version: Literal["i6-thumbnail-critic-prompt-v1"] = I6_THUMBNAIL_CRITIC_PROMPT_TEMPLATE_VERSION
+    price_policy_version: Literal["openai-gpt-5.6-terra-2026-08-23-v1"] = I6_THUMBNAIL_CRITIC_PRICE_POLICY_VERSION
+    request_sha256: str = Field(min_length=64, max_length=64)
+    machine_input_sha256: str = Field(min_length=64, max_length=64)
+    machine_result_sha256: str = Field(min_length=64, max_length=64)
+    evidence_sha256: str = Field(min_length=64, max_length=64)
+    provider: Literal["openai"] = "openai"
+    model: Literal["gpt-5.6-terra"] = "gpt-5.6-terra"
+    provider_response_id: str = Field(min_length=1, max_length=160)
+    structured_response_sha256: str = Field(min_length=64, max_length=64)
+    raw_response_sha256: str = Field(min_length=64, max_length=64)
+    response: ThumbnailCriticResponse
+    judgments: tuple[ThumbnailCriticJudgment, ThumbnailCriticJudgment]
+
+    @field_validator(
+        "request_sha256", "machine_input_sha256", "machine_result_sha256",
+        "evidence_sha256", "structured_response_sha256", "raw_response_sha256",
+    )
+    @classmethod
+    def _hashes(cls, value: str, info: object) -> str:
+        return _require_sha256(value, getattr(info, "field_name", "hash"))
+
+    @field_validator("provider_response_id")
+    @classmethod
+    def _provider_response_id(cls, value: str) -> str:
+        return _require_safe_provider_response_id(value)
+
+    @model_validator(mode="after")
+    def _response_identity(self) -> ThumbnailCriticArtifact:
+        if self.response.judgments != self.judgments or self.structured_response_sha256 != self.response.sha256():
+            raise ValueError("thumbnail critic artifact response identity is invalid")
+        return self
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ThumbnailCriticProviderResult(FrozenThumbnailCriticModel):
+    request: ThumbnailCriticRequest
+    reservation: ThumbnailCriticReservation
+    artifact: ThumbnailCriticArtifact
+    artifact_sha256: str = Field(min_length=64, max_length=64)
+    evidence_sha256: str = Field(min_length=64, max_length=64)
+    png_sha256: str = Field(min_length=64, max_length=64)
+    png_byte_size: int = Field(gt=0)
+    mime_type: Literal["image/png"] = "image/png"
+    width: Literal[1280] = 1280
+    height: Literal[720] = 720
+    provider: Literal["openai"] = "openai"
+    endpoint: Literal["/v1/responses"] = "/v1/responses"
+    requested_model: Literal["gpt-5.6-terra"] = "gpt-5.6-terra"
+    actual_model: Literal["gpt-5.6-terra"] = "gpt-5.6-terra"
+    profile_name: Literal["primary", "lower_cost_fallback"]
+    reasoning_effort: Literal["medium", "low"]
+    max_output_tokens: int = Field(gt=0)
+    provider_response_id: str = Field(min_length=1, max_length=160)
+    structured_response_sha256: str = Field(min_length=64, max_length=64)
+    raw_response_sha256: str = Field(min_length=64, max_length=64)
+    input_tokens: int = Field(ge=0)
+    cached_input_tokens: int = Field(ge=0)
+    cache_write_input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    metered_cost_microusd: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _bindings(self) -> ThumbnailCriticProviderResult:
+        profiles = {"primary": ("medium", 2048), "lower_cost_fallback": ("low", 1024)}
+        if profiles.get(self.profile_name) != (self.reasoning_effort, self.max_output_tokens):
+            raise ValueError("thumbnail critic result profile is invalid")
+        if self.cached_input_tokens + self.cache_write_input_tokens > self.input_tokens:
+            raise ValueError("thumbnail critic result usage is invalid")
+        request, artifact, reservation = self.request, self.artifact, self.reservation
+        if (
+            self.artifact_sha256 != artifact.sha256()
+            or reservation.request_sha256 != request.sha256()
+            or (self.evidence_sha256, self.png_sha256, self.png_byte_size, self.mime_type, self.width, self.height) != (request.evidence_sha256, request.evidence.png_sha256, request.evidence.byte_size, request.evidence.mime_type, request.evidence.width, request.evidence.height)
+            or (artifact.request_sha256, artifact.machine_input_sha256, artifact.machine_result_sha256, artifact.evidence_sha256, artifact.provider_response_id, artifact.structured_response_sha256, artifact.raw_response_sha256) != (request.sha256(), request.machine_input_sha256, request.machine_result_sha256, request.evidence_sha256, self.provider_response_id, self.structured_response_sha256, self.raw_response_sha256)
+        ):
+            raise ValueError("thumbnail critic provider result is not fully bound")
+        return self
+
+    @field_validator("provider_response_id")
+    @classmethod
+    def _provider_response_id(cls, value: str) -> str:
+        return _require_safe_provider_response_id(value)
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+class ResolvedThumbnailCriticJudgment(FrozenThumbnailCriticModel):
+    target_id: str = Field(min_length=64, max_length=64)
+    check_id: Literal["thumbnail_dominant_idea", "thumbnail_hierarchy"]
+    outcome: GateOutcome
+    rationale: str = Field(min_length=1, max_length=2_000)
+    visual_observations: tuple[str, ...] = Field(min_length=1, max_length=24)
+
+    @field_validator("target_id")
+    @classmethod
+    def _target_hash(cls, value: str) -> str:
+        return _require_sha256(value, "target_id")
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rationale must be a bounded nonblank string")
+        return value
+
+    @field_validator("visual_observations")
+    @classmethod
+    def _observations(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not value.strip() or len(value) > 1_000 for value in values):
+            raise ValueError("visual_observations must be bounded nonblank strings")
+        return values
+
+
+class ThumbnailCriticResolution(FrozenThumbnailCriticModel):
+    policy_version: Literal["i6-thumbnail-critic-v1"] = I6_THUMBNAIL_CRITIC_POLICY_VERSION
+    machine_result_sha256: str = Field(min_length=64, max_length=64)
+    request_sha256: str = Field(min_length=64, max_length=64)
+    artifact_sha256: str = Field(min_length=64, max_length=64)
+    resolved_judgments: tuple[ResolvedThumbnailCriticJudgment, ResolvedThumbnailCriticJudgment]
+    remaining_human_review_findings: tuple[HumanReviewFinding, ...]
+    remaining_machine_findings: tuple[MachineQAFinding, ...]
+    outcome: GateOutcome
+
+    def sha256(self) -> str:
+        return canonical_sha256(self.model_dump(mode="json"))
+
+
+def revalidate_thumbnail_critic_contract(value: object, model_type: type[BaseModel]) -> BaseModel:
+    if not isinstance(value, model_type):
+        raise ValueError("thumbnail critic contract has an unexpected type")
+    try:
+        rebuilt = model_type.model_validate(value.model_dump(mode="python"))
+    except (AttributeError, TypeError, ValidationError) as exc:
+        raise ValueError("thumbnail critic contract fails runtime validation") from exc
+    if rebuilt != value:
+        raise ValueError("thumbnail critic contract changes during runtime validation")
+    return rebuilt
+
+
+def revalidate_rendered_thumbnail_evidence(value: RenderedThumbnailEvidence) -> RenderedThumbnailEvidence:
+    return revalidate_thumbnail_critic_contract(value, RenderedThumbnailEvidence)  # type: ignore[return-value]
+
+
+def revalidate_thumbnail_critic_request(value: ThumbnailCriticRequest) -> ThumbnailCriticRequest:
+    return revalidate_thumbnail_critic_contract(value, ThumbnailCriticRequest)  # type: ignore[return-value]
+
+
+def revalidate_thumbnail_critic_artifact(value: ThumbnailCriticArtifact) -> ThumbnailCriticArtifact:
+    return revalidate_thumbnail_critic_contract(value, ThumbnailCriticArtifact)  # type: ignore[return-value]
+
+
+def revalidate_thumbnail_critic_provider_result(value: ThumbnailCriticProviderResult) -> ThumbnailCriticProviderResult:
+    return revalidate_thumbnail_critic_contract(value, ThumbnailCriticProviderResult)  # type: ignore[return-value]
+
+
 def _require_sha256(value: str, field_name: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{64}", value):
         raise ValueError(f"{field_name} must be a lowercase SHA-256 value")
+    return value
+
+
+def _require_safe_provider_response_id(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", value):
+        raise ValueError("provider_response_id must be a safe provider identifier")
     return value
 
 
